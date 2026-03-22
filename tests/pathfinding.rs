@@ -1,0 +1,1 @@
+mod pathfinding_tests;

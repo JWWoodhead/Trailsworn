@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo init:*)",
+      "Bash(cargo test:*)",
+      "WebSearch",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(cargo add:*)",
+      "Bash(grep -r 'pub struct Projection' ~/.cargo/registry/src/index.crates.io-*/bevy_camera-0.18.*/src/)",
+      "Bash(grep -r \"EventReader\\\\|EventCursor\" ~/.cargo/registry/src/index.crates.io-*/bevy_ecs-0.18.*/src/event/)",
+      "Bash(grep -n \"Camera2d\\\\|fn default_2d\\\\|CameraProjection\\\\|impl.*Component.*for.*Projection\\\\|enum Projection\" ~/.cargo/registry/src/index.crates.io-*/bevy_camera-0.18.*/src/projection.rs)",
+      "Bash(grep -rn Camera2d ~/.cargo/registry/src/index.crates.io-*/bevy_camera-0.18.*/src/)",
+      "Bash(grep -n \"struct Projection\\\\|impl Component for Projection\\\\|impl.*Projection\" ~/.cargo/registry/src/index.crates.io-*/bevy_camera-0.18.*/src/projection.rs)",
+      "Bash(grep -rn \"EventReader\\\\|EventCursor\" ~/.cargo/registry/src/index.crates.io-*/bevy_ecs-0.18.*/src/)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo run:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
