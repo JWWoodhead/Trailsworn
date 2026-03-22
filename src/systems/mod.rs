@@ -1,4 +1,7 @@
+pub mod ai;
 pub mod camera;
+pub mod combat;
+pub mod debug;
 pub mod game_time;
 pub mod input;
 pub mod movement;

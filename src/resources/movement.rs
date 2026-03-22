@@ -59,4 +59,14 @@ impl MovePath {
         self.current_index += 1;
         self.progress = 0.0;
     }
+
+    pub fn destination(&self) -> Option<(u32, u32)> {
+        self.waypoints.last().copied()
+    }
+}
+
+/// A path waiting to replace the current MovePath once the current tile step finishes.
+#[derive(Component, Debug)]
+pub struct PendingPath {
+    pub waypoints: Vec<(u32, u32)>,
 }

@@ -1,3 +1,10 @@
+mod abilities;
+mod body;
+mod combat;
+mod damage;
 mod faction;
 mod game_time;
 mod movement;
+mod stats;
+mod status_effects;
+mod threat;

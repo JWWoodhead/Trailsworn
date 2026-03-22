@@ -3,7 +3,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::pathfinding::astar_tile_grid;
 use crate::resources::map::{GridPosition, MapSettings, TileWorld};
-use crate::resources::movement::MovePath;
+use crate::resources::movement::{MovePath, PendingPath};
 use crate::systems::camera::MainCamera;
 use crate::systems::spawning::PlayerControlled;
 
@@ -15,7 +15,7 @@ pub fn click_to_move(
     tile_world: Res<TileWorld>,
     map_settings: Res<MapSettings>,
     mut commands: Commands,
-    mut pawn_query: Query<(Entity, &GridPosition), With<PlayerControlled>>,
+    pawn_query: Query<(Entity, &GridPosition, Option<&MovePath>, Option<&PendingPath>), With<PlayerControlled>>,
 ) {
     if !mouse.just_pressed(MouseButton::Right) {
         return;
@@ -41,11 +41,6 @@ pub fn click_to_move(
     let tile_x = (world_pos.x / map_settings.tile_size).round() as i32;
     let tile_y = (world_pos.y / map_settings.tile_size).round() as i32;
 
-    info!(
-        "Click: cursor={cursor_pos:?} world={world_pos:?} tile=({tile_x}, {tile_y}) tile_size={}",
-        map_settings.tile_size
-    );
-
     // Bounds check
     if tile_x < 0
         || tile_y < 0
@@ -62,8 +57,25 @@ pub fn click_to_move(
         return;
     }
 
-    for (entity, grid_pos) in &mut pawn_query {
-        let start = (grid_pos.x, grid_pos.y);
+    for (entity, grid_pos, current_path, pending) in &pawn_query {
+        // Check if already heading to same destination
+        let same_dest = current_path.is_some_and(|p| p.destination() == Some(goal))
+            || pending.is_some_and(|p| p.waypoints.last() == Some(&goal));
+        if same_dest {
+            continue;
+        }
+
+        let mid_movement = current_path.is_some_and(|p| p.progress > 0.0);
+
+        // If mid-movement, pathfind from the tile we're about to arrive at
+        let start = if mid_movement {
+            current_path
+                .and_then(|p| p.next_tile())
+                .unwrap_or((grid_pos.x, grid_pos.y))
+        } else {
+            (grid_pos.x, grid_pos.y)
+        };
+
         if start == goal {
             continue;
         }
@@ -76,7 +88,14 @@ pub fn click_to_move(
             &tile_world.walk_cost,
             5000,
         ) {
-            commands.entity(entity).insert(MovePath::new(path));
+            if mid_movement {
+                // Queue as pending, let current step finish
+                commands.entity(entity).insert(PendingPath { waypoints: path });
+            } else {
+                // Stationary: start immediately
+                commands.entity(entity).remove::<PendingPath>();
+                commands.entity(entity).insert(MovePath::new(path));
+            }
         }
     }
 }

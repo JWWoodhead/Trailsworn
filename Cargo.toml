@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 bevy = { version = "0.18.1", features = ["bevy_dev_tools"] }
 bevy_ecs_tilemap = "0.18"
+rand = "0.10.0"
 
 # Enable max optimizations for dependencies but not for our code (fast recompiles)
 [profile.dev.package."*"]

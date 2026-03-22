@@ -2,24 +2,25 @@ use bevy::prelude::*;
 
 use crate::resources::game_time::{GameTime, TICK_DURATION};
 use crate::resources::map::{GridPosition, MapSettings, TileWorld};
-use crate::resources::movement::{FacingDirection, MovePath, MovementSpeed};
+use crate::resources::movement::{FacingDirection, MovePath, MovementSpeed, PendingPath};
 
 /// Advance entities along their movement paths. Runs simulation ticks.
 pub fn movement(
     mut commands: Commands,
     game_time: Res<GameTime>,
     tile_world: Res<TileWorld>,
-    mut query: Query<(Entity, &mut MovePath, &mut GridPosition, &MovementSpeed, &mut FacingDirection)>,
+    mut query: Query<(Entity, &mut MovePath, &mut GridPosition, &MovementSpeed, &mut FacingDirection, Option<&PendingPath>)>,
 ) {
     let ticks = game_time.ticks_this_frame;
     if ticks == 0 {
         return;
     }
 
-    for (entity, mut path, mut grid_pos, speed, mut facing) in &mut query {
+    for (entity, mut path, mut grid_pos, speed, mut facing, pending) in &mut query {
         for _ in 0..ticks {
             if path.is_finished() {
                 commands.entity(entity).remove::<MovePath>();
+                commands.entity(entity).remove::<PendingPath>();
                 break;
             }
 
@@ -27,6 +28,7 @@ pub fn movement(
                 Some(t) => t,
                 None => {
                     commands.entity(entity).remove::<MovePath>();
+                    commands.entity(entity).remove::<PendingPath>();
                     break;
                 }
             };
@@ -34,8 +36,8 @@ pub fn movement(
             // Cost of entering the next tile
             let tile_cost = tile_world.walk_cost[tile_world.idx(next.0, next.1)];
             if tile_cost <= 0.0 {
-                // Path blocked — abort
                 commands.entity(entity).remove::<MovePath>();
+                commands.entity(entity).remove::<PendingPath>();
                 break;
             }
 
@@ -44,7 +46,6 @@ pub fn movement(
             path.progress += progress_per_tick;
 
             if path.progress >= 1.0 {
-                // Arrived at next tile
                 grid_pos.x = next.0;
                 grid_pos.y = next.1;
 
@@ -52,17 +53,22 @@ pub fn movement(
                 let cur = path.current_tile().unwrap_or(next);
                 *facing = facing_from_movement(cur, next);
 
-                path.advance();
+                // If there's a pending path, swap to it now
+                if let Some(pending_path) = pending {
+                    *path = MovePath::new(pending_path.waypoints.clone());
+                    commands.entity(entity).remove::<PendingPath>();
+                } else {
+                    path.advance();
+                }
             }
         }
     }
 }
 
-/// Smoothly interpolate entity transforms between tiles for rendering.
-/// Runs every frame (not tick-locked) for smooth visuals.
+/// Set entity transforms directly from simulation state.
+/// Runs every frame (not tick-locked).
 pub fn sync_transforms(
     map_settings: Res<MapSettings>,
-    game_time: Res<GameTime>,
     mut query: Query<(&GridPosition, Option<&MovePath>, &mut Transform)>,
 ) {
     let ts = map_settings.tile_size;
@@ -76,10 +82,7 @@ pub fn sync_transforms(
                     next.0 as f32 * ts,
                     next.1 as f32 * ts,
                 );
-                // Blend between current and next tile using path progress + interpolation alpha
-                let alpha = (path.progress + game_time.interpolation_alpha() * 0.016)
-                    .clamp(0.0, 1.0);
-                base.lerp(next_world, alpha)
+                base.lerp(next_world, path.progress.clamp(0.0, 1.0))
             } else {
                 base
             }
