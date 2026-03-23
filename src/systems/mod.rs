@@ -11,3 +11,4 @@ pub mod movement;
 pub mod rendering;
 pub mod selection;
 pub mod spawning;
+pub mod zone;

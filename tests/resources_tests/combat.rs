@@ -29,11 +29,13 @@ fn maximum_hit_chance_95_percent() {
 #[test]
 fn resolve_hit_selects_part_and_applies_armor() {
     let template = humanoid_template();
+    let mut res = Resistances::default();
+    res.set(DamageType::Slashing, 0.5);
     let armor = EquippedArmor {
         pieces: vec![ArmorPiece {
             name: "Plate".into(),
             covered_parts: vec![5], // torso
-            resistances: Resistances { slashing: 0.5, ..Default::default() },
+            resistances: res,
         }],
     };
 

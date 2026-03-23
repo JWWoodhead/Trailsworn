@@ -57,3 +57,19 @@ pub fn spawn_tilemap(
         ..default()
     });
 }
+
+/// Update tilemap visuals when TileWorld changes (e.g., zone transition).
+/// bevy_ecs_tilemap detects Changed<TileTextureIndex> and re-renders.
+pub fn sync_tilemap(
+    tile_world: Res<TileWorld>,
+    mut tiles: Query<(&TilePos, &mut TileTextureIndex)>,
+) {
+    if !tile_world.is_changed() {
+        return;
+    }
+
+    for (pos, mut tex_idx) in &mut tiles {
+        let i = tile_world.idx(pos.x, pos.y);
+        tex_idx.0 = tile_world.terrain[i].tile_texture_index();
+    }
+}

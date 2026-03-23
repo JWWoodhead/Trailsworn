@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 use bevy_ecs_tilemap::TilemapPlugin;
-use trailsworn::generation;
 use trailsworn::resources::abilities::AbilityRegistry;
 use trailsworn::resources::body::{humanoid_template, BodyTemplates};
 use trailsworn::resources::events::{AttackMissedEvent, DamageDealtEvent};
@@ -14,22 +13,39 @@ use trailsworn::resources::input::{self, ActionState, InputMap};
 use trailsworn::resources::map::MapSettings;
 use trailsworn::resources::status_effects::StatusEffectRegistry;
 use trailsworn::resources::theme::Theme;
+use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::systems::{
     ai, camera, combat, debug, floating_text, game_time, health_bars, hover_info, hud, movement,
-    rendering, selection, spawning,
+    rendering, selection, spawning, zone,
 };
+use trailsworn::worldgen::world_map::generate_world_map;
 
 fn main() {
     let debug_flags = debug::DebugFlags::from_args();
+    let world_seed = 42u64; // TODO: randomize or accept from CLI
 
     let settings = MapSettings::default();
-    let tile_world = generation::generate_test_map(settings.width, settings.height);
 
     let mut body_templates = BodyTemplates::default();
     body_templates.register(humanoid_template());
 
     let mut faction_relations = FactionRelations::default();
     faction_relations.set(1, 2, Disposition::Hostile);
+
+    // Generate world map
+    let world_map = generate_world_map(5, 5, world_seed);
+    let spawn_pos = world_map.spawn_pos;
+    let current_zone = CurrentZone::new(world_seed, spawn_pos);
+
+    // Generate the starting zone's tile world
+    let start_cell = world_map.get(spawn_pos).unwrap();
+    let start_zone = trailsworn::worldgen::zone::generate_zone(
+        start_cell.zone_type,
+        start_cell.has_cave,
+        settings.width,
+        settings.height,
+        current_zone.zone_seed,
+    );
 
     let mut app = App::new();
 
@@ -45,7 +61,7 @@ fn main() {
     .init_state::<GameState>()
     // Resources
     .insert_resource(settings)
-    .insert_resource(tile_world)
+    .insert_resource(start_zone.tile_world)
     .insert_resource(GameTime::default())
     .insert_resource(faction_relations)
     .insert_resource(body_templates)
@@ -56,9 +72,12 @@ fn main() {
     .insert_resource(trailsworn::resources::selection::DragSelection::default())
     .insert_resource(InputMap::default())
     .insert_resource(ActionState::default())
+    .insert_resource(world_map)
+    .insert_resource(current_zone)
     // Messages
     .add_message::<DamageDealtEvent>()
     .add_message::<AttackMissedEvent>()
+    .add_message::<ZoneTransitionEvent>()
     // System set ordering
     .configure_sets(
         Update,
@@ -74,20 +93,21 @@ fn main() {
             .chain()
             .run_if(in_state(GameState::Playing)),
     )
-    // Startup: transition to Playing after setup
+    // Startup
     .add_systems(
         Startup,
         (
             camera::setup_camera,
             rendering::spawn_tilemap,
-            spawning::spawn_test_scene,
+            spawning::spawn_player,
             hover_info::setup_hover_tooltip,
             hud::setup_hud,
+            spawn_initial_zone_entities,
             transition_to_playing,
         )
             .chain(),
     )
-    // Update systems organized by GameSet
+    // Update systems
     .add_systems(
         Update,
         (
@@ -115,8 +135,13 @@ fn main() {
                 ai::cleanup_commands.after(combat::auto_attack),
             )
                 .in_set(GameSet::Combat),
-            // Movement
-            movement::movement.in_set(GameSet::Movement),
+            // Movement + Zone transitions
+            (
+                movement::movement,
+                zone::detect_zone_edge.after(movement::movement),
+                zone::handle_zone_transition.after(zone::detect_zone_edge),
+            )
+                .in_set(GameSet::Movement),
             // UI
             (
                 health_bars::spawn_health_bars,
@@ -132,7 +157,10 @@ fn main() {
             )
                 .in_set(GameSet::Ui),
             // Render
-            movement::sync_transforms.in_set(GameSet::Render),
+            (
+                movement::sync_transforms,
+                rendering::sync_tilemap,
+            ).in_set(GameSet::Render),
             // Identity (runs always, not state-gated)
             register_stable_ids,
             cleanup_stable_ids,
@@ -155,6 +183,102 @@ fn main() {
     }
 
     app.run();
+}
+
+/// Spawn enemies from the starting zone's POIs.
+fn spawn_initial_zone_entities(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    map_settings: Res<MapSettings>,
+    body_templates: Res<BodyTemplates>,
+    current_zone: Res<CurrentZone>,
+    world_map: Res<trailsworn::worldgen::WorldMap>,
+) {
+    let cell = match world_map.get(current_zone.world_pos) {
+        Some(c) => c.clone(),
+        None => return,
+    };
+
+    let zone_data = trailsworn::worldgen::zone::generate_zone(
+        cell.zone_type,
+        cell.has_cave,
+        map_settings.width,
+        map_settings.height,
+        current_zone.zone_seed,
+    );
+
+    let pawn_texture = asset_server.load("pawn.png");
+    let template = match body_templates.get("humanoid") {
+        Some(t) => t,
+        None => return,
+    };
+
+    for poi in &zone_data.pois {
+        match &poi.kind {
+            trailsworn::worldgen::zone::PoiKind::EnemyCamp { enemy_count }
+            | trailsworn::worldgen::zone::PoiKind::WildlifeSpawn { creature_count: enemy_count } => {
+                // Inline enemy spawning — reuses zone.rs pattern
+                let weapon = trailsworn::resources::damage::WeaponDef {
+                    name: "Rusty Sword".into(),
+                    damage_type: trailsworn::resources::damage::DamageType::Slashing,
+                    base_damage: 5.0,
+                    attack_speed_ticks: 120,
+                    range: 1.5,
+                    projectile_speed: 0.0,
+                    is_melee: true,
+                };
+                for i in 0..*enemy_count {
+                    let offset_x = (i % 3) as i32 - 1;
+                    let offset_y = (i / 3) as i32 - 1;
+                    let ex = (poi.x as i32 + offset_x * 2).max(0) as u32;
+                    let ey = (poi.y as i32 + offset_y * 2).max(0) as u32;
+                    let grid_pos = trailsworn::resources::map::GridPosition::new(ex, ey);
+                    let world_pos = grid_pos.to_world(map_settings.tile_size);
+                    let name = format!("Bandit {}", i + 1);
+
+                    let mut ec = commands.spawn((
+                        Name::new(name.clone()),
+                        trailsworn::resources::identity::StableId::next(),
+                        DespawnOnExit(trailsworn::resources::game_state::GameState::Playing),
+                        zone::ZoneEntity,
+                        Sprite {
+                            image: pawn_texture.clone(),
+                            color: Color::srgb(1.0, 0.4, 0.4),
+                            ..default()
+                        },
+                        Transform::from_translation(Vec3::new(
+                            world_pos.x, world_pos.y,
+                            trailsworn::resources::map::render_layers::ENTITIES,
+                        )),
+                        grid_pos,
+                        trailsworn::resources::movement::MovementSpeed::default(),
+                        trailsworn::resources::movement::FacingDirection::default(),
+                        trailsworn::resources::faction::Faction(2),
+                        trailsworn::systems::spawning::EntityName(name),
+                    ));
+                    ec.insert((
+                        trailsworn::resources::body::Body::from_template(template),
+                        trailsworn::resources::stats::Attributes { strength: 4, agility: 4, toughness: 4, ..Default::default() },
+                        trailsworn::resources::stats::CharacterLevel::default(),
+                        trailsworn::resources::damage::EquippedWeapon::new(weapon.clone()),
+                        trailsworn::resources::damage::EquippedArmor::default(),
+                        trailsworn::resources::abilities::Mana::new(50.0),
+                        trailsworn::resources::abilities::Stamina::new(50.0),
+                        trailsworn::resources::status_effects::ActiveStatusEffects::default(),
+                        trailsworn::resources::threat::ThreatTable::default(),
+                        trailsworn::resources::ai::CombatBehavior::melee_enemy(Vec::new()),
+                        trailsworn::resources::ai::AiState::default(),
+                        trailsworn::resources::ai::MovementIntent::default(),
+                        trailsworn::resources::ai::RepathTimer::default(),
+                        trailsworn::resources::combat::InCombat,
+                    ));
+                }
+            }
+            trailsworn::worldgen::zone::PoiKind::CaveEntrance => {
+                // TODO: cave entrance interactable
+            }
+        }
+    }
 }
 
 fn transition_to_playing(mut next_state: ResMut<NextState<GameState>>) {

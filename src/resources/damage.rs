@@ -7,12 +7,14 @@ pub enum DamageType {
     Slashing,
     Piercing,
     Blunt,
-    // Magical
+    // Magical — matches magic schools
     Fire,
     Frost,
+    Storm,
     Arcane,
     Holy,
     Shadow,
+    Nature,
 }
 
 impl DamageType {
@@ -26,30 +28,19 @@ impl DamageType {
 }
 
 /// Resistance values per damage type (0.0 = no resistance, 1.0 = immune).
+/// Uses a HashMap internally to avoid having to update a struct for every new type.
 #[derive(Clone, Debug, Default)]
 pub struct Resistances {
-    pub slashing: f32,
-    pub piercing: f32,
-    pub blunt: f32,
-    pub fire: f32,
-    pub frost: f32,
-    pub arcane: f32,
-    pub holy: f32,
-    pub shadow: f32,
+    values: std::collections::HashMap<DamageType, f32>,
 }
 
 impl Resistances {
     pub fn get(&self, damage_type: DamageType) -> f32 {
-        match damage_type {
-            DamageType::Slashing => self.slashing,
-            DamageType::Piercing => self.piercing,
-            DamageType::Blunt => self.blunt,
-            DamageType::Fire => self.fire,
-            DamageType::Frost => self.frost,
-            DamageType::Arcane => self.arcane,
-            DamageType::Holy => self.holy,
-            DamageType::Shadow => self.shadow,
-        }
+        self.values.get(&damage_type).copied().unwrap_or(0.0)
+    }
+
+    pub fn set(&mut self, damage_type: DamageType, value: f32) {
+        self.values.insert(damage_type, value);
     }
 
     pub fn apply(&self, damage_type: DamageType, raw_damage: f32) -> f32 {
