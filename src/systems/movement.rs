@@ -54,9 +54,19 @@ pub fn movement(
                 let cur = path.current_tile().unwrap_or(next);
                 *facing = facing_from_movement(cur, next);
 
-                // If there's a pending path, swap to it now
+                // If there's a pending path, swap to it now.
+                // The pending path was calculated from the entity's grid_pos at repath
+                // time. Find our current tile in it and start from there. If we can't
+                // find it (entity followed a different route than expected), the pending
+                // path is stale — discard it and keep the current path.
                 if let Some(pending_path) = pending {
-                    *path = MovePath::new(pending_path.waypoints.clone());
+                    let current = (grid_pos.x, grid_pos.y);
+                    if let Some(start) = pending_path.waypoints.iter().position(|&wp| wp == current) {
+                        *path = MovePath::new(pending_path.waypoints[start..].to_vec());
+                    } else {
+                        // Stale pending path — just continue on the current path
+                        path.advance();
+                    }
                     commands.entity(entity).remove::<PendingPath>();
                 } else {
                     path.advance();

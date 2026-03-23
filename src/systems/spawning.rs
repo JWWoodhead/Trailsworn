@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
-use crate::resources::abilities::{Mana, Stamina};
+use crate::resources::abilities::{AbilitySlots, Mana, Stamina};
+use crate::resources::ability_defs;
 use crate::resources::ai::{AiState, CombatBehavior, CombatRole, MovementIntent, PartyMode, RepathTimer};
 use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::combat::InCombat;
@@ -77,6 +78,14 @@ pub fn spawn_player(
         ActiveStatusEffects::default(),
         ThreatTable::default(),
         CombatBehavior::party_member(CombatRole::MeleeDps, 1.5),
+        AbilitySlots::new(vec![
+            ability_defs::ABILITY_CLEAVE,       // Q — SingleEnemy, instant
+            ability_defs::ABILITY_SHIELD_BASH,   // E — SingleEnemy, instant stun
+            ability_defs::ABILITY_BANDAGE,        // R — SelfOnly, cast time
+            ability_defs::ABILITY_FIREBALL,       // T — CircleAoE, cast time
+            ability_defs::ABILITY_FROST_BOLT,     // F — SingleEnemy, cast time ranged
+            ability_defs::ABILITY_HEAL,           // G — SingleAlly, cast time
+        ]),
     ));
     entity_commands.insert((
         AiState::default(),

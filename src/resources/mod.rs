@@ -1,5 +1,7 @@
 pub mod abilities;
+pub mod ability_defs;
 pub mod ai;
+pub mod casting;
 pub mod body;
 pub mod combat;
 pub mod damage;

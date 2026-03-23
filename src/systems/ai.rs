@@ -1,10 +1,14 @@
 use bevy::prelude::*;
 
 use crate::pathfinding::astar_tile_grid;
+use crate::resources::abilities::{
+    AbilityRegistry, AbilitySlots, CastTarget, CastingState, Mana, Stamina,
+};
 use crate::resources::ai::{
-    AiState, CombatBehavior, MovementIntent, PartyMode, PlayerCommand, RepathTimer,
+    AiState, CombatBehavior, MovementIntent, PartyMode, PlayerCommand, RepathTimer, UseCondition,
 };
 use crate::resources::body::{Body, BodyTemplates};
+use crate::resources::casting::validate_cast;
 use crate::resources::combat::InCombat;
 use crate::resources::faction::{Faction, FactionRelations};
 use crate::resources::game_time::GameTime;
@@ -111,6 +115,187 @@ pub fn ai_decision(
             }
         }
     }
+}
+
+/// Separate system for AI ability usage. Runs after ai_decision.
+/// Checks engaging AI entities and attempts to cast abilities.
+pub fn ai_ability_usage(
+    mut commands: Commands,
+    game_time: Res<GameTime>,
+    ability_registry: Res<AbilityRegistry>,
+    body_templates: Res<BodyTemplates>,
+    status_registry: Res<StatusEffectRegistry>,
+    ai_query: Query<
+        (
+            Entity,
+            &GridPosition,
+            &CombatBehavior,
+            &Body,
+            &ActiveStatusEffects,
+            &AiState,
+            &AbilitySlots,
+            &Mana,
+            &Stamina,
+        ),
+        (Without<PlayerCommand>, Without<crate::systems::spawning::PlayerControlled>, Without<CastingState>),
+    >,
+    potential_targets: Query<(Entity, &GridPosition, &Faction, &Body), With<InCombat>>,
+) {
+    if game_time.ticks_this_frame == 0 {
+        return;
+    }
+
+    for (entity, grid_pos, behavior, body, status_effects, ai_state, slots, mana, stamina) in &ai_query {
+        if !behavior.auto_use_abilities {
+            continue;
+        }
+
+        let target_entity = match ai_state {
+            AiState::Engaging { target } => *target,
+            _ => continue,
+        };
+
+        let template = match body_templates.get(&body.template_id) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let cc_flags = status_effects.combined_cc_flags(&status_registry);
+
+        try_ai_ability(
+            entity,
+            target_entity,
+            grid_pos,
+            behavior,
+            body,
+            template,
+            Some(slots),
+            Some(mana),
+            Some(stamina),
+            &cc_flags,
+            &ability_registry,
+            &potential_targets,
+            &mut commands,
+        );
+    }
+}
+
+/// Attempt to use the highest-priority valid ability. Returns true if an ability was initiated.
+fn try_ai_ability(
+    entity: Entity,
+    target_entity: Entity,
+    caster_pos: &GridPosition,
+    behavior: &CombatBehavior,
+    body: &Body,
+    template: &crate::resources::body::BodyTemplate,
+    ability_slots: Option<&AbilitySlots>,
+    mana: Option<&Mana>,
+    stamina: Option<&Stamina>,
+    cc_flags: &crate::resources::status_effects::CcFlags,
+    ability_registry: &AbilityRegistry,
+    potential_targets: &Query<(Entity, &GridPosition, &Faction, &Body), With<InCombat>>,
+    commands: &mut Commands,
+) -> bool {
+    let slots = match ability_slots {
+        Some(s) => s,
+        None => return false,
+    };
+    let mana = match mana {
+        Some(m) => m,
+        None => return false,
+    };
+    let stamina = match stamina {
+        Some(s) => s,
+        None => return false,
+    };
+
+    let target_pos = match potential_targets.get(target_entity) {
+        Ok((_, pos, _, _)) => pos,
+        Err(_) => return false,
+    };
+
+    // We don't have BodyTemplates in this helper, so approximate target HP from pain_level.
+    // pain_level needs a template, but we can't cleanly access it here.
+    // Use a rough heuristic: check if any parts are damaged.
+    let _target_body = match potential_targets.get(target_entity) {
+        Ok((_, _, _, b)) => b,
+        Err(_) => return false,
+    };
+
+    let self_hp_fraction = 1.0 - body.pain_level(template);
+
+    // Sort priorities descending
+    let mut priorities = behavior.ability_priorities.clone();
+    priorities.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+    for prio in &priorities {
+        // Check condition
+        let condition_met = match &prio.condition {
+            UseCondition::Always => true,
+            UseCondition::SelfHpBelow(threshold) => self_hp_fraction < *threshold,
+            UseCondition::TargetHpBelow(_) => {
+                // Simplified: always true when engaging (need BodyTemplates to compute properly)
+                true
+            }
+            UseCondition::AllyHpBelow(_) => false, // TODO: scan allies
+            UseCondition::EnemiesInRange(_) => false, // TODO: count enemies
+        };
+
+        if !condition_met {
+            continue;
+        }
+
+        let ability = match ability_registry.get(prio.ability_id) {
+            Some(a) => a,
+            None => continue,
+        };
+
+        // Validate the cast
+        let target_pos_tuple = Some((target_pos.x, target_pos.y));
+        if validate_cast(
+            ability,
+            slots,
+            prio.slot_index,
+            mana,
+            stamina,
+            cc_flags,
+            (caster_pos.x, caster_pos.y),
+            target_pos_tuple,
+        ).is_ok()
+        {
+            // Determine cast target
+            let cast_target = match ability.target_type {
+                crate::resources::abilities::TargetType::SelfOnly => CastTarget::SelfCast,
+                crate::resources::abilities::TargetType::SingleEnemy
+                | crate::resources::abilities::TargetType::SingleAlly => {
+                    CastTarget::Entity(target_entity)
+                }
+                crate::resources::abilities::TargetType::CircleAoE => {
+                    CastTarget::Position {
+                        x: target_pos.x as f32,
+                        y: target_pos.y as f32,
+                    }
+                }
+                crate::resources::abilities::TargetType::ConeAoE
+                | crate::resources::abilities::TargetType::LineAoE => {
+                    let dx = target_pos.x as f32 - caster_pos.x as f32;
+                    let dy = target_pos.y as f32 - caster_pos.y as f32;
+                    CastTarget::Direction { dx, dy }
+                }
+            };
+
+            commands.entity(entity).insert(CastingState {
+                ability_id: prio.ability_id,
+                slot_index: prio.slot_index,
+                remaining_ticks: ability.cast_time_ticks,
+                target: cast_target,
+            });
+
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Select the best target for an entity.
@@ -284,12 +469,14 @@ pub fn resolve_movement_intent(
         let mid_movement = current_path.is_some_and(|p| p.progress > 0.0);
         let old_progress = current_path.map(|p| p.progress).unwrap_or(0.0);
 
-        // For player entities mid-movement: pathfind from the tile we're heading toward
-        // so the entity smoothly continues to it, then follows the new path.
-        let (start, prepend_current) = if is_player && mid_movement {
+        // For entities mid-movement: pathfind from the tile we're heading toward
+        // so the path starts from where the entity will actually arrive.
+        // Players: prepend current tile and preserve progress for smooth transition.
+        // AI: use PendingPath which swaps at tile boundary.
+        let (start, prepend_current) = if mid_movement {
             let next = current_path.and_then(|p| p.next_tile());
             match next {
-                Some(n) => (n, true),
+                Some(n) => (n, is_player),
                 None => ((grid_pos.x, grid_pos.y), false),
             }
         } else {

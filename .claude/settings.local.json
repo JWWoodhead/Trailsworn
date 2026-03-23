@@ -43,7 +43,8 @@
       "Bash(for f:*)",
       "Bash(do sed:*)",
       "Bash(done)",
-      "Bash(wc -l /c/ReposLocal/Metropolis/src/simulation/*.rs)"
+      "Bash(wc -l /c/ReposLocal/Metropolis/src/simulation/*.rs)",
+      "Bash(cargo check:*)"
     ]
   }
 }

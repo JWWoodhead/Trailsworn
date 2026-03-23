@@ -21,6 +21,17 @@ pub enum Action {
     Select,
     Command,
 
+    // Abilities
+    AbilitySlot1,
+    AbilitySlot2,
+    AbilitySlot3,
+    AbilitySlot4,
+    AbilitySlot5,
+    AbilitySlot6,
+
+    // Escape / cancel
+    Cancel,
+
     // Debug
     DebugGrid,
     DebugPathing,
@@ -67,6 +78,17 @@ impl Default for InputMap {
         // Selection / commands
         map.bind(InputBinding::Mouse(MouseButton::Left), Action::Select);
         map.bind(InputBinding::Mouse(MouseButton::Right), Action::Command);
+
+        // Abilities
+        map.bind(InputBinding::Key(KeyCode::KeyQ), Action::AbilitySlot1);
+        map.bind(InputBinding::Key(KeyCode::KeyE), Action::AbilitySlot2);
+        map.bind(InputBinding::Key(KeyCode::KeyR), Action::AbilitySlot3);
+        map.bind(InputBinding::Key(KeyCode::KeyT), Action::AbilitySlot4);
+        map.bind(InputBinding::Key(KeyCode::KeyF), Action::AbilitySlot5);
+        map.bind(InputBinding::Key(KeyCode::KeyG), Action::AbilitySlot6);
+
+        // Cancel
+        map.bind(InputBinding::Key(KeyCode::Escape), Action::Cancel);
 
         // Debug
         map.bind(InputBinding::Key(KeyCode::F1), Action::DebugGrid);

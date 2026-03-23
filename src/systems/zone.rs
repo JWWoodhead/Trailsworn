@@ -229,7 +229,17 @@ fn spawn_enemy_camp(
             Stamina::new(50.0),
             ActiveStatusEffects::default(),
             ThreatTable::default(),
-            CombatBehavior::melee_enemy(Vec::new()),
+            crate::resources::abilities::AbilitySlots::new(vec![
+                crate::resources::ability_defs::ABILITY_CLEAVE,
+            ]),
+            CombatBehavior::melee_enemy(vec![
+                crate::resources::ai::AbilityPriority {
+                    ability_id: crate::resources::ability_defs::ABILITY_CLEAVE,
+                    slot_index: 0,
+                    condition: crate::resources::ai::UseCondition::Always,
+                    priority: 10,
+                },
+            ]),
             AiState::default(),
             MovementIntent::default(),
             RepathTimer::default(),

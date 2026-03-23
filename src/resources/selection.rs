@@ -1,8 +1,26 @@
 use bevy::prelude::*;
 
+use super::abilities::{AbilityId, TargetType};
+
 /// Marker for currently selected entities.
 #[derive(Component)]
 pub struct Selected;
+
+/// Active targeting mode for ability casting.
+#[derive(Resource, Default)]
+pub enum TargetingMode {
+    #[default]
+    None,
+    /// Waiting for the player to click a target for an ability.
+    AwaitingTarget {
+        caster: Entity,
+        ability_id: AbilityId,
+        slot_index: usize,
+        target_type: TargetType,
+        range: f32,
+        aoe_radius: f32,
+    },
+}
 
 /// Tracks the drag selection box state.
 #[derive(Resource, Default)]

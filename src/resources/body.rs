@@ -120,6 +120,53 @@ impl Body {
         actual
     }
 
+    /// Heal a specific body part. Cannot heal destroyed parts. Returns actual healing done.
+    pub fn heal_part(
+        &mut self,
+        index: PartIndex,
+        amount: f32,
+        template: &BodyTemplate,
+    ) -> f32 {
+        let state = &mut self.parts[index];
+        if state.destroyed {
+            return 0.0;
+        }
+        let max_hp = template.parts[index].max_hp;
+        let actual = amount.min(max_hp - state.current_hp);
+        state.current_hp += actual;
+        actual
+    }
+
+    /// Distribute healing across all damaged (non-destroyed) body parts.
+    /// Returns total healing done.
+    pub fn heal_distributed(
+        &mut self,
+        total_amount: f32,
+        template: &BodyTemplate,
+    ) -> f32 {
+        // Find all damaged, non-destroyed parts
+        let damaged: Vec<usize> = self
+            .parts
+            .iter()
+            .enumerate()
+            .filter(|(i, state)| {
+                !state.destroyed && state.current_hp < template.parts[*i].max_hp
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        if damaged.is_empty() {
+            return 0.0;
+        }
+
+        let per_part = total_amount / damaged.len() as f32;
+        let mut total_healed = 0.0;
+        for idx in damaged {
+            total_healed += self.heal_part(idx, per_part, template);
+        }
+        total_healed
+    }
+
     /// Check if any vital part is destroyed.
     pub fn is_dead(&self, template: &BodyTemplate) -> bool {
         template

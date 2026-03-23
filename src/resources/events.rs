@@ -19,3 +19,10 @@ pub struct AttackMissedEvent {
     pub attacker: Entity,
     pub target: Entity,
 }
+
+/// Fired when a cast is interrupted by damage.
+#[derive(Message, Clone, Debug)]
+pub struct CastInterruptedEvent {
+    pub caster: Entity,
+    pub ability_id: super::abilities::AbilityId,
+}

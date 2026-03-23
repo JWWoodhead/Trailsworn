@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use bevy_ecs_tilemap::TilemapPlugin;
 use trailsworn::resources::abilities::AbilityRegistry;
+use trailsworn::resources::ability_defs::register_starter_abilities;
 use trailsworn::resources::body::{humanoid_template, BodyTemplates};
-use trailsworn::resources::events::{AttackMissedEvent, DamageDealtEvent};
+use trailsworn::resources::events::{AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
 use trailsworn::resources::faction::{Disposition, FactionRelations};
 use trailsworn::resources::game_state::{GameSet, GameState};
 use trailsworn::resources::game_time::GameTime;
@@ -15,8 +16,8 @@ use trailsworn::resources::status_effects::StatusEffectRegistry;
 use trailsworn::resources::theme::Theme;
 use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::systems::{
-    ai, camera, combat, debug, floating_text, game_time, health_bars, hover_info, hud, movement,
-    profiling, rendering, selection, spawning, zone,
+    ability_bar, ai, camera, casting, combat, debug, floating_text, game_time, health_bars,
+    hover_info, hud, movement, profiling, rendering, selection, spawning, zone,
 };
 use trailsworn::worldgen::world_map::generate_world_map;
 
@@ -31,6 +32,11 @@ fn main() {
 
     let mut faction_relations = FactionRelations::default();
     faction_relations.set(1, 2, Disposition::Hostile);
+
+    // Populate ability and status effect registries
+    let mut ability_registry = AbilityRegistry::default();
+    let mut status_registry = StatusEffectRegistry::default();
+    register_starter_abilities(&mut ability_registry, &mut status_registry);
 
     // Generate world map
     let world_map = generate_world_map(5, 5, world_seed);
@@ -65,11 +71,12 @@ fn main() {
     .insert_resource(GameTime::default())
     .insert_resource(faction_relations)
     .insert_resource(body_templates)
-    .insert_resource(AbilityRegistry::default())
-    .insert_resource(StatusEffectRegistry::default())
+    .insert_resource(ability_registry)
+    .insert_resource(status_registry)
     .insert_resource(Theme::default())
     .insert_resource(StableIdRegistry::default())
     .insert_resource(trailsworn::resources::selection::DragSelection::default())
+    .insert_resource(trailsworn::resources::selection::TargetingMode::default())
     .insert_resource(InputMap::default())
     .insert_resource(ActionState::default())
     .insert_resource(trailsworn::systems::profiling::FrameProfiler::default())
@@ -78,6 +85,7 @@ fn main() {
     // Messages
     .add_message::<DamageDealtEvent>()
     .add_message::<AttackMissedEvent>()
+    .add_message::<CastInterruptedEvent>()
     .add_message::<ZoneTransitionEvent>()
     // System set ordering
     .configure_sets(
@@ -103,6 +111,7 @@ fn main() {
             spawning::spawn_player,
             hover_info::setup_hover_tooltip,
             hud::setup_hud,
+            ability_bar::setup_ability_bar,
             spawn_initial_zone_entities,
             transition_to_playing,
         )
@@ -120,20 +129,30 @@ fn main() {
                 camera::camera_zoom,
                 selection::selection_input.after(input::process_input),
                 selection::right_click_command.after(input::process_input),
+                selection::ability_input.after(input::process_input),
             )
                 .in_set(GameSet::Input),
             // Tick
             game_time::advance_game_time.in_set(GameSet::Tick),
             // AI
-            (ai::ai_decision, ai::resolve_movement_intent.after(ai::ai_decision))
+            (
+                ai::ai_decision,
+                ai::ai_ability_usage.after(ai::ai_decision),
+                ai::resolve_movement_intent.after(ai::ai_decision),
+            )
                 .in_set(GameSet::Ai),
             // Combat
             (
                 combat::tick_weapon_cooldowns,
+                casting::tick_ability_cooldowns,
+                casting::regenerate_resources,
                 combat::auto_attack,
+                casting::begin_cast.after(combat::auto_attack),
+                casting::tick_casting.after(casting::begin_cast),
+                casting::interrupt_casting.after(combat::auto_attack),
                 combat::tick_status_effects,
-                combat::cleanup_dead.after(combat::auto_attack),
-                ai::cleanup_commands.after(combat::auto_attack),
+                combat::cleanup_dead.after(casting::tick_casting),
+                ai::cleanup_commands.after(casting::tick_casting),
             )
                 .in_set(GameSet::Combat),
             // Movement + Zone transitions
@@ -155,6 +174,10 @@ fn main() {
                 selection::draw_drag_box,
                 hud::update_speed_indicator,
                 hud::combat_log_damage,
+                ability_bar::update_ability_bar,
+                ability_bar::update_cast_bar,
+                ability_bar::update_resource_bars,
+                ability_bar::draw_targeting_reticle,
             )
                 .in_set(GameSet::Ui),
             // Render
@@ -270,7 +293,17 @@ fn spawn_initial_zone_entities(
                         trailsworn::resources::abilities::Stamina::new(50.0),
                         trailsworn::resources::status_effects::ActiveStatusEffects::default(),
                         trailsworn::resources::threat::ThreatTable::default(),
-                        trailsworn::resources::ai::CombatBehavior::melee_enemy(Vec::new()),
+                        trailsworn::resources::abilities::AbilitySlots::new(vec![
+                            trailsworn::resources::ability_defs::ABILITY_CLEAVE,
+                        ]),
+                        trailsworn::resources::ai::CombatBehavior::melee_enemy(vec![
+                            trailsworn::resources::ai::AbilityPriority {
+                                ability_id: trailsworn::resources::ability_defs::ABILITY_CLEAVE,
+                                slot_index: 0,
+                                condition: trailsworn::resources::ai::UseCondition::Always,
+                                priority: 10,
+                            },
+                        ]),
                         trailsworn::resources::ai::AiState::default(),
                         trailsworn::resources::ai::MovementIntent::default(),
                         trailsworn::resources::ai::RepathTimer::default(),

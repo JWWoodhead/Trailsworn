@@ -8,6 +8,18 @@ use super::stats::AttributeChoice;
 
 pub type AbilityId = u32;
 
+/// Reasons a cast attempt can fail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CastError {
+    InvalidSlot,
+    OnCooldown,
+    NotEnoughMana,
+    NotEnoughStamina,
+    OutOfRange,
+    Silenced,
+    AbilityNotFound,
+}
+
 /// How an ability selects its target(s).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TargetType {
