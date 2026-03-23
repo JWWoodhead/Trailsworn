@@ -9,7 +9,7 @@ use crate::resources::game_state::GameState;
 use crate::resources::game_time::GameTime;
 use crate::resources::identity::StableId;
 use crate::resources::map::{GridPosition, MapSettings, render_layers};
-use crate::resources::movement::{FacingDirection, MovementSpeed};
+use crate::resources::movement::{FacingDirection, MovementSpeed, PathOffset};
 use crate::resources::stats::{Attributes, CharacterLevel};
 use crate::resources::status_effects::ActiveStatusEffects;
 use crate::resources::threat::ThreatTable;
@@ -214,6 +214,7 @@ fn spawn_enemy_camp(
             grid_pos,
             MovementSpeed::default(),
             FacingDirection::default(),
+            PathOffset::random(&mut rand::rng()),
             Faction(FACTION_BANDITS),
             EntityName(name),
         ));

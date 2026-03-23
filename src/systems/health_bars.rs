@@ -50,7 +50,7 @@ pub fn spawn_health_bars(
             .id();
 
         commands.entity(bg).add_child(fill);
-        commands.entity(entity).add_child(bg);
+        commands.entity(entity).insert(HealthBarBackground).add_child(bg);
     }
 }
 

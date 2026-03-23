@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::resources::game_time::{GameTime, TICK_DURATION};
 use crate::resources::map::{GridPosition, MapSettings, TileWorld};
-use crate::resources::movement::{FacingDirection, MovePath, MovementSpeed, PendingPath};
+use crate::resources::movement::{FacingDirection, MovePath, MovementSpeed, PathOffset, PendingPath};
 
 /// Advance entities along their movement paths. Runs simulation ticks.
 pub fn movement(
@@ -41,8 +41,9 @@ pub fn movement(
                 break;
             }
 
-            // Progress per tick: speed (tiles/sec) * tick_duration (sec) / tile_cost
-            let progress_per_tick = speed.tiles_per_second * TICK_DURATION / tile_cost;
+            // Progress per tick, with whole-path ease-in/ease-out
+            let ease = path.ease_speed_multiplier();
+            let progress_per_tick = speed.tiles_per_second * TICK_DURATION / tile_cost * ease;
             path.progress += progress_per_tick;
 
             if path.progress >= 1.0 {
@@ -65,23 +66,24 @@ pub fn movement(
     }
 }
 
-/// Set entity transforms directly from simulation state.
+/// Set entity transforms from simulation state.
 /// Runs every frame (not tick-locked).
 pub fn sync_transforms(
     map_settings: Res<MapSettings>,
-    mut query: Query<(&GridPosition, Option<&MovePath>, &mut Transform)>,
+    mut query: Query<(&GridPosition, Option<&MovePath>, Option<&PathOffset>, &mut Transform)>,
 ) {
     let ts = map_settings.tile_size;
 
-    for (grid_pos, move_path, mut transform) in &mut query {
-        let base = grid_pos.to_world(ts);
+    for (grid_pos, move_path, offset, mut transform) in &mut query {
+        let offset_px = offset.map_or(Vec2::ZERO, |o| Vec2::new(o.x * ts, o.y * ts));
+        let base = grid_pos.to_world(ts) + offset_px;
 
         let pos = if let Some(path) = move_path {
             if let Some(next) = path.next_tile() {
                 let next_world = Vec2::new(
                     next.0 as f32 * ts,
                     next.1 as f32 * ts,
-                );
+                ) + offset_px;
                 base.lerp(next_world, path.progress.clamp(0.0, 1.0))
             } else {
                 base

@@ -12,6 +12,7 @@ pub struct DebugFlags {
     pub pathing: bool,
     pub aggro_radius: bool,
     pub ai_state: bool,
+    pub profiling: bool,
 }
 
 impl DebugFlags {
@@ -27,6 +28,7 @@ impl DebugFlags {
             pathing: false,
             aggro_radius: false,
             ai_state: false,
+            profiling: false,
         };
 
         for flag in flags_str.split(',') {
@@ -36,11 +38,13 @@ impl DebugFlags {
                     flags.pathing = true;
                     flags.aggro_radius = true;
                     flags.ai_state = true;
+                    flags.profiling = true;
                 }
                 "grid" => flags.grid = true,
                 "pathing" | "path" => flags.pathing = true,
                 "aggro" | "aggro_radius" => flags.aggro_radius = true,
                 "ai" | "ai_state" => flags.ai_state = true,
+                "profiling" | "perf" => flags.profiling = true,
                 _ => eprintln!("Unknown debug flag: {flag}"),
             }
         }
@@ -49,7 +53,7 @@ impl DebugFlags {
     }
 
     pub fn any_active(&self) -> bool {
-        self.grid || self.pathing || self.aggro_radius || self.ai_state
+        self.grid || self.pathing || self.aggro_radius || self.ai_state || self.profiling
     }
 }
 
@@ -70,6 +74,9 @@ pub fn debug_key_toggles(
     }
     if actions.just_pressed(Action::DebugAiState) {
         flags.ai_state = !flags.ai_state;
+    }
+    if actions.just_pressed(Action::DebugProfiling) {
+        flags.profiling = !flags.profiling;
     }
 }
 
@@ -153,7 +160,7 @@ pub fn draw_aggro_radius(
 
     for (grid_pos, behavior) in &query {
         let pos = grid_pos.to_world(ts);
-        let radius = behavior.engage_range * ts;
+        let radius = behavior.aggro_range * ts;
         gizmos.circle_2d(Isometry2d::from_translation(pos), radius, color);
     }
 }

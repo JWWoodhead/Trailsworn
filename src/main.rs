@@ -16,7 +16,7 @@ use trailsworn::resources::theme::Theme;
 use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::systems::{
     ai, camera, combat, debug, floating_text, game_time, health_bars, hover_info, hud, movement,
-    rendering, selection, spawning, zone,
+    profiling, rendering, selection, spawning, zone,
 };
 use trailsworn::worldgen::world_map::generate_world_map;
 
@@ -72,6 +72,7 @@ fn main() {
     .insert_resource(trailsworn::resources::selection::DragSelection::default())
     .insert_resource(InputMap::default())
     .insert_resource(ActionState::default())
+    .insert_resource(trailsworn::systems::profiling::FrameProfiler::default())
     .insert_resource(world_map)
     .insert_resource(current_zone)
     // Messages
@@ -177,6 +178,8 @@ fn main() {
                 debug::draw_pathing,
                 debug::draw_aggro_radius,
                 debug::draw_ai_state,
+                profiling::frame_profiler,
+                profiling::entity_counter,
             )
                 .in_set(GameSet::Render),
         );
@@ -253,6 +256,7 @@ fn spawn_initial_zone_entities(
                         grid_pos,
                         trailsworn::resources::movement::MovementSpeed::default(),
                         trailsworn::resources::movement::FacingDirection::default(),
+                        trailsworn::resources::movement::PathOffset::random(&mut rand::rng()),
                         trailsworn::resources::faction::Faction(2),
                         trailsworn::systems::spawning::EntityName(name),
                     ));

@@ -8,6 +8,7 @@ pub mod health_bars;
 pub mod hover_info;
 pub mod hud;
 pub mod movement;
+pub mod profiling;
 pub mod rendering;
 pub mod selection;
 pub mod spawning;

@@ -9,7 +9,7 @@ use crate::resources::faction::{Faction, FACTION_PLAYER};
 use crate::resources::game_state::GameState;
 use crate::resources::identity::StableId;
 use crate::resources::map::{render_layers, GridPosition, MapSettings};
-use crate::resources::movement::{FacingDirection, MovementSpeed};
+use crate::resources::movement::{FacingDirection, MovementSpeed, PathOffset};
 use crate::resources::stats::{Attributes, CharacterLevel};
 use crate::resources::status_effects::ActiveStatusEffects;
 use crate::resources::threat::ThreatTable;
@@ -61,6 +61,7 @@ pub fn spawn_player(
         grid_pos,
         MovementSpeed::default(),
         FacingDirection::default(),
+        PathOffset::random(&mut rand::rng()),
         Faction(FACTION_PLAYER),
         EntityName("Hero".into()),
     ));

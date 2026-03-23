@@ -33,7 +33,7 @@ pub fn ai_decision(
             Option<&PartyMode>,
             Option<&ThreatTable>,
         ),
-        Without<PlayerCommand>,
+        (Without<PlayerCommand>, Without<crate::systems::spawning::PlayerControlled>),
     >,
     potential_targets: Query<(Entity, &GridPosition, &Faction, &Body), With<InCombat>>,
 ) {
@@ -88,6 +88,7 @@ pub fn ai_decision(
             entity,
             grid_pos,
             faction,
+            behavior.aggro_range,
             party_mode,
             threat_table,
             &faction_relations,
@@ -101,7 +102,7 @@ pub fn ai_decision(
                 };
                 *intent = MovementIntent::MoveToEntity {
                     target: target_entity,
-                    desired_range: behavior.engage_range,
+                    desired_range: behavior.attack_range,
                 };
             }
             None => {
@@ -117,6 +118,7 @@ fn select_target(
     self_entity: Entity,
     self_pos: &GridPosition,
     self_faction: &Faction,
+    aggro_range: f32,
     party_mode: Option<&PartyMode>,
     threat_table: Option<&ThreatTable>,
     faction_relations: &FactionRelations,
@@ -145,7 +147,8 @@ fn select_target(
         return None;
     }
 
-    // Find nearest hostile entity
+    // Find nearest hostile entity within aggro range
+    let aggro_range_sq = (aggro_range * aggro_range) as u32;
     let mut best: Option<(Entity, u32)> = None;
     for (target_entity, target_pos, target_faction, _) in potential_targets.iter() {
         if target_entity == self_entity {
@@ -158,6 +161,10 @@ fn select_target(
         let dx = self_pos.x.abs_diff(target_pos.x);
         let dy = self_pos.y.abs_diff(target_pos.y);
         let dist_sq = dx * dx + dy * dy;
+
+        if dist_sq > aggro_range_sq {
+            continue;
+        }
 
         if best.is_none() || dist_sq < best.unwrap().1 {
             best = Some((target_entity, dist_sq));
@@ -178,7 +185,8 @@ pub fn resolve_movement_intent(
         &MovementIntent,
         &mut RepathTimer,
         Option<&MovePath>,
-    ), Without<PlayerCommand>>,
+        Option<&crate::systems::spawning::PlayerControlled>,
+    )>,
     target_positions: Query<&GridPosition>,
     mut commands: Commands,
 ) {
@@ -186,7 +194,7 @@ pub fn resolve_movement_intent(
         return;
     }
 
-    for (entity, grid_pos, intent, mut repath_timer, current_path) in &mut query {
+    for (entity, grid_pos, intent, mut repath_timer, current_path, player_controlled) in &mut query {
         // Tick the repath timer
         for _ in 0..game_time.ticks_this_frame {
             repath_timer.tick();
@@ -253,17 +261,46 @@ pub fn resolve_movement_intent(
 
         let Some(goal) = goal else { continue };
 
-        // Don't repath if timer hasn't expired and we already have a path
-        if current_path.is_some() && !repath_timer.should_repath() {
-            continue;
+        // Player entities bypass the timer ONLY when their goal changed.
+        // AI entities throttle repathing to avoid pathfinding every tick.
+        let is_player = player_controlled.is_some();
+        let needs_initial_path = current_path.is_none();
+
+        if !needs_initial_path {
+            if is_player {
+                // Player: only repath if destination changed
+                let current_dest = current_path.and_then(|p| p.destination());
+                if current_dest == Some(goal) {
+                    continue;
+                }
+            } else {
+                // AI: throttle with timer
+                if !repath_timer.should_repath() {
+                    continue;
+                }
+            }
         }
 
-        let start = (grid_pos.x, grid_pos.y);
+        let mid_movement = current_path.is_some_and(|p| p.progress > 0.0);
+        let old_progress = current_path.map(|p| p.progress).unwrap_or(0.0);
+
+        // For player entities mid-movement: pathfind from the tile we're heading toward
+        // so the entity smoothly continues to it, then follows the new path.
+        let (start, prepend_current) = if is_player && mid_movement {
+            let next = current_path.and_then(|p| p.next_tile());
+            match next {
+                Some(n) => (n, true),
+                None => ((grid_pos.x, grid_pos.y), false),
+            }
+        } else {
+            ((grid_pos.x, grid_pos.y), false)
+        };
+
         if start == goal {
             continue;
         }
 
-        if let Some(path) = astar_tile_grid(
+        if let Some(mut path) = astar_tile_grid(
             start,
             goal,
             tile_world.width,
@@ -271,7 +308,14 @@ pub fn resolve_movement_intent(
             &tile_world.walk_cost,
             5000,
         ) {
-            if current_path.is_some_and(|p| p.progress > 0.0) {
+            if prepend_current {
+                // Prepend GridPosition so the entity finishes its current step smoothly
+                path.insert(0, (grid_pos.x, grid_pos.y));
+                let mut mp = MovePath::new(path);
+                mp.progress = old_progress;
+                commands.entity(entity).insert(mp);
+            } else if mid_movement {
+                // AI entities mid-movement: use PendingPath to avoid snap
                 commands.entity(entity).insert(PendingPath { waypoints: path });
             } else {
                 commands.entity(entity).insert(MovePath::new(path));

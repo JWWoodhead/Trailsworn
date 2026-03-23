@@ -26,6 +26,7 @@ pub enum Action {
     DebugPathing,
     DebugAggro,
     DebugAiState,
+    DebugProfiling,
 }
 
 /// A raw input that can trigger an action.
@@ -72,6 +73,7 @@ impl Default for InputMap {
         map.bind(InputBinding::Key(KeyCode::F2), Action::DebugPathing);
         map.bind(InputBinding::Key(KeyCode::F3), Action::DebugAggro);
         map.bind(InputBinding::Key(KeyCode::F4), Action::DebugAiState);
+        map.bind(InputBinding::Key(KeyCode::F5), Action::DebugProfiling);
 
         map
     }

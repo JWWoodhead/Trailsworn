@@ -87,8 +87,10 @@ pub struct AbilityPriority {
 #[derive(Component, Clone, Debug)]
 pub struct CombatBehavior {
     pub role: CombatRole,
-    /// Desired distance from target in tiles.
-    pub engage_range: f32,
+    /// How far away this entity can detect hostiles (in tiles).
+    pub aggro_range: f32,
+    /// How close to get to a target for attacking (in tiles). Will be replaced by weapon/spell range.
+    pub attack_range: f32,
     /// Flee when HP fraction drops below this (0.0 = never flee).
     pub flee_hp_threshold: f32,
     /// Whether AI should automatically use abilities (true for enemies, false for party).
@@ -102,7 +104,8 @@ impl CombatBehavior {
     pub fn melee_enemy(ability_priorities: Vec<AbilityPriority>) -> Self {
         Self {
             role: CombatRole::MeleeDps,
-            engage_range: 1.5,
+            aggro_range: 25.0,
+            attack_range: 1.5,
             flee_hp_threshold: 0.0,
             auto_use_abilities: true,
             ability_priorities,
@@ -110,10 +113,11 @@ impl CombatBehavior {
     }
 
     /// Create a basic ranged enemy behavior.
-    pub fn ranged_enemy(range: f32, ability_priorities: Vec<AbilityPriority>) -> Self {
+    pub fn ranged_enemy(attack_range: f32, ability_priorities: Vec<AbilityPriority>) -> Self {
         Self {
             role: CombatRole::RangedDps,
-            engage_range: range,
+            aggro_range: 30.0,
+            attack_range,
             flee_hp_threshold: 0.0,
             auto_use_abilities: true,
             ability_priorities,
@@ -121,10 +125,11 @@ impl CombatBehavior {
     }
 
     /// Create a party member behavior (no auto abilities).
-    pub fn party_member(role: CombatRole, engage_range: f32) -> Self {
+    pub fn party_member(role: CombatRole, attack_range: f32) -> Self {
         Self {
             role,
-            engage_range,
+            aggro_range: 25.0,
+            attack_range,
             flee_hp_threshold: 0.0,
             auto_use_abilities: false,
             ability_priorities: Vec::new(),
