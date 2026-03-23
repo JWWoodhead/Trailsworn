@@ -8,6 +8,7 @@ use crate::resources::combat::{
     resolve_hit,
 };
 use crate::resources::damage::{EquippedArmor, EquippedWeapon};
+use crate::resources::events::{AttackMissedEvent, DamageDealtEvent};
 use crate::resources::game_time::GameTime;
 use crate::resources::map::GridPosition;
 use crate::resources::stats::Attributes;
@@ -32,6 +33,8 @@ pub fn auto_attack(
     game_time: Res<GameTime>,
     body_templates: Res<BodyTemplates>,
     status_registry: Res<StatusEffectRegistry>,
+    mut damage_events: MessageWriter<DamageDealtEvent>,
+    mut miss_events: MessageWriter<AttackMissedEvent>,
     mut attackers: Query<(
         Entity,
         &GridPosition,
@@ -86,7 +89,7 @@ pub fn auto_attack(
 
     // Process attacks
     for (attacker_entity, target_entity) in attacks {
-        let (_, _, _, attacker_attrs, mut weapon, _, attacker_name) =
+        let (_, _, _, attacker_attrs, mut weapon, _, _) =
             attackers.get_mut(attacker_entity).unwrap();
 
         weapon.start_cooldown();
@@ -94,7 +97,7 @@ pub fn auto_attack(
         let raw_damage = calculate_damage(attacker_attrs, weapon.weapon.base_damage, weapon.weapon.is_melee);
         let accuracy = calculate_accuracy(attacker_attrs, 0.7, 0.0);
 
-        let (_, mut target_body, target_armor, target_attrs, mut threat_table, target_name) =
+        let (_, mut target_body, target_armor, target_attrs, mut threat_table, _) =
             defenders.get_mut(target_entity).unwrap();
 
         let dodge = calculate_dodge(target_attrs);
@@ -104,7 +107,10 @@ pub fn auto_attack(
         let coverage_roll: f32 = rng.random();
 
         if !accuracy_check(accuracy, dodge, hit_roll) {
-            info!("{} missed {}", attacker_name.0, target_name.0);
+            miss_events.write(AttackMissedEvent {
+                attacker: attacker_entity,
+                target: target_entity,
+            });
             continue;
         }
 
@@ -125,26 +131,28 @@ pub fn auto_attack(
             crate::resources::combat::HitResult::Hit {
                 body_part_index,
                 damage_after_armor,
+                damage_type,
                 ..
             } => {
                 let result = apply_damage(&mut target_body, template, body_part_index, damage_after_armor);
                 let part_name = &template.parts[body_part_index].name;
 
-                info!(
-                    "{} hit {}'s {} for {:.1} damage{}{}",
-                    attacker_name.0,
-                    target_name.0,
-                    part_name,
-                    result.damage_dealt,
-                    if result.part_destroyed { " [DESTROYED]" } else { "" },
-                    if result.target_killed { " [KILLED]" } else { "" },
-                );
+                damage_events.write(DamageDealtEvent {
+                    target: target_entity,
+                    amount: result.damage_dealt,
+                    damage_type,
+                    body_part_name: part_name.clone(),
+                    part_destroyed: result.part_destroyed,
+                    target_killed: result.target_killed,
+                });
 
-                // Generate threat
                 threat_table.add_threat(attacker_entity, result.damage_dealt);
             }
             crate::resources::combat::HitResult::Miss => {
-                info!("{} missed {}", attacker_name.0, target_name.0);
+                miss_events.write(AttackMissedEvent {
+                    attacker: attacker_entity,
+                    target: target_entity,
+                });
             }
         }
     }

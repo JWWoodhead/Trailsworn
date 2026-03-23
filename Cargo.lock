@@ -344,6 +344,7 @@ version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd310426290cec560221f9750c2f4484be4a8eeea7de3483c423329b465c40e"
 dependencies = [
+ "bevy_dylib",
  "bevy_internal",
 ]
 
@@ -659,6 +660,15 @@ dependencies = [
  "log",
  "serde",
  "sysinfo",
+]
+
+[[package]]
+name = "bevy_dylib"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f142f72bbbc1a61338bf6da5dc7cf6dcf223683b9d53bcd635ebff4bfeb5308f"
+dependencies = [
+ "bevy_internal",
 ]
 
 [[package]]
@@ -2707,15 +2717,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c4ee00b289aba7a9e5306d57c2d05499b2e5dc427f84ac708bd2c090212cf3e"
 dependencies = [
  "gl_generator",
-]
-
-[[package]]
-name = "gold_and_glory"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_ecs_tilemap",
- "rand 0.10.0",
 ]
 
 [[package]]
@@ -4794,6 +4795,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "trailsworn"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_ecs_tilemap",
+ "log",
+ "rand 0.10.0",
 ]
 
 [[package]]

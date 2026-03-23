@@ -1,6 +1,6 @@
-use gold_and_glory::resources::body::{humanoid_template, Body, BodyTemplates, Capability};
+use trailsworn::resources::body::{humanoid_template, Body, BodyTemplates, Capability};
 
-fn setup() -> (Body, gold_and_glory::resources::body::BodyTemplate) {
+fn setup() -> (Body, trailsworn::resources::body::BodyTemplate) {
     let template = humanoid_template();
     let body = Body::from_template(&template);
     (body, template)

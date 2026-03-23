@@ -1,4 +1,4 @@
-use gold_and_glory::resources::movement::MovePath;
+use trailsworn::resources::movement::MovePath;
 
 #[test]
 fn new_path_starts_at_zero() {

@@ -6,6 +6,8 @@ use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::combat::InCombat;
 use crate::resources::damage::{DamageType, EquippedArmor, EquippedWeapon, WeaponDef};
 use crate::resources::faction::{Faction, FACTION_PLAYER};
+use crate::resources::game_state::GameState;
+use crate::resources::identity::StableId;
 use crate::resources::map::{render_layers, GridPosition, MapSettings};
 use crate::resources::movement::{FacingDirection, MovementSpeed};
 use crate::resources::stats::{Attributes, CharacterLevel};
@@ -108,6 +110,9 @@ fn spawn_character(
     let world_pos = grid_pos.to_world(map_settings.tile_size);
 
     let mut entity_commands = commands.spawn((
+        Name::new(name.clone()),
+        StableId::next(),
+        DespawnOnExit(GameState::Playing),
         Sprite {
             image: texture.clone(),
             color: tint,
@@ -123,12 +128,12 @@ fn spawn_character(
         FacingDirection::default(),
         faction,
         EntityName(name),
-        Body::from_template(body_template),
-        attributes,
-        CharacterLevel::default(),
     ));
 
     entity_commands.insert((
+        Body::from_template(body_template),
+        attributes,
+        CharacterLevel::default(),
         EquippedWeapon::new(weapon),
         EquippedArmor::default(),
         Mana::new(100.0),

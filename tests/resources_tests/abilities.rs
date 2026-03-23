@@ -1,4 +1,4 @@
-use gold_and_glory::resources::abilities::*;
+use trailsworn::resources::abilities::*;
 
 #[test]
 fn mana_spend_and_regen() {

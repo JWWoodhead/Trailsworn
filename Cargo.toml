@@ -1,13 +1,29 @@
 [package]
-name = "gold_and_glory"
+name = "trailsworn"
 version = "0.1.0"
 edition = "2024"
+
+[features]
+dev = ["bevy/dynamic_linking"]
 
 [dependencies]
 bevy = { version = "0.18.1", features = ["bevy_dev_tools"] }
 bevy_ecs_tilemap = "0.18"
+log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 rand = "0.10.0"
 
 # Enable max optimizations for dependencies but not for our code (fast recompiles)
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.release]
+opt-level = 3
+panic = "abort"
+debug = 0
+strip = "debuginfo"
+
+[profile.distribution]
+inherits = "release"
+strip = true
+lto = "thin"
+codegen-units = 1

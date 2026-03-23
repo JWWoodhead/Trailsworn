@@ -1,4 +1,4 @@
-use gold_and_glory::resources::game_time::{GameTime, TICK_DURATION};
+use trailsworn::resources::game_time::{GameTime, TICK_DURATION};
 
 #[test]
 fn paused_produces_zero_ticks() {

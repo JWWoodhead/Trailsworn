@@ -1,4 +1,4 @@
-use gold_and_glory::resources::status_effects::*;
+use trailsworn::resources::status_effects::*;
 
 fn stun_def() -> StatusEffectDef {
     StatusEffectDef {
@@ -20,7 +20,7 @@ fn poison_def() -> StatusEffectDef {
         max_stacks: 3,
         tick_interval_ticks: 30,
         tick_effect: Some(TickEffect {
-            damage_type: Some(gold_and_glory::resources::damage::DamageType::Shadow),
+            damage_type: Some(trailsworn::resources::damage::DamageType::Shadow),
             amount: 5.0,
             is_heal: false,
         }),

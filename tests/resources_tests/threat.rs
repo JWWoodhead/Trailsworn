@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use gold_and_glory::resources::threat::ThreatTable;
+use trailsworn::resources::threat::ThreatTable;
 
 fn fake_entity(id: u32) -> Entity {
     Entity::from_bits(id as u64)

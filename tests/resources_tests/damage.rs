@@ -1,4 +1,4 @@
-use gold_and_glory::resources::damage::*;
+use trailsworn::resources::damage::*;
 
 #[test]
 fn physical_vs_magical() {

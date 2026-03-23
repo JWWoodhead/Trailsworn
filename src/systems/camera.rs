@@ -2,6 +2,7 @@ use bevy::camera::Projection;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::resources::input::{Action, ActionState};
 use crate::resources::map::MapSettings;
 
 /// Marker for the main game camera.
@@ -32,7 +33,7 @@ pub fn setup_camera(mut commands: Commands, map_settings: Res<MapSettings>) {
 
 pub fn camera_pan(
     time: Res<Time>,
-    keyboard: Res<ButtonInput<KeyCode>>,
+    actions: Res<ActionState>,
     window_query: Query<&Window, With<PrimaryWindow>>,
     mut camera_query: Query<(&mut Transform, &Projection), With<MainCamera>>,
     map_settings: Res<MapSettings>,
@@ -52,17 +53,16 @@ pub fn camera_pan(
     let dt = time.delta_secs();
     let mut delta = Vec2::ZERO;
 
-    // Keyboard panning
-    if keyboard.pressed(KeyCode::KeyW) || keyboard.pressed(KeyCode::ArrowUp) {
+    if actions.pressed(Action::CameraPanUp) {
         delta.y += 1.0;
     }
-    if keyboard.pressed(KeyCode::KeyS) || keyboard.pressed(KeyCode::ArrowDown) {
+    if actions.pressed(Action::CameraPanDown) {
         delta.y -= 1.0;
     }
-    if keyboard.pressed(KeyCode::KeyA) || keyboard.pressed(KeyCode::ArrowLeft) {
+    if actions.pressed(Action::CameraPanLeft) {
         delta.x -= 1.0;
     }
-    if keyboard.pressed(KeyCode::KeyD) || keyboard.pressed(KeyCode::ArrowRight) {
+    if actions.pressed(Action::CameraPanRight) {
         delta.x += 1.0;
     }
 
@@ -70,7 +70,7 @@ pub fn camera_pan(
         delta = delta.normalize() * KEYBOARD_PAN_SPEED * dt * scale;
     }
 
-    // Edge scrolling
+    // Edge scrolling (raw cursor position, not action-mapped)
     if let Some(cursor_pos) = window.cursor_position() {
         let w = window.width();
         let h = window.height();
@@ -82,7 +82,6 @@ pub fn camera_pan(
         if cursor_pos.x > w - EDGE_SCROLL_MARGIN {
             edge_delta.x += 1.0;
         }
-        // Window cursor y is top-down, camera y is bottom-up
         if cursor_pos.y < EDGE_SCROLL_MARGIN {
             edge_delta.y += 1.0;
         }
@@ -98,13 +97,13 @@ pub fn camera_pan(
     transform.translation.x += delta.x;
     transform.translation.y += delta.y;
 
-    // Clamp to map bounds
     let map_w = map_settings.width as f32 * map_settings.tile_size;
     let map_h = map_settings.height as f32 * map_settings.tile_size;
     transform.translation.x = transform.translation.x.clamp(0.0, map_w);
     transform.translation.y = transform.translation.y.clamp(0.0, map_h);
 }
 
+/// Zoom still reads raw scroll events — scroll wheel isn't an "action" in the same sense.
 pub fn camera_zoom(
     mut scroll_events: MessageReader<bevy::input::mouse::MouseWheel>,
     mut camera_query: Query<&mut Projection, With<MainCamera>>,

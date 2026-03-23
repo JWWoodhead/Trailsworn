@@ -178,7 +178,7 @@ pub fn resolve_movement_intent(
         &MovementIntent,
         &mut RepathTimer,
         Option<&MovePath>,
-    ), (Without<PlayerCommand>, Without<crate::systems::spawning::PlayerControlled>)>,
+    ), Without<PlayerCommand>>,
     target_positions: Query<&GridPosition>,
     mut commands: Commands,
 ) {
@@ -281,26 +281,32 @@ pub fn resolve_movement_intent(
     }
 }
 
-/// Remove PlayerCommand when the command has been completed.
-pub fn cleanup_completed_commands(
+/// Clean up completed or invalid player commands and stale movement intents.
+pub fn cleanup_commands(
     mut commands: Commands,
-    query: Query<(Entity, &PlayerCommand)>,
-    positions: Query<&GridPosition>,
+    mut query: Query<(Entity, &GridPosition, Option<&PlayerCommand>, &mut MovementIntent, Option<&MovePath>)>,
+    alive_entities: Query<Entity>,
 ) {
-    for (entity, command) in &query {
-        let completed = match command {
-            PlayerCommand::MoveTo { x, y } => {
-                if let Ok(pos) = positions.get(entity) {
-                    pos.x == *x && pos.y == *y
-                } else {
-                    true
-                }
+    for (entity, pos, command, mut intent, current_path) in &mut query {
+        // Clean up completed/invalid player commands
+        if let Some(cmd) = command {
+            let should_remove = match cmd {
+                PlayerCommand::MoveTo { x, y } => pos.x == *x && pos.y == *y,
+                PlayerCommand::Attack(target) => alive_entities.get(*target).is_err(),
+                PlayerCommand::HoldPosition => false,
+                PlayerCommand::CastAbility { .. } => false,
+            };
+            if should_remove {
+                commands.entity(entity).remove::<PlayerCommand>();
+                *intent = MovementIntent::None;
             }
-            _ => false,
-        };
+        }
 
-        if completed {
-            commands.entity(entity).remove::<PlayerCommand>();
+        // Clear MoveToPosition intent when arrived and no path remaining
+        if let MovementIntent::MoveToPosition { x, y } = *intent {
+            if pos.x == x && pos.y == y && current_path.is_none() {
+                *intent = MovementIntent::None;
+            }
         }
     }
 }

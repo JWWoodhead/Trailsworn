@@ -1,4 +1,4 @@
-use gold_and_glory::resources::stats::{
+use trailsworn::resources::stats::{
     spend_attribute_point, AttributeChoice, Attributes, CharacterLevel,
 };
 

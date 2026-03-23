@@ -1,4 +1,4 @@
-use gold_and_glory::resources::faction::{Disposition, FactionRelations, FACTION_PLAYER};
+use trailsworn::resources::faction::{Disposition, FactionRelations, FACTION_PLAYER};
 
 #[test]
 fn same_faction_is_friendly() {

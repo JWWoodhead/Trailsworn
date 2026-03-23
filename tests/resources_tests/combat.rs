@@ -1,7 +1,7 @@
-use gold_and_glory::resources::body::humanoid_template;
-use gold_and_glory::resources::body::Body;
-use gold_and_glory::resources::combat::*;
-use gold_and_glory::resources::damage::*;
+use trailsworn::resources::body::humanoid_template;
+use trailsworn::resources::body::Body;
+use trailsworn::resources::combat::*;
+use trailsworn::resources::damage::*;
 
 #[test]
 fn accuracy_check_always_hits_at_max() {
@@ -72,7 +72,7 @@ fn apply_damage_non_lethal() {
 
 #[test]
 fn calculate_damage_scales_with_strength_for_melee() {
-    use gold_and_glory::resources::stats::Attributes;
+    use trailsworn::resources::stats::Attributes;
 
     let weak = Attributes { strength: 1, ..Default::default() };
     let strong = Attributes { strength: 20, ..Default::default() };

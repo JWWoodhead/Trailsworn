@@ -1,4 +1,4 @@
-use gold_and_glory::pathfinding::{astar_tile_grid, astar_tile_grid_bounded};
+use trailsworn::pathfinding::{astar_tile_grid, astar_tile_grid_bounded};
 
 fn open_grid(w: u32, h: u32) -> Vec<f32> {
     vec![1.0; (w * h) as usize]

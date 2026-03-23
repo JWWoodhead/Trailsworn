@@ -1,4 +1,4 @@
-use gold_and_glory::pathfinding::HpaGraphBuilder;
+use trailsworn::pathfinding::HpaGraphBuilder;
 
 fn open_grid(w: u32, h: u32) -> Vec<f32> {
     vec![1.0; (w * h) as usize]
