@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use rand::RngExt;
 
-use crate::resources::ai::AiState;
 use crate::resources::body::{Body, BodyTemplates};
+use crate::resources::task::Engaging;
 use crate::resources::combat::{
     accuracy_check, apply_damage, calculate_accuracy, calculate_damage, calculate_dodge,
     resolve_hit,
@@ -28,7 +28,7 @@ pub fn tick_weapon_cooldowns(
     }
 }
 
-/// Auto-attack system: entities with an Engaging AI state attack their target.
+/// Auto-attack system: entities with an EngageTarget action attack their target.
 pub fn auto_attack(
     game_time: Res<GameTime>,
     body_templates: Res<BodyTemplates>,
@@ -38,7 +38,7 @@ pub fn auto_attack(
     mut attackers: Query<(
         Entity,
         &GridPosition,
-        &AiState,
+        &Engaging,
         &Attributes,
         &mut EquippedWeapon,
         &ActiveStatusEffects,
@@ -60,16 +60,13 @@ pub fn auto_attack(
     // Collect attacks to process (avoid borrow conflicts)
     let mut attacks: Vec<(Entity, Entity)> = Vec::new();
 
-    for (attacker_entity, attacker_pos, ai_state, _, weapon, status_effects, _) in &attackers {
+    for (attacker_entity, attacker_pos, engaging, _, weapon, status_effects, _) in &attackers {
         let cc_flags = status_effects.combined_cc_flags(&status_registry);
         if !cc_flags.can_attack() {
             continue;
         }
 
-        let target_entity = match ai_state {
-            AiState::Engaging { target } => *target,
-            _ => continue,
-        };
+        let target_entity = engaging.target;
 
         if !weapon.is_ready() {
             continue;

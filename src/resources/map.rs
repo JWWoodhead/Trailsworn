@@ -2,6 +2,17 @@ use bevy::prelude::*;
 
 use crate::terrain::TerrainType;
 
+/// Cursor position in all coordinate spaces. Computed once per frame by `update_cursor_position`.
+#[derive(Resource, Default)]
+pub struct CursorPosition {
+    /// Screen-space position (for UI placement like tooltips).
+    pub screen: Option<Vec2>,
+    /// World-space position.
+    pub world: Option<Vec2>,
+    /// Tile coordinates (i32 to allow out-of-bounds detection).
+    pub tile: Option<(i32, i32)>,
+}
+
 pub const DEFAULT_TILE_SIZE: f32 = 64.0;
 pub const DEFAULT_MAP_WIDTH: u32 = 250;
 pub const DEFAULT_MAP_HEIGHT: u32 = 250;

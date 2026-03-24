@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
-use crate::resources::ai::{AiState, CombatBehavior};
+use crate::resources::combat_behavior::CombatBehavior;
+use crate::resources::task::{Action, CurrentTask};
 use crate::resources::map::{GridPosition, MapSettings};
 use crate::resources::movement::MovePath;
 use crate::systems::spawning::EntityName;
@@ -170,7 +171,7 @@ pub fn draw_ai_state(
     flags: Res<DebugFlags>,
     map_settings: Res<MapSettings>,
     mut gizmos: Gizmos,
-    query: Query<(&GridPosition, &AiState, Option<&EntityName>)>,
+    query: Query<(&GridPosition, Option<&CurrentTask>, Option<&EntityName>)>,
 ) {
     if !flags.ai_state {
         return;
@@ -181,15 +182,14 @@ pub fn draw_ai_state(
     let color_engage = Color::srgba(1.0, 0.4, 0.2, 0.8);
     let color_flee = Color::srgba(1.0, 1.0, 0.2, 0.8);
 
-    for (grid_pos, ai_state, _name) in &query {
+    for (grid_pos, current_task, _name) in &query {
         let pos = grid_pos.to_world(ts);
         let offset = Vec2::new(0.0, -30.0);
 
-        let (color, size) = match ai_state {
-            AiState::Idle => (color_idle, 3.0),
-            AiState::Engaging { .. } => (color_engage, 5.0),
-            AiState::Fleeing => (color_flee, 4.0),
-            AiState::Following { .. } => (color_idle, 3.0),
+        let (color, size) = match current_task.and_then(|ct| ct.current_action()) {
+            Some(Action::EngageTarget { .. }) => (color_engage, 5.0),
+            Some(Action::FleeFrom { .. }) => (color_flee, 4.0),
+            _ => (color_idle, 3.0),
         };
 
         // Small indicator dot below the entity

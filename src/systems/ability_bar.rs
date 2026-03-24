@@ -427,8 +427,7 @@ pub fn update_resource_bars(
 /// Draw a targeting reticle when in targeting mode.
 pub fn draw_targeting_reticle(
     targeting_mode: Res<TargetingMode>,
-    window_query: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<crate::systems::camera::MainCamera>>,
+    cursor: Res<crate::resources::map::CursorPosition>,
     map_settings: Res<crate::resources::map::MapSettings>,
     mut gizmos: Gizmos,
 ) {
@@ -436,15 +435,8 @@ pub fn draw_targeting_reticle(
         return;
     };
 
-    let Ok(window) = window_query.single() else { return };
-    let Some(cursor_pos) = window.cursor_position() else { return };
-    let Ok((camera, camera_transform)) = camera_query.single() else { return };
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else { return };
-
-    // Snap to tile center
-    let tile_x = (world_pos.x / map_settings.tile_size).round();
-    let tile_y = (world_pos.y / map_settings.tile_size).round();
-    let center = Vec2::new(tile_x * map_settings.tile_size, tile_y * map_settings.tile_size);
+    let Some((tile_x, tile_y)) = cursor.tile else { return };
+    let center = Vec2::new(tile_x as f32 * map_settings.tile_size, tile_y as f32 * map_settings.tile_size);
 
     // Draw crosshair
     let size = map_settings.tile_size * 0.5;

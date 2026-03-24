@@ -32,6 +32,10 @@ pub enum Action {
     // Escape / cancel
     Cancel,
 
+    // UI panels
+    ToggleCharacterSheet,
+    ToggleInventory,
+
     // Debug
     DebugGrid,
     DebugPathing,
@@ -89,6 +93,10 @@ impl Default for InputMap {
 
         // Cancel
         map.bind(InputBinding::Key(KeyCode::Escape), Action::Cancel);
+
+        // UI panels
+        map.bind(InputBinding::Key(KeyCode::KeyC), Action::ToggleCharacterSheet);
+        map.bind(InputBinding::Key(KeyCode::KeyI), Action::ToggleInventory);
 
         // Debug
         map.bind(InputBinding::Key(KeyCode::F1), Action::DebugGrid);

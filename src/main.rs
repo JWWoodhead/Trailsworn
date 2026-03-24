@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use bevy_ecs_tilemap::TilemapPlugin;
 use trailsworn::resources::abilities::AbilityRegistry;
 use trailsworn::resources::ability_defs::register_starter_abilities;
+use trailsworn::resources::item_defs::register_starter_items;
+use trailsworn::resources::items::ItemRegistry;
 use trailsworn::resources::body::{humanoid_template, BodyTemplates};
 use trailsworn::resources::events::{AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
 use trailsworn::resources::faction::{Disposition, FactionRelations};
@@ -16,8 +18,8 @@ use trailsworn::resources::status_effects::StatusEffectRegistry;
 use trailsworn::resources::theme::Theme;
 use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::systems::{
-    ability_bar, ai, camera, casting, combat, debug, floating_text, game_time, health_bars,
-    hover_info, hud, movement, profiling, rendering, selection, spawning, zone,
+    ability_bar, camera, casting, character_sheet, combat, debug, floating_text, game_time,
+    health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, zone,
 };
 use trailsworn::worldgen::world_map::generate_world_map;
 
@@ -37,6 +39,9 @@ fn main() {
     let mut ability_registry = AbilityRegistry::default();
     let mut status_registry = StatusEffectRegistry::default();
     register_starter_abilities(&mut ability_registry, &mut status_registry);
+
+    let mut item_registry = ItemRegistry::default();
+    register_starter_items(&mut item_registry);
 
     // Generate world map
     let world_map = generate_world_map(5, 5, world_seed);
@@ -73,6 +78,7 @@ fn main() {
     .insert_resource(body_templates)
     .insert_resource(ability_registry)
     .insert_resource(status_registry)
+    .insert_resource(item_registry)
     .insert_resource(Theme::default())
     .insert_resource(StableIdRegistry::default())
     .insert_resource(trailsworn::resources::selection::DragSelection::default())
@@ -80,6 +86,7 @@ fn main() {
     .insert_resource(InputMap::default())
     .insert_resource(ActionState::default())
     .insert_resource(trailsworn::systems::profiling::FrameProfiler::default())
+    .insert_resource(trailsworn::resources::map::CursorPosition::default())
     .insert_resource(world_map)
     .insert_resource(current_zone)
     // Messages
@@ -112,6 +119,8 @@ fn main() {
             hover_info::setup_hover_tooltip,
             hud::setup_hud,
             ability_bar::setup_ability_bar,
+            character_sheet::setup_character_sheet,
+            inventory::setup_inventory_panel,
             spawn_initial_zone_entities,
             transition_to_playing,
         )
@@ -124,21 +133,35 @@ fn main() {
             // Input
             (
                 input::process_input,
+                camera::update_cursor_position.after(input::process_input),
                 game_time::game_speed_input.after(input::process_input),
                 camera::camera_pan.after(input::process_input),
                 camera::camera_zoom,
-                selection::selection_input.after(input::process_input),
-                selection::right_click_command.after(input::process_input),
+                selection::selection_input.after(camera::update_cursor_position),
+                selection::right_click_command.after(camera::update_cursor_position),
                 selection::ability_input.after(input::process_input),
+                character_sheet::toggle_character_sheet.after(input::process_input),
+                inventory::toggle_inventory.after(input::process_input),
             )
                 .in_set(GameSet::Input),
             // Tick
             game_time::advance_game_time.in_set(GameSet::Tick),
-            // AI
+            // Task scheduling, evaluation, execution
             (
-                ai::ai_decision,
-                ai::ai_ability_usage.after(ai::ai_decision),
-                ai::resolve_movement_intent.after(ai::ai_decision),
+                task::advance_eval_timers,
+                task::flee.after(task::advance_eval_timers),
+                task::use_ability.after(task::advance_eval_timers),
+                task::engage_combat.after(task::advance_eval_timers),
+                task::defend_self.after(task::advance_eval_timers),
+                task::follow_leader.after(task::advance_eval_timers),
+                task::assign_task
+                    .after(task::flee)
+                    .after(task::use_ability)
+                    .after(task::engage_combat)
+                    .after(task::defend_self)
+                    .after(task::follow_leader),
+                task::execute_actions.after(task::assign_task),
+                movement::resolve_movement.after(task::execute_actions),
             )
                 .in_set(GameSet::Ai),
             // Combat
@@ -152,7 +175,6 @@ fn main() {
                 casting::interrupt_casting.after(combat::auto_attack),
                 combat::tick_status_effects,
                 combat::cleanup_dead.after(casting::tick_casting),
-                ai::cleanup_commands.after(casting::tick_casting),
             )
                 .in_set(GameSet::Combat),
             // Movement + Zone transitions
@@ -162,7 +184,7 @@ fn main() {
                 zone::handle_zone_transition.after(zone::detect_zone_edge),
             )
                 .in_set(GameSet::Movement),
-            // UI
+            // UI (split into two groups to stay within Bevy's tuple limit)
             (
                 health_bars::spawn_health_bars,
                 health_bars::update_health_bars,
@@ -172,12 +194,17 @@ fn main() {
                 hover_info::update_hover_tooltip,
                 selection::update_selection_visuals,
                 selection::draw_drag_box,
+            )
+                .in_set(GameSet::Ui),
+            (
                 hud::update_speed_indicator,
                 hud::combat_log_damage,
                 ability_bar::update_ability_bar,
                 ability_bar::update_cast_bar,
                 ability_bar::update_resource_bars,
                 ability_bar::draw_targeting_reticle,
+                character_sheet::update_character_sheet,
+                inventory::update_inventory_panel,
             )
                 .in_set(GameSet::Ui),
             // Render
@@ -296,17 +323,16 @@ fn spawn_initial_zone_entities(
                         trailsworn::resources::abilities::AbilitySlots::new(vec![
                             trailsworn::resources::ability_defs::ABILITY_CLEAVE,
                         ]),
-                        trailsworn::resources::ai::CombatBehavior::melee_enemy(vec![
-                            trailsworn::resources::ai::AbilityPriority {
+                        trailsworn::resources::combat_behavior::CombatBehavior::melee_enemy(vec![
+                            trailsworn::resources::combat_behavior::AbilityPriority {
                                 ability_id: trailsworn::resources::ability_defs::ABILITY_CLEAVE,
                                 slot_index: 0,
-                                condition: trailsworn::resources::ai::UseCondition::Always,
+                                condition: trailsworn::resources::combat_behavior::UseCondition::Always,
                                 priority: 10,
                             },
                         ]),
-                        trailsworn::resources::ai::AiState::default(),
-                        trailsworn::resources::ai::MovementIntent::default(),
-                        trailsworn::resources::ai::RepathTimer::default(),
+                        trailsworn::resources::movement::RepathTimer::default(),
+                        trailsworn::resources::task::AiBrain::enemy(),
                         trailsworn::resources::combat::InCombat,
                     ));
                 }

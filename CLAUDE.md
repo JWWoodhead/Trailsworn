@@ -17,9 +17,14 @@ src/
   generation.rs        — Legacy test map generator (replaced by worldgen)
 
   systems/             — All Bevy systems (ECS logic that runs each frame)
+    task/              — AI evaluator systems (one file per evaluator + scheduling)
   resources/           — All Components, Resources, and data types
   pathfinding/         — A* and HPA* (pure algorithms, no Bevy)
   worldgen/            — World/zone/history generation (pure Rust, no Bevy)
+
+tests/
+  systems.rs           — Integration test harness
+  systems_tests/       — Per-system integration tests
 ```
 
 ### Architecture Rules (from memory/feedback_architecture.md)
@@ -42,22 +47,34 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `game_time::game_speed_input` — pause (Space), speed (1/2/3)
 - `camera::camera_pan` — WASD/arrows + edge scroll
 - `camera::camera_zoom` — scroll wheel (reads raw events, not action-mapped)
-- `selection::selection_input` — left-click select, drag-box multi-select
-- `selection::right_click_command` — sets `MovementIntent` (move) or `PlayerCommand` + `MovementIntent` (attack)
+- `selection::selection_input` — left-click select, drag-box multi-select, targeting mode resolution
+- `selection::right_click_command` — creates move or attack `Task` on selected entities
+- `selection::ability_input` — ability hotkeys (Q/E/R/T/F/G), creates cast `Task` or enters targeting mode
 
 ### Tick (GameSet::Tick)
 - `game_time::advance_game_time` — accumulates real time into simulation ticks (60Hz fixed timestep)
 
-### AI (GameSet::Ai)
-- `ai::ai_decision` — target selection, intent setting. **Skips PlayerControlled entities.** Uses `aggro_range` from `CombatBehavior` to limit detection distance.
-- `ai::resolve_movement_intent` — converts `MovementIntent` → A* pathfinding → `MovePath`. Handles ALL entities. AI uses `RepathTimer` (every 30 ticks). Player entities bypass timer but only repath when destination changes.
+### AI / Task Execution (GameSet::Ai)
+- `task::advance_eval_timers` — decrements evaluator cooldowns on `AiBrain`, clears stale proposals each frame
+- `task::flee` — proposes `FleeFrom`/`Wait` when HP below threshold (priority 90)
+- `task::use_ability` — proposes `CastAbility` for first valid ability matching conditions (priority 70)
+- `task::engage_combat` — proposes `EngageTarget` for nearest hostile within aggro range (priority 60)
+- `task::defend_self` — proposes `EngageTarget` only when attacked (threat table non-empty, priority 60)
+- `task::follow_leader` — proposes `FollowEntity` for configured leader (priority 20)
+- `task::assign_task` — picks highest-priority proposal from `AiBrain.proposals`, assigns as `CurrentTask` (respects player task protection, interruptibility, CC)
+- `task::execute_actions` — advances the current `Action` in each entity's `CurrentTask`. Handles completion/failure detection, cast initiation (inserts `CastingState`), and action sequencing. Manages `Engaging` marker component. Runs for ALL entities.
+- `movement::resolve_movement` — reads the current action from `CurrentTask`, extracts a movement goal, and runs A* pathfinding → `MovePath`. Handles repath throttling (`RepathTimer`, 30 ticks for AI), mid-movement repathing (`PendingPath` for AI, progress-preserving prepend for players).
 
 ### Combat (GameSet::Combat)
 - `combat::tick_weapon_cooldowns` — decrements weapon cooldown per tick
-- `combat::auto_attack` — entities with `AiState::Engaging` attack their target when in range and weapon ready. Fires `DamageDealtEvent` / `AttackMissedEvent`.
+- `combat::auto_attack` — entities with an `Engaging` marker attack their target when in range and weapon ready. Fires `DamageDealtEvent` / `AttackMissedEvent`.
+- `casting::tick_ability_cooldowns` — decrements per-slot ability cooldowns
+- `casting::regenerate_resources` — mana/stamina regen per tick
+- `casting::begin_cast` — processes newly-added `CastingState`: spends resources, starts cooldowns, resolves instant casts
+- `casting::tick_casting` — counts down cast timers, resolves effects on completion
+- `casting::interrupt_casting` — removes `CastingState` if caster takes damage and ability is interruptible
 - `combat::tick_status_effects` — decrements status effect durations
 - `combat::cleanup_dead` — despawns entities whose vital body parts are destroyed
-- `ai::cleanup_commands` — removes completed/invalid `PlayerCommand`, clears stale `MovementIntent`
 
 ### Movement (GameSet::Movement)
 - `movement::movement` — advances `MovePath.progress` each tick. Updates `GridPosition` when arriving at next tile. Swaps in `PendingPath` at tile boundaries (AI only). Applies ease-in/ease-out speed multiplier over the whole path (first 1.5 tiles accelerate, last 1.5 tiles decelerate).
@@ -89,22 +106,74 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `debug::draw_grid` — tile grid lines
 - `debug::draw_pathing` — blue lines showing entity movement paths
 - `debug::draw_aggro_radius` — red circles showing detection range
-- `debug::draw_ai_state` — colored dots showing AI state (idle/engaging/fleeing)
+- `debug::draw_ai_state` — colored dots showing current task action (idle/engaging/fleeing)
 - `profiling::frame_profiler` — FPS and frame time (F5 to toggle)
 - `profiling::entity_counter` — total entity count breakdown
 
-## Movement Pipeline (Critical — Complex Area)
+## Task/Action Brain System
+
+Inspired by Rimworld's Job/Toil system. Split into two components:
+- **`CurrentTask`** (Component) — on ALL entities. Holds the active `Task` with its action sequence.
+- **`AiBrain`** (Component) — on NPC entities ONLY. Holds evaluator list, cooldowns, and proposals vec.
+
+### Core types (`resources/task.rs`):
+- **`CurrentTask`** (Component): wraps the active `Task`. Method `should_replace()` determines if a proposal beats the current task (player tasks only replaced by player tasks, respects interruptibility).
+- **`AiBrain`** (Component): holds `evaluators` list, per-category cooldowns (combat ~5 ticks, routine ~60 ticks), and `proposals` vec that evaluators push into each frame.
+- **`Task`**: label, priority, source (Evaluator/Player), action sequence, current index, interruptible flag.
+- **`Action`** (enum): `MoveToEntity`, `MoveToPosition`, `FleeFrom`, `FollowEntity`, `EngageTarget`, `Wait`, `CastAbility`.
+- **`Engaging`** (marker Component): automatically added/removed by `execute_actions` when current action is `EngageTarget`.
+- **`TaskEvaluator`** (enum): `EngageCombat`, `Flee`, `UseAbility`, `DefendSelf`, `FollowLeader`, `Idle`. Each is a separate system that pushes proposals into `AiBrain.proposals`.
+- **`TaskSource`**: `Evaluator` (AI-generated) or `Player` (from input). Player tasks can only be replaced by other player tasks.
+
+### How it flows:
+1. **`advance_eval_timers`**: decrements evaluator cooldowns, clears stale proposals.
+2. **Individual evaluator systems** (NPC-only): each evaluator (`flee`, `use_ability`, `engage_combat`, `defend_self`, `follow_leader`) runs on its own cooldown and pushes an `Option<Task>` proposal into `AiBrain.proposals`.
+3. **`assign_task`**: picks the highest-priority proposal. If it beats the current task (via `CurrentTask::should_replace()`), it replaces it. Respects CC (incapacitated entities don't change tasks).
+4. **`execute_actions`** (all entities): advances the current action. Checks completion (in range? arrived? cast finished? target dead?). Advances to next action on Done, clears task on Failed. Manages `Engaging` marker.
+5. **`resolve_movement`** (all entities): reads the current action from `CurrentTask`, extracts a movement goal, and pathfinds. Movement actions produce pathfinding goals. Non-movement actions (`Wait`, `CastAbility`) clear paths.
+6. **Existing systems do the rest**: `movement` follows `MovePath`, `auto_attack` reads the `Engaging` marker, casting pipeline processes `CastingState`.
+
+### Player commands:
+Player input (right-click, ability hotkeys) injects a `Task` directly into the entity's `CurrentTask` with `TaskSource::Player` and priority 100. No special component — player commands are just high-priority tasks.
+- Right-click ground → `Task { [MoveToPosition] }`
+- Right-click enemy → `Task { [EngageTarget] }`
+- Ability hotkey → `Task { [CastAbility] }` (or enters targeting mode)
+
+### Evaluator loadouts:
+- **AI enemies**: `[Flee, UseAbility, EngageCombat, Idle]` via `AiBrain::enemy()`
+- **Player party**: no `AiBrain` component — driven entirely by player commands
+- **Future NPC allies**: configurable evaluator lists based on `PartyMode`
+
+### Evaluator → priority mapping:
+| Evaluator | Priority | Trigger |
+|-----------|----------|---------|
+| Flee | 90 | HP below `flee_hp_threshold` |
+| UseAbility | 70 | `auto_use_abilities` + valid ability + engaging target |
+| EngageCombat | 60 | Hostile within `aggro_range` or threat table entry |
+| DefendSelf | 60 | Threat table non-empty (counter-attack only) |
+| FollowLeader | 20 | Always (when configured) |
+| Idle | — | Returns None (fallback) |
+
+### CombatBehavior component (`resources/combat_behavior.rs`):
+- `role`: Tank, MeleeDps, RangedDps, Healer, Caster
+- `aggro_range`: detection distance in tiles (25 for melee, 30 for ranged)
+- `attack_range`: how close to get for attacking (1.5 for melee)
+- `flee_hp_threshold`: flee when HP fraction drops below this (0.0 = never flee)
+- `auto_use_abilities`: true for enemies, false for party members
+- `ability_priorities`: ordered list of abilities with conditions (`UseCondition` enum)
+
+## Movement Pipeline
 
 ### How movement works:
-1. Something sets `MovementIntent` on an entity (AI decision or player right-click)
-2. `resolve_movement_intent` converts intent → A* pathfinding → `MovePath`
+1. The current `Action` on the entity's `CurrentTask` determines the movement goal (via `resolve_movement`)
+2. `resolve_movement` extracts a goal tile from the action, runs A* pathfinding → `MovePath`
 3. `movement` system advances `progress` 0→1 for each tile-to-tile segment
 4. When `progress >= 1.0`: updates `GridPosition`, calls `advance()` (resets progress, increments waypoint index)
 5. `sync_transforms` lerps visual position between `GridPosition` and `next_tile()` using `progress`
 
 ### Player vs AI movement:
-- **AI:** `ai_decision` sets `MovementIntent`. `resolve_movement_intent` uses `RepathTimer` (30 ticks) to throttle. Mid-movement repathing creates `PendingPath` which swaps in at tile boundary.
-- **Player:** `right_click_command` sets `MovementIntent` directly. `ai_decision` skips `PlayerControlled` entities. `resolve_movement_intent` bypasses timer but only repaths when destination changes. Mid-movement repathing pathfinds from the NEXT tile (where entity is heading), prepends `GridPosition` to the path, and preserves progress — so the entity smoothly finishes its current step then follows the new path. No `PendingPath` for players.
+- **AI:** evaluators set tasks with movement actions. `resolve_movement` uses `RepathTimer` (30 ticks) to throttle. Mid-movement repathing creates `PendingPath` which swaps in at tile boundary.
+- **Player:** `right_click_command`/`ability_input` inject tasks directly. `resolve_movement` bypasses timer but only repaths when destination changes. Mid-movement repathing pathfinds from the NEXT tile (where entity is heading), prepends `GridPosition` to the path, and preserves progress — so the entity smoothly finishes its current step then follows the new path. No `PendingPath` for players.
 
 ### PathOffset:
 Each entity has a random ±20% tile offset (`PathOffset` component) applied in `sync_transforms`. Makes movement look less robotic — entities don't all walk through exact tile centers.
@@ -150,43 +219,17 @@ Diagonal movement is ~41% faster visually because progress 0→1 takes the same 
 - Stat modifiers: MoveSpeedMul, AttackSpeedMul, AttributeFlat
 - `ActiveStatusEffects` component tracks all active effects per entity
 
-### Abilities (data structures exist, NOT yet wired to casting systems):
+### Abilities:
 - `AbilityDef`: cast time, cooldown, mana/stamina cost, range, target type (Single/Circle/Cone/Line), effects chain
 - `AbilitySlots`: per-entity known abilities with cooldown state
 - `Mana` + `Stamina`: separate resource pools
-- `CastingState`: tracks active casting (interruptible flag)
+- `CastingState`: tracks active casting (interruptible flag). Inserted by `execute_actions` when processing a `CastAbility` action.
+- Casting pipeline: `begin_cast` (spend resources, resolve instants) → `tick_casting` (countdown) → `interrupt_casting` (on damage)
 
 ### Threat:
 - `ThreatTable` per entity — tracks threat from each attacker
 - Damage generates threat
-- AI uses highest-threat target when available
-
-## AI System
-
-### CombatBehavior component:
-- `role`: Tank, MeleeDps, RangedDps, Healer, Caster
-- `aggro_range`: detection distance in tiles (25 for melee, 30 for ranged)
-- `attack_range`: how close to get for attacking (1.5 for melee)
-- `flee_hp_threshold`: flee when HP fraction drops below this
-- `auto_use_abilities`: true for enemies, false for party members
-- `ability_priorities`: ordered list of abilities with conditions
-
-### AI decision flow (ai_decision system):
-1. Check CC — incapacitated entities can't act
-2. Check PartyMode — Passive entities don't engage
-3. Check flee threshold
-4. Select target: threat table → nearest hostile within `aggro_range`
-5. Set `AiState::Engaging` + `MovementIntent::MoveToEntity`
-
-### PlayerCommand:
-- `MoveTo`, `Attack`, `HoldPosition`, `CastAbility`
-- While present, `ai_decision` skips the entity
-- `cleanup_commands` removes when completed or target dies
-
-### MovementIntent:
-- `None`, `MoveToEntity`, `MoveToPosition`, `FleeFrom`, `FollowEntity`
-- Set by AI (`ai_decision`) or player (`right_click_command`)
-- Consumed by `resolve_movement_intent` which produces `MovePath`
+- AI evaluators use highest-threat target when available
 
 ## World Generation (pure Rust, no Bevy)
 
@@ -260,7 +303,8 @@ All keybindings centralized. Systems read `ActionState`, never raw `ButtonInput<
 
 - `InputMap`: maps `InputBinding` (key or mouse button) → `Action`
 - `ActionState`: populated each frame by `process_input` system
-- `Action` enum: CameraPan(Up/Down/Left/Right), Pause, Speed(1/2/3), Select, Command, Debug(Grid/Pathing/Aggro/AiState/Profiling)
+- `Action` enum: CameraPan(Up/Down/Left/Right), Pause, Speed(1/2/3), Select, Command, Cancel, AbilitySlot(1-6), Debug toggles
+- `CursorPosition`: resource computed once per frame by `selection::update_cursor_position` (early Input set). Holds screen, world, and tile coordinates. All downstream systems read this instead of querying raw cursor position.
 - Scroll wheel for zoom reads raw `MessageReader<MouseWheel>` (not action-mapped)
 - To rebind: `input_map.bind(InputBinding::Key(KeyCode::KeyQ), Action::Pause)`
 
@@ -272,6 +316,7 @@ All keybindings centralized. Systems read `ActionState`, never raw `ButtonInput<
 - **StableId**: on all persistent entities. `StableIdRegistry` for lookups. Ready for save/load.
 - **Name component**: Bevy's built-in `Name` alongside `EntityName` on all characters.
 - **Events as Messages**: `DamageDealtEvent`, `AttackMissedEvent`, `ZoneTransitionEvent` use Bevy 0.18's `Message`/`MessageWriter`/`MessageReader`.
+- **CurrentTask on all agents**: every entity that acts gets a `CurrentTask`. NPC entities additionally get `AiBrain::enemy()` for evaluator-driven behavior. Player entities have no `AiBrain` — driven entirely by player commands.
 
 ## Design System ("The Gritty Chronicle")
 
@@ -286,11 +331,11 @@ Colors in `resources/theme.rs`:
 
 ## Tests
 
-153 tests covering:
+70 tests covering:
 - Pathfinding (A*, HPA*, bounded A*)
 - Body parts, stats, leveling
 - Combat resolution, damage, armor
-- Abilities, mana/stamina
+- Abilities, mana/stamina, casting validation
 - Status effects, CC flags
 - Factions, threat tables
 - Game time, movement
@@ -301,13 +346,13 @@ Colors in `resources/theme.rs`:
 ## Known Issues / Not Yet Implemented
 
 - **Tile occupancy**: entities can overlap on the same tile. Needs pathfinding-level solution.
-- **Ability casting**: data structures exist but no systems wire them to gameplay.
 - **Zone persistence**: killed enemies respawn on re-entry (zones regenerate from seed).
 - **History → gameplay integration**: generated history not yet connected to zone generation or NPC dialogue.
 - **Diagonal speed**: entities move ~41% faster diagonally (accepted for now).
 - **Cover system**: planned but not implemented.
 - **Items/equipment/loot**: not implemented.
 - **Save/load**: `StableId` infrastructure ready but serialization not built.
+- **UseCondition gaps**: `AllyHpBelow` and `EnemiesInRange` evaluator conditions are stubbed (return false).
 
 ## CLI
 

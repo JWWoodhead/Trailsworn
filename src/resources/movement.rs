@@ -35,6 +35,9 @@ pub struct MovePath {
     pub progress: f32,
     /// Total number of segments in this path (for whole-path easing).
     pub total_segments: usize,
+    /// Cumulative tiles traveled from journey start. Persists across path swaps
+    /// so ease-in doesn't reset when AI entities repath mid-movement.
+    pub tiles_traveled: f32,
 }
 
 impl MovePath {
@@ -45,6 +48,7 @@ impl MovePath {
             current_index: 0,
             progress: 0.0,
             total_segments: total,
+            tiles_traveled: 0.0,
         }
     }
 
@@ -61,8 +65,10 @@ impl MovePath {
         const EASE_TILES: f32 = 1.5;
         const MIN_SPEED: f32 = 0.5;
 
-        let tiles_from_start = self.current_index as f32 + self.progress;
-        let tiles_from_end = self.total_segments as f32 - tiles_from_start;
+        // Use accumulated travel distance for ease-in so it doesn't reset on path swaps
+        let tiles_from_start = self.tiles_traveled + self.current_index as f32 + self.progress;
+        // Use current path's remaining distance for ease-out
+        let tiles_from_end = (self.total_segments - self.current_index) as f32 - self.progress;
 
         let ease_in = if tiles_from_start < EASE_TILES {
             MIN_SPEED + (1.0 - MIN_SPEED) * (tiles_from_start / EASE_TILES)
@@ -92,6 +98,7 @@ impl MovePath {
     }
 
     pub fn advance(&mut self) {
+        self.tiles_traveled += 1.0;
         self.current_index += 1;
         self.progress = 0.0;
     }
@@ -122,6 +129,36 @@ impl PathOffset {
             x: rng.random::<f32>() * 0.4 - 0.2,
             y: rng.random::<f32>() * 0.4 - 0.2,
         }
+    }
+}
+
+/// Tracks when the entity last repathed, to avoid repathing every tick.
+#[derive(Component, Debug)]
+pub struct RepathTimer {
+    pub ticks_since_repath: u32,
+    pub repath_interval: u32,
+}
+
+impl Default for RepathTimer {
+    fn default() -> Self {
+        Self {
+            ticks_since_repath: 0,
+            repath_interval: 30,
+        }
+    }
+}
+
+impl RepathTimer {
+    pub fn tick(&mut self) {
+        self.ticks_since_repath += 1;
+    }
+
+    pub fn should_repath(&self) -> bool {
+        self.ticks_since_repath >= self.repath_interval
+    }
+
+    pub fn reset(&mut self) {
+        self.ticks_since_repath = 0;
     }
 }
 

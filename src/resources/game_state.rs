@@ -18,7 +18,7 @@ pub enum GameSet {
     Input,
     /// Game time advancement, tick accumulation.
     Tick,
-    /// AI decision-making and movement intent.
+    /// AI evaluation, task execution, and movement pathfinding.
     Ai,
     /// Combat resolution: attacks, damage, status effects.
     Combat,

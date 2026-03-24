@@ -1,12 +1,10 @@
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 
 use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::damage::EquippedWeapon;
-use crate::resources::map::{GridPosition, MapSettings};
+use crate::resources::map::CursorPosition;
 use crate::resources::stats::Attributes;
 use crate::resources::theme::Theme;
-use crate::systems::camera::MainCamera;
 use crate::systems::spawning::EntityName;
 
 /// Marker for the hover tooltip root node.
@@ -43,12 +41,10 @@ pub fn setup_hover_tooltip(mut commands: Commands, theme: Res<Theme>) {
 
 /// Update the hover tooltip based on what entity the cursor is over.
 pub fn update_hover_tooltip(
-    window_query: Query<&Window, With<PrimaryWindow>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    map_settings: Res<MapSettings>,
+    cursor: Res<CursorPosition>,
     body_templates: Res<BodyTemplates>,
     entities: Query<(
-        &GridPosition,
+        &crate::resources::map::GridPosition,
         &EntityName,
         &Body,
         &Attributes,
@@ -57,25 +53,10 @@ pub fn update_hover_tooltip(
     mut tooltip_query: Query<&mut Node, With<HoverTooltip>>,
     mut text_query: Query<&mut Text, With<HoverTooltipText>>,
 ) {
-    let Ok(window) = window_query.single() else {
-        return;
-    };
-    let Ok((camera, camera_transform)) = camera_query.single() else {
-        return;
-    };
-
-    let Some(cursor_pos) = window.cursor_position() else {
+    let Some((tile_x, tile_y)) = cursor.tile else {
         hide_tooltip(&mut tooltip_query);
         return;
     };
-
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else {
-        hide_tooltip(&mut tooltip_query);
-        return;
-    };
-
-    let tile_x = (world_pos.x / map_settings.tile_size).round() as i32;
-    let tile_y = (world_pos.y / map_settings.tile_size).round() as i32;
 
     // Find entity at this tile
     let mut found = None;
@@ -120,8 +101,11 @@ pub fn update_hover_tooltip(
                 **text = info;
             }
 
-            node.left = Val::Px(cursor_pos.x + 16.0);
-            node.top = Val::Px(cursor_pos.y + 16.0);
+            // Position tooltip near cursor (screen-space)
+            if let Some(screen_pos) = cursor.screen {
+                node.left = Val::Px(screen_pos.x + 16.0);
+                node.top = Val::Px(screen_pos.y + 16.0);
+            }
             node.display = Display::Flex;
         }
         None => {

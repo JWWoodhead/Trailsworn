@@ -2,15 +2,16 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::resources::abilities::{
-    AbilityRegistry, AbilitySlots, CastTarget, CastingState, Mana, Stamina, TargetType,
+    AbilityRegistry, AbilitySlots, CastTarget, Mana, Stamina, TargetType,
 };
-use crate::resources::ai::{AbilityTarget, AiState, MovementIntent, PlayerCommand};
+use crate::resources::casting::validate_cast;
 use crate::resources::damage::EquippedWeapon;
 use crate::resources::faction::{Faction, FactionRelations};
 use crate::resources::input::{Action, ActionState};
-use crate::resources::map::{GridPosition, MapSettings, TileWorld, render_layers};
+use crate::resources::map::{CursorPosition, GridPosition, MapSettings, TileWorld, render_layers};
 use crate::resources::selection::{DragSelection, Selected, TargetingMode};
 use crate::resources::status_effects::{ActiveStatusEffects, StatusEffectRegistry};
+use crate::resources::task::{self, CurrentTask, Engaging, Task, TaskSource};
 use crate::systems::camera::MainCamera;
 use crate::systems::spawning::PlayerControlled;
 
@@ -20,43 +21,40 @@ pub struct SelectionRing {
     pub owner: Entity,
 }
 
-/// Handle left-click: targeting mode resolution, drag select, or single-click select.
+/// Handle left-click: drag select, single-click select, or resolve targeting mode.
+/// When targeting mode is active, left-click resolves the target into a cast task.
+/// Otherwise, left-click performs normal selection (drag or single-click).
 pub fn selection_input(
     actions: Res<ActionState>,
-    ability_registry: Res<AbilityRegistry>,
-    window_query: Query<&Window, With<PrimaryWindow>>,
+    cursor: Res<CursorPosition>,
+    mut targeting_mode: ResMut<TargetingMode>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     map_settings: Res<MapSettings>,
     mut drag: ResMut<DragSelection>,
-    mut targeting_mode: ResMut<TargetingMode>,
     mut commands: Commands,
     player_entities: Query<(Entity, &GridPosition), With<PlayerControlled>>,
     already_selected: Query<Entity, With<Selected>>,
     targetable_entities: Query<(Entity, &GridPosition, &Faction), Without<PlayerControlled>>,
     caster_positions: Query<&GridPosition>,
 ) {
-    let Ok(window) = window_query.single() else { return };
-    let Some(cursor_pos) = window.cursor_position() else { return };
+    let Some(cursor_screen) = cursor.screen else { return };
 
-    // --- Normal selection: drag tracking (only when not targeting) ---
+    // Drag tracking (only when not targeting)
     if matches!(*targeting_mode, TargetingMode::None) {
         if actions.just_pressed(Action::Select) {
-            drag.begin(cursor_pos);
+            drag.begin(cursor_screen);
         }
 
         if actions.pressed(Action::Select) {
-            drag.update(cursor_pos);
+            drag.update(cursor_screen);
         }
     }
 
     if actions.just_released(Action::Select) {
-        // --- Targeting mode: resolve the target on release ---
+        // Targeting mode active — resolve the targeting click
         if !matches!(*targeting_mode, TargetingMode::None) {
             resolve_targeting_click(
-                cursor_pos,
-                &ability_registry,
-                &camera_query,
-                &map_settings,
+                &cursor,
                 &mut targeting_mode,
                 &mut commands,
                 &targetable_entities,
@@ -65,13 +63,14 @@ pub fn selection_input(
             drag.reset();
             return;
         }
+
         let Ok((camera, camera_transform)) = camera_query.single() else {
             drag.reset();
             return;
         };
 
         if drag.active {
-            if let Some((min, max)) = drag.rect(cursor_pos) {
+            if let Some((min, max)) = drag.rect(cursor_screen) {
                 for entity in &already_selected {
                     commands.entity(entity).remove::<Selected>();
                 }
@@ -92,13 +91,10 @@ pub fn selection_input(
                 }
             }
         } else {
-            let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else {
+            let Some((tile_x, tile_y)) = cursor.tile else {
                 drag.reset();
                 return;
             };
-
-            let tile_x = (world_pos.x / map_settings.tile_size).round() as i32;
-            let tile_y = (world_pos.y / map_settings.tile_size).round() as i32;
 
             for entity in &already_selected {
                 commands.entity(entity).remove::<Selected>();
@@ -115,33 +111,28 @@ pub fn selection_input(
     }
 }
 
-/// Resolve a targeting-mode click into a cast command.
+/// Resolve a left-click during targeting mode into a cast task.
 fn resolve_targeting_click(
-    cursor_pos: Vec2,
-    ability_registry: &AbilityRegistry,
-    camera_query: &Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    map_settings: &MapSettings,
-    targeting_mode: &mut ResMut<TargetingMode>,
+    cursor: &CursorPosition,
+    targeting_mode: &mut TargetingMode,
     commands: &mut Commands,
     targetable_entities: &Query<(Entity, &GridPosition, &Faction), Without<PlayerControlled>>,
     caster_positions: &Query<&GridPosition>,
 ) {
+    let Some((tile_x, tile_y)) = cursor.tile else { return };
+    let tile_x = tile_x as u32;
+    let tile_y = tile_y as u32;
+
     let TargetingMode::AwaitingTarget {
         caster,
         ability_id,
         slot_index,
         target_type,
         ..
-    } = &**targeting_mode
+    } = &*targeting_mode
     else {
         return;
     };
-
-    let Ok((camera, camera_transform)) = camera_query.single() else { return };
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else { return };
-
-    let tile_x = (world_pos.x / map_settings.tile_size).round() as u32;
-    let tile_y = (world_pos.y / map_settings.tile_size).round() as u32;
 
     let caster_entity = *caster;
     let ab_id = *ability_id;
@@ -151,7 +142,7 @@ fn resolve_targeting_click(
     let caster_pos = match caster_positions.get(caster_entity) {
         Ok(p) => p,
         Err(_) => {
-            **targeting_mode = TargetingMode::None;
+            *targeting_mode = TargetingMode::None;
             return;
         }
     };
@@ -182,41 +173,28 @@ fn resolve_targeting_click(
         TargetType::SelfOnly => CastTarget::SelfCast,
     };
 
-    let ability_target = match &cast_target {
-        CastTarget::SelfCast => AbilityTarget::SelfCast,
-        CastTarget::Entity(e) => AbilityTarget::Entity(*e),
-        CastTarget::Position { x, y } => AbilityTarget::Position { x: *x, y: *y },
-        CastTarget::Direction { dx, dy } => AbilityTarget::Direction { dx: *dx, dy: *dy },
-    };
+    commands.entity(caster_entity).insert(CurrentTask::new(Task::new(
+        "cast", 100, TaskSource::Player,
+        vec![task::Action::CastAbility {
+            ability_id: ab_id,
+            slot_index: sl_idx,
+            target: cast_target,
+            initiated: false,
+        }],
+    )));
 
-    let cast_time = ability_registry.get(ab_id).map_or(0, |a| a.cast_time_ticks);
-    commands.entity(caster_entity).insert(CastingState {
-        ability_id: ab_id,
-        slot_index: sl_idx,
-        remaining_ticks: cast_time,
-        target: cast_target,
-    });
-    commands.entity(caster_entity).insert(PlayerCommand::CastAbility {
-        ability_id: ab_id,
-        slot_index: sl_idx,
-        target: ability_target,
-    });
-
-    **targeting_mode = TargetingMode::None;
+    *targeting_mode = TargetingMode::None;
 }
 
-/// Handle right-click: set MovementIntent (move or attack) on selected entities.
-/// Does NOT do pathfinding — resolve_movement_intent handles that for everyone.
+/// Handle right-click: create move or attack task on selected entities.
 pub fn right_click_command(
     actions: Res<ActionState>,
-    window_query: Query<&Window, With<PrimaryWindow>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    cursor: Res<CursorPosition>,
     tile_world: Res<TileWorld>,
-    map_settings: Res<MapSettings>,
     faction_relations: Res<FactionRelations>,
     mut commands: Commands,
-    mut selected_query: Query<
-        (Entity, &Faction, &EquippedWeapon, &mut MovementIntent, &mut AiState),
+    selected_query: Query<
+        (Entity, &Faction, &EquippedWeapon),
         With<Selected>,
     >,
     target_query: Query<(Entity, &GridPosition, &Faction), Without<PlayerControlled>>,
@@ -225,13 +203,7 @@ pub fn right_click_command(
         return;
     }
 
-    let Ok(window) = window_query.single() else { return };
-    let Ok((camera, camera_transform)) = camera_query.single() else { return };
-    let Some(cursor_pos) = window.cursor_position() else { return };
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else { return };
-
-    let tile_x = (world_pos.x / map_settings.tile_size).round() as i32;
-    let tile_y = (world_pos.y / map_settings.tile_size).round() as i32;
+    let Some((tile_x, tile_y)) = cursor.tile else { return };
 
     if tile_x < 0 || tile_y < 0
         || tile_x >= tile_world.width as i32
@@ -246,7 +218,7 @@ pub fn right_click_command(
     let mut hostile_target = None;
     for (target_entity, target_pos, target_faction) in &target_query {
         if target_pos.x as i32 == tile_x && target_pos.y as i32 == tile_y {
-            for (_, selected_faction, _, _, _) in &selected_query {
+            for (_, selected_faction, _) in &selected_query {
                 if faction_relations.is_hostile(selected_faction.0, target_faction.0) {
                     hostile_target = Some(target_entity);
                     break;
@@ -258,28 +230,28 @@ pub fn right_click_command(
         }
     }
 
-    for (entity, _, weapon, mut intent, mut ai_state) in &mut selected_query {
-        if let Some(target) = hostile_target {
-            // Attack: set intent to move within weapon range, set AI state to engage
-            *intent = MovementIntent::MoveToEntity {
-                target,
-                desired_range: weapon.weapon.range,
-            };
-            *ai_state = AiState::Engaging { target };
-            commands.entity(entity).insert(PlayerCommand::Attack(target));
+    for (entity, _, weapon) in &selected_query {
+        let new_task = if let Some(target) = hostile_target {
+            Task::new(
+                "attack", 100, TaskSource::Player,
+                vec![task::Action::EngageTarget {
+                    target,
+                    attack_range: weapon.weapon.range,
+                }],
+            )
         } else {
-            // Move: set intent to move to position
             if tile_world.walk_cost[tile_world.idx(target_tile.0, target_tile.1)] <= 0.0 {
                 continue;
             }
-
-            *intent = MovementIntent::MoveToPosition {
-                x: target_tile.0,
-                y: target_tile.1,
-            };
-            *ai_state = AiState::Idle;
-            commands.entity(entity).remove::<PlayerCommand>();
-        }
+            Task::new(
+                "move", 100, TaskSource::Player,
+                vec![task::Action::MoveToPosition {
+                    x: target_tile.0,
+                    y: target_tile.1,
+                }],
+            )
+        };
+        commands.entity(entity).insert(CurrentTask::new(new_task));
     }
 }
 
@@ -368,7 +340,7 @@ pub fn ability_input(
             &Stamina,
             &ActiveStatusEffects,
             &GridPosition,
-            &AiState,
+            Option<&Engaging>,
         ),
         (With<Selected>, With<PlayerControlled>),
     >,
@@ -388,7 +360,7 @@ pub fn ability_input(
         }
 
         // Use the first selected entity that has this ability slot
-        for (entity, slots, mana, stamina, status_effects, _grid_pos, ai_state) in &selected_query {
+        for (entity, slots, mana, stamina, status_effects, _grid_pos, engaging) in &selected_query {
             if slot_index >= slots.abilities.len() {
                 continue;
             }
@@ -399,48 +371,37 @@ pub fn ability_input(
                 None => continue,
             };
 
-            // Quick validation (without target position for now)
+            // Validate cast prerequisites (cooldown, resources, CC)
             let cc_flags = status_effects.combined_cc_flags(&status_registry);
-            if !cc_flags.can_cast() || !slots.is_ready(slot_index) {
-                continue;
-            }
-            if ability.mana_cost > 0 && mana.current < ability.mana_cost as f32 {
-                continue;
-            }
-            if ability.stamina_cost > 0 && stamina.current < ability.stamina_cost as f32 {
+            if validate_cast(ability, slots, slot_index, mana, stamina, &cc_flags, (0, 0), None).is_err() {
                 continue;
             }
 
+            let engage_target = engaging.map(|e| e.target);
+
             match ability.target_type {
                 TargetType::SelfOnly => {
-                    // Instant self-target: begin cast immediately
-                    commands.entity(entity).insert(CastingState {
-                        ability_id,
-                        slot_index,
-                        remaining_ticks: ability.cast_time_ticks,
-                        target: CastTarget::SelfCast,
-                    });
-                    commands.entity(entity).insert(PlayerCommand::CastAbility {
-                        ability_id,
-                        slot_index,
-                        target: AbilityTarget::SelfCast,
-                    });
+                    commands.entity(entity).insert(CurrentTask::new(Task::new(
+                        "cast", 100, TaskSource::Player,
+                        vec![task::Action::CastAbility {
+                            ability_id,
+                            slot_index,
+                            target: CastTarget::SelfCast,
+                            initiated: false,
+                        }],
+                    )));
                 }
                 TargetType::SingleEnemy | TargetType::SingleAlly => {
-                    // If already engaging a target, use that target
-                    if let AiState::Engaging { target } = ai_state {
-                        let target_entity = *target;
-                        commands.entity(entity).insert(CastingState {
-                            ability_id,
-                            slot_index,
-                            remaining_ticks: ability.cast_time_ticks,
-                            target: CastTarget::Entity(target_entity),
-                        });
-                        commands.entity(entity).insert(PlayerCommand::CastAbility {
-                            ability_id,
-                            slot_index,
-                            target: AbilityTarget::Entity(target_entity),
-                        });
+                    if let Some(target) = engage_target {
+                        commands.entity(entity).insert(CurrentTask::new(Task::new(
+                            "cast", 100, TaskSource::Player,
+                            vec![task::Action::CastAbility {
+                                ability_id,
+                                slot_index,
+                                target: CastTarget::Entity(target),
+                                initiated: false,
+                            }],
+                        )));
                     } else {
                         // Enter targeting mode
                         *targeting_mode = TargetingMode::AwaitingTarget {
@@ -473,101 +434,3 @@ pub fn ability_input(
     }
 }
 
-/// Resolve targeting mode clicks: left-click picks target, right-click/escape cancels.
-pub fn resolve_targeting(
-    actions: Res<ActionState>,
-    ability_registry: Res<AbilityRegistry>,
-    window_query: Query<&Window, With<PrimaryWindow>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
-    map_settings: Res<MapSettings>,
-    mut targeting_mode: ResMut<TargetingMode>,
-    mut commands: Commands,
-    entities_at_tile: Query<(Entity, &GridPosition, &Faction), Without<PlayerControlled>>,
-    caster_query: Query<&GridPosition>,
-) {
-    let TargetingMode::AwaitingTarget {
-        caster,
-        ability_id,
-        slot_index,
-        target_type,
-        ..
-    } = &*targeting_mode
-    else {
-        return;
-    };
-
-    if !actions.just_pressed(Action::Select) {
-        return;
-    }
-
-    let Ok(window) = window_query.single() else { return };
-    let Ok((camera, camera_transform)) = camera_query.single() else { return };
-    let Some(cursor_pos) = window.cursor_position() else { return };
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_pos) else { return };
-
-    let tile_x = (world_pos.x / map_settings.tile_size).round() as u32;
-    let tile_y = (world_pos.y / map_settings.tile_size).round() as u32;
-
-    let caster_entity = *caster;
-    let ab_id = *ability_id;
-    let sl_idx = *slot_index;
-    let tt = *target_type;
-
-    // Get caster position for direction-based targeting
-    let caster_pos = match caster_query.get(caster_entity) {
-        Ok(p) => p,
-        Err(_) => {
-            *targeting_mode = TargetingMode::None;
-            return;
-        }
-    };
-
-    let cast_target = match tt {
-        TargetType::SingleEnemy | TargetType::SingleAlly => {
-            // Find entity at clicked tile
-            let mut found = None;
-            for (entity, pos, _) in &entities_at_tile {
-                if pos.x == tile_x && pos.y == tile_y {
-                    found = Some(entity);
-                    break;
-                }
-            }
-            match found {
-                Some(target) => CastTarget::Entity(target),
-                None => return, // No valid target at tile, keep targeting mode active
-            }
-        }
-        TargetType::CircleAoE => CastTarget::Position {
-            x: tile_x as f32,
-            y: tile_y as f32,
-        },
-        TargetType::ConeAoE | TargetType::LineAoE => {
-            let dx = tile_x as f32 - caster_pos.x as f32;
-            let dy = tile_y as f32 - caster_pos.y as f32;
-            CastTarget::Direction { dx, dy }
-        }
-        TargetType::SelfOnly => CastTarget::SelfCast,
-    };
-
-    let ability_target = match &cast_target {
-        CastTarget::SelfCast => AbilityTarget::SelfCast,
-        CastTarget::Entity(e) => AbilityTarget::Entity(*e),
-        CastTarget::Position { x, y } => AbilityTarget::Position { x: *x, y: *y },
-        CastTarget::Direction { dx, dy } => AbilityTarget::Direction { dx: *dx, dy: *dy },
-    };
-
-    let cast_time = ability_registry.get(ab_id).map_or(0, |a| a.cast_time_ticks);
-    commands.entity(caster_entity).insert(CastingState {
-        ability_id: ab_id,
-        slot_index: sl_idx,
-        remaining_ticks: cast_time,
-        target: cast_target,
-    });
-    commands.entity(caster_entity).insert(PlayerCommand::CastAbility {
-        ability_id: ab_id,
-        slot_index: sl_idx,
-        target: ability_target,
-    });
-
-    *targeting_mode = TargetingMode::None;
-}

@@ -2,7 +2,9 @@ use bevy::prelude::*;
 
 use crate::resources::abilities::{AbilitySlots, Mana, Stamina};
 use crate::resources::ability_defs;
-use crate::resources::ai::{AiState, CombatBehavior, CombatRole, MovementIntent, PartyMode, RepathTimer};
+use crate::resources::combat_behavior::{CombatBehavior, CombatRole};
+use crate::resources::movement::RepathTimer;
+use crate::resources::task::PartyMode;
 use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::combat::InCombat;
 use crate::resources::damage::{DamageType, EquippedArmor, EquippedWeapon, WeaponDef};
@@ -88,8 +90,6 @@ pub fn spawn_player(
         ]),
     ));
     entity_commands.insert((
-        AiState::default(),
-        MovementIntent::default(),
         RepathTimer::default(),
         InCombat,
         PlayerControlled,

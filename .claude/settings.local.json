@@ -44,7 +44,10 @@
       "Bash(do sed:*)",
       "Bash(done)",
       "Bash(wc -l /c/ReposLocal/Metropolis/src/simulation/*.rs)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(find /c/ReposLocal/GoldAndGlory/tests -type f -name *.rs)",
+      "Bash(wc -l /c/ReposLocal/GoldAndGlory/tests/resources_tests/*.rs)",
+      "Bash(find /c/ReposLocal/GoldAndGlory -type f \\\\\\(-name *.png -o -name *.jpg -o -name *.txt \\\\\\))"
     ]
   }
 }

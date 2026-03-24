@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::resources::input::{Action, ActionState};
-use crate::resources::map::MapSettings;
+use crate::resources::map::{CursorPosition, MapSettings};
 
 /// Marker for the main game camera.
 #[derive(Component)]
@@ -101,6 +101,31 @@ pub fn camera_pan(
     let map_h = map_settings.height as f32 * map_settings.tile_size;
     transform.translation.x = transform.translation.x.clamp(0.0, map_w);
     transform.translation.y = transform.translation.y.clamp(0.0, map_h);
+}
+
+/// Compute cursor position in screen, world, and tile coordinates.
+/// Runs once per frame, early in the Input set. All other systems read the resource.
+pub fn update_cursor_position(
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
+    map_settings: Res<MapSettings>,
+    mut cursor: ResMut<CursorPosition>,
+) {
+    cursor.screen = None;
+    cursor.world = None;
+    cursor.tile = None;
+
+    let Ok(window) = window_query.single() else { return };
+    let Some(screen_pos) = window.cursor_position() else { return };
+    cursor.screen = Some(screen_pos);
+
+    let Ok((camera, camera_transform)) = camera_query.single() else { return };
+    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, screen_pos) else { return };
+    cursor.world = Some(world_pos);
+
+    let tile_x = (world_pos.x / map_settings.tile_size).round() as i32;
+    let tile_y = (world_pos.y / map_settings.tile_size).round() as i32;
+    cursor.tile = Some((tile_x, tile_y));
 }
 
 /// Zoom still reads raw scroll events — scroll wheel isn't an "action" in the same sense.

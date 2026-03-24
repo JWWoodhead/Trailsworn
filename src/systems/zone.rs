@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
-use crate::resources::ai::{AiState, CombatBehavior, MovementIntent, RepathTimer};
+use crate::resources::combat_behavior::CombatBehavior;
+use crate::resources::movement::RepathTimer;
+use crate::resources::task::AiBrain;
 use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::combat::InCombat;
 use crate::resources::damage::{DamageType, EquippedArmor, EquippedWeapon, WeaponDef};
@@ -233,16 +235,15 @@ fn spawn_enemy_camp(
                 crate::resources::ability_defs::ABILITY_CLEAVE,
             ]),
             CombatBehavior::melee_enemy(vec![
-                crate::resources::ai::AbilityPriority {
+                crate::resources::combat_behavior::AbilityPriority {
                     ability_id: crate::resources::ability_defs::ABILITY_CLEAVE,
                     slot_index: 0,
-                    condition: crate::resources::ai::UseCondition::Always,
+                    condition: crate::resources::combat_behavior::UseCondition::Always,
                     priority: 10,
                 },
             ]),
-            AiState::default(),
-            MovementIntent::default(),
             RepathTimer::default(),
+            AiBrain::enemy(),
             InCombat,
         ));
     }
