@@ -22,6 +22,7 @@ pub mod map;
 pub mod terrain_blend;
 pub mod terrain_material;
 pub mod movement;
+pub mod pack;
 pub mod selection;
 pub mod stats;
 pub mod status_effects;

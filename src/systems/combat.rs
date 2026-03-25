@@ -135,12 +135,14 @@ pub fn auto_attack(
                 let part_name = &template.parts[body_part_index].name;
 
                 damage_events.write(DamageDealtEvent {
+                    attacker: attacker_entity,
                     target: target_entity,
                     amount: result.damage_dealt,
                     damage_type,
                     body_part_name: part_name.clone(),
                     part_destroyed: result.part_destroyed,
                     target_killed: result.target_killed,
+                    ability_name: None,
                 });
 
                 threat_table.add_threat(attacker_entity, result.damage_dealt);

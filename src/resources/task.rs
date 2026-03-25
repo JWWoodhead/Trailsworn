@@ -177,6 +177,8 @@ pub enum TaskEvaluator {
     FollowLeader { leader: Entity },
     /// Defend self when attacked (threat table non-empty). Proposes [EngageTarget].
     DefendSelf,
+    /// Retreat from target when too close. Proposes [MoveToPosition].
+    MaintainRange,
     /// Fallback. Proposes nothing.
     Idle,
 }
@@ -184,7 +186,7 @@ pub enum TaskEvaluator {
 impl TaskEvaluator {
     pub fn category(&self) -> EvaluatorCategory {
         match self {
-            Self::EngageCombat | Self::Flee | Self::UseAbility | Self::DefendSelf => {
+            Self::EngageCombat | Self::Flee | Self::UseAbility | Self::DefendSelf | Self::MaintainRange => {
                 EvaluatorCategory::Combat
             }
             Self::FollowLeader { .. } | Self::Idle => EvaluatorCategory::Routine,
@@ -226,6 +228,7 @@ impl AiBrain {
         Self::new(vec![
             TaskEvaluator::Flee,
             TaskEvaluator::UseAbility,
+            TaskEvaluator::MaintainRange,
             TaskEvaluator::EngageCombat,
             TaskEvaluator::Idle,
         ])

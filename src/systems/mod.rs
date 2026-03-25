@@ -1,5 +1,6 @@
 pub mod ability_bar;
 pub mod camera;
+pub mod cast_bars;
 pub mod character_sheet;
 pub mod casting;
 pub mod combat;

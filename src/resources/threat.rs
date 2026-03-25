@@ -37,4 +37,9 @@ impl ThreatTable {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// All entities this entity has threat against.
+    pub fn all_targets(&self) -> Vec<Entity> {
+        self.entries.keys().copied().collect()
+    }
 }

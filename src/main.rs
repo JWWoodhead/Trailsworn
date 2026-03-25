@@ -8,7 +8,7 @@ use trailsworn::resources::affixes::AffixRegistry;
 use trailsworn::resources::item_defs::register_starter_items;
 use trailsworn::resources::items::{ItemInstanceRegistry, ItemRegistry};
 use trailsworn::resources::body::{humanoid_template, BodyTemplates};
-use trailsworn::resources::events::{AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
+use trailsworn::resources::events::{AbilityCastEvent, AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
 use trailsworn::resources::faction::{Disposition, FactionRelations};
 use trailsworn::resources::game_state::{GameSet, GameState};
 use trailsworn::resources::game_time::GameTime;
@@ -21,7 +21,7 @@ use trailsworn::resources::status_effects::StatusEffectRegistry;
 use trailsworn::resources::theme::Theme;
 use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::systems::{
-    ability_bar, camera, casting, character_sheet, combat, debug, equipment, floating_text, game_time,
+    ability_bar, camera, cast_bars, casting, character_sheet, combat, debug, equipment, floating_text, game_time,
     health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, zone,
 };
 use trailsworn::worldgen::world_map::generate_world_map;
@@ -107,6 +107,7 @@ fn main() {
     .add_message::<DamageDealtEvent>()
     .add_message::<AttackMissedEvent>()
     .add_message::<CastInterruptedEvent>()
+    .add_message::<AbilityCastEvent>()
     .add_message::<ZoneTransitionEvent>()
     // System set ordering
     .configure_sets(
@@ -161,16 +162,19 @@ fn main() {
             // Task scheduling, evaluation, execution
             (
                 task::advance_eval_timers,
-                task::flee.after(task::advance_eval_timers),
-                task::use_ability.after(task::advance_eval_timers),
-                task::engage_combat.after(task::advance_eval_timers),
-                task::defend_self.after(task::advance_eval_timers),
-                task::follow_leader.after(task::advance_eval_timers),
+                task::propagate_pack_aggro.after(task::advance_eval_timers),
+                task::flee.after(task::propagate_pack_aggro),
+                task::use_ability.after(task::propagate_pack_aggro),
+                task::engage_combat.after(task::propagate_pack_aggro),
+                task::defend_self.after(task::propagate_pack_aggro),
+                task::maintain_range.after(task::propagate_pack_aggro),
+                task::follow_leader.after(task::propagate_pack_aggro),
                 task::assign_task
                     .after(task::flee)
                     .after(task::use_ability)
                     .after(task::engage_combat)
                     .after(task::defend_self)
+                    .after(task::maintain_range)
                     .after(task::follow_leader),
                 task::execute_actions.after(task::assign_task),
                 movement::resolve_movement.after(task::execute_actions),
@@ -202,6 +206,9 @@ fn main() {
                 health_bars::spawn_health_bars,
                 health_bars::update_health_bars,
                 health_bars::cleanup_orphaned_health_bars,
+                cast_bars::spawn_cast_bars,
+                cast_bars::update_cast_bars,
+                cast_bars::cleanup_cast_bars,
                 floating_text::spawn_damage_numbers,
                 floating_text::animate_floating_text,
                 hover_info::update_hover_tooltip,

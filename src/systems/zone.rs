@@ -11,7 +11,10 @@ use crate::resources::faction::Faction;
 use crate::resources::game_state::GameState;
 use crate::resources::game_time::GameTime;
 use crate::resources::identity::StableId;
-use crate::resources::item_defs::ITEM_CHIPPED_BLADE;
+use crate::resources::item_defs::{
+    ITEM_BENT_STAVE, ITEM_GNARLED_BRANCH, ITEM_KNOBWOOD_CLUB,
+};
+use crate::resources::pack::PackId;
 use crate::resources::items::{Equipment, EquipSlot, ItemInstanceRegistry, ItemRegistry};
 use crate::resources::map::{GridPosition, MapSettings, render_layers};
 use crate::resources::movement::{FacingDirection, MovementSpeed, PathOffset};
@@ -219,6 +222,74 @@ pub fn handle_zone_transition(
 
 const FACTION_BANDITS: u32 = 2;
 
+// ---------------------------------------------------------------------------
+// Enemy roles & pack layout
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug)]
+enum EnemyRole {
+    Melee,
+    Ranged,
+    Caster,
+}
+
+/// Determine the role for enemy `index` within a camp of `count`.
+/// Camps of 4+ split into two packs; roles are assigned per-pack.
+fn camp_role(index: u32, count: u32) -> EnemyRole {
+    match count {
+        // 1 pack: melee-heavy with a ranged
+        2 => if index == 0 { EnemyRole::Melee } else { EnemyRole::Ranged },
+        3 => if index < 2 { EnemyRole::Melee } else { EnemyRole::Ranged },
+        // 2 packs: Pack A (indices 0..pack_a_size), Pack B (rest)
+        // Camp 4 → Pack A: melee+ranged, Pack B: melee+caster
+        4 => match index {
+            0 => EnemyRole::Melee,
+            1 => EnemyRole::Ranged,
+            2 => EnemyRole::Melee,
+            _ => EnemyRole::Caster,
+        },
+        // Camp 5 → Pack A: melee+melee+ranged, Pack B: ranged+caster
+        _ => match index {
+            0 | 1 => EnemyRole::Melee,
+            2 => EnemyRole::Ranged,
+            3 => EnemyRole::Ranged,
+            _ => EnemyRole::Caster,
+        },
+    }
+}
+
+/// Number of enemies in Pack A. Pack B gets the rest.
+fn pack_a_size(count: u32) -> u32 {
+    match count {
+        4 => 2,
+        5 => 3,
+        _ => count, // single pack
+    }
+}
+
+/// Compute the sub-center for an enemy given pack splitting.
+/// Single-pack camps use the camp center. Multi-pack camps offset ±15 tiles.
+fn pack_center(index: u32, count: u32, cx: u32, cy: u32) -> (u32, u32) {
+    if count < 4 {
+        return (cx, cy);
+    }
+    let in_pack_a = index < pack_a_size(count);
+    if in_pack_a {
+        (cx.saturating_sub(15), cy)
+    } else {
+        (cx + 15, cy)
+    }
+}
+
+/// Compute the PackId for an enemy.
+fn enemy_pack_id(index: u32, count: u32, spawn_index_start: u32) -> PackId {
+    if count < 4 || index < pack_a_size(count) {
+        PackId(spawn_index_start)
+    } else {
+        PackId(spawn_index_start + 100)
+    }
+}
+
 pub fn spawn_enemy_camp(
     commands: &mut Commands,
     texture: &Handle<Image>,
@@ -232,44 +303,115 @@ pub fn spawn_enemy_camp(
     spawn_index_start: u32,
     snapshot: Option<&crate::resources::zone_persistence::ZoneSnapshot>,
 ) {
-    let placeholder = placeholder_weapon(ITEM_CHIPPED_BLADE, item_registry);
+    use crate::resources::ability_defs::*;
+    use crate::resources::combat_behavior::{AbilityPriority, UseCondition};
 
     for i in 0..count {
         let spawn_idx = spawn_index_start + i;
 
         // Skip dead entities from snapshot
-        if let Some(snap) = snapshot {
-            if snap.dead_indices.contains(&spawn_idx) {
-                continue;
-            }
+        if let Some(snap) = snapshot
+            && snap.dead_indices.contains(&spawn_idx)
+        {
+            continue;
         }
 
-        // Check for alive override from snapshot
         let alive_override = snapshot.and_then(|s| s.alive_overrides.get(&spawn_idx));
 
-        // Determine weapon instance: reuse from snapshot or create fresh
+        // --- Role-specific configuration ---
+        let role = camp_role(i, count);
+
+        let (weapon_item_id, role_name, sprite_color, base_mana, abilities, ability_priorities, attributes, behavior) =
+            match role {
+                EnemyRole::Melee => (
+                    ITEM_KNOBWOOD_CLUB,
+                    "Bandit Brute",
+                    Color::srgb(1.0, 0.4, 0.4),
+                    50.0,
+                    vec![ABILITY_CLEAVE, ABILITY_WAR_CRY],
+                    vec![
+                        AbilityPriority { ability_id: ABILITY_WAR_CRY, slot_index: 1, condition: UseCondition::Always, priority: 20 },
+                        AbilityPriority { ability_id: ABILITY_CLEAVE, slot_index: 0, condition: UseCondition::Always, priority: 10 },
+                    ],
+                    Attributes { strength: 6, agility: 3, toughness: 5, ..Default::default() },
+                    {
+                        let mut b = CombatBehavior::melee_enemy(vec![]); // priorities set below
+                        b.flee_hp_threshold = 0.15;
+                        b
+                    },
+                ),
+                EnemyRole::Ranged => (
+                    ITEM_BENT_STAVE,
+                    "Bandit Archer",
+                    Color::srgb(0.4, 0.8, 0.4),
+                    50.0,
+                    vec![ABILITY_AIMED_SHOT],
+                    vec![
+                        AbilityPriority { ability_id: ABILITY_AIMED_SHOT, slot_index: 0, condition: UseCondition::Always, priority: 10 },
+                    ],
+                    Attributes { strength: 3, agility: 6, toughness: 4, ..Default::default() },
+                    {
+                        let mut b = CombatBehavior::ranged_enemy(8.0, vec![]);
+                        b.flee_hp_threshold = 0.25;
+                        b
+                    },
+                ),
+                EnemyRole::Caster => (
+                    ITEM_GNARLED_BRANCH,
+                    "Bandit Hexer",
+                    Color::srgb(0.6, 0.4, 1.0),
+                    80.0,
+                    vec![ABILITY_FROST_BOLT, ABILITY_FIREBALL],
+                    vec![
+                        AbilityPriority { ability_id: ABILITY_FROST_BOLT, slot_index: 0, condition: UseCondition::Always, priority: 20 },
+                        AbilityPriority { ability_id: ABILITY_FIREBALL, slot_index: 1, condition: UseCondition::Always, priority: 10 },
+                    ],
+                    Attributes { strength: 3, agility: 3, toughness: 3, intellect: 7, willpower: 5 },
+                    {
+                        let mut b = CombatBehavior::ranged_enemy(8.0, vec![]);
+                        b.role = crate::resources::combat_behavior::CombatRole::Caster;
+                        b.flee_hp_threshold = 0.30;
+                        b.preferred_min_range = Some(5.0);
+                        b
+                    },
+                ),
+            };
+
+        // Set ability_priorities on the behavior (couldn't pass through constructor due to borrow)
+        let mut behavior = behavior;
+        behavior.ability_priorities = ability_priorities;
+
+        // Weapon instance: reuse from snapshot or create fresh
         let weapon_instance_id = if let Some(entity_snap) = alive_override {
             entity_snap.equipment_instance_ids
                 .iter()
                 .find(|(slot, _)| *slot == EquipSlot::MainHand)
                 .map(|(_, id)| *id)
-                .unwrap_or_else(|| create_item_instance(ITEM_CHIPPED_BLADE, instance_registry))
+                .unwrap_or_else(|| create_item_instance(weapon_item_id, instance_registry))
         } else {
-            create_item_instance(ITEM_CHIPPED_BLADE, instance_registry)
+            create_item_instance(weapon_item_id, instance_registry)
         };
+
+        let placeholder = placeholder_weapon(weapon_item_id, item_registry);
 
         let mut equipment = Equipment::default();
         equipment.equip(EquipSlot::MainHand, weapon_instance_id);
 
-        // Position: use snapshot override or deterministic camp offset
+        // Position: snapshot override or deterministic pack offset
+        let (pcx, pcy) = pack_center(i, count, cx, cy);
+        let index_in_pack = if count >= 4 && i >= pack_a_size(count) {
+            i - pack_a_size(count)
+        } else {
+            i
+        };
         let (ex, ey) = if let Some(entity_snap) = alive_override {
             entity_snap.position
         } else {
-            let offset_x = (i % 3) as i32 - 1;
-            let offset_y = (i / 3) as i32 - 1;
+            let offset_x = (index_in_pack % 3) as i32 - 1;
+            let offset_y = (index_in_pack / 3) as i32 - 1;
             (
-                (cx as i32 + offset_x * 2).max(0) as u32,
-                (cy as i32 + offset_y * 2).max(0) as u32,
+                (pcx as i32 + offset_x * 2).max(0) as u32,
+                (pcy as i32 + offset_y * 2).max(0) as u32,
             )
         };
         let grid_pos = GridPosition::new(ex, ey);
@@ -287,14 +429,15 @@ pub fn spawn_enemy_camp(
         }
 
         // Resources: apply snapshot overrides
-        let mut mana = Mana::new(50.0);
+        let mut mana = Mana::new(base_mana);
         let mut stamina = Stamina::new(50.0);
         if let Some(entity_snap) = alive_override {
             mana.current = entity_snap.mana_current;
             stamina.current = entity_snap.stamina_current;
         }
 
-        let name = format!("Bandit {}", i + 1);
+        let name = format!("{} {}", role_name, i + 1);
+        let pack_id = enemy_pack_id(i, count, spawn_index_start);
 
         let mut entity_commands = commands.spawn((
             Name::new(name.clone()),
@@ -303,7 +446,7 @@ pub fn spawn_enemy_camp(
             ZoneEntity,
             Sprite {
                 image: texture.clone(),
-                color: Color::srgb(1.0, 0.4, 0.4),
+                color: sprite_color,
                 ..default()
             },
             Transform::from_translation(Vec3::new(
@@ -321,33 +464,25 @@ pub fn spawn_enemy_camp(
 
         entity_commands.insert((
             body,
-            Attributes { strength: 4, agility: 4, toughness: 4, ..Default::default() },
+            attributes,
             CharacterLevel::default(),
-            EquippedWeapon::new(placeholder.clone()),
+            EquippedWeapon::new(placeholder),
             EquippedArmor::default(),
             EquipmentBonuses::default(),
             mana,
             stamina,
             ActiveStatusEffects::default(),
             ThreatTable::default(),
-            crate::resources::abilities::AbilitySlots::new(vec![
-                crate::resources::ability_defs::ABILITY_CLEAVE,
-            ]),
+            crate::resources::abilities::AbilitySlots::new(abilities),
         ));
         entity_commands.insert((
-            CombatBehavior::melee_enemy(vec![
-                crate::resources::combat_behavior::AbilityPriority {
-                    ability_id: crate::resources::ability_defs::ABILITY_CLEAVE,
-                    slot_index: 0,
-                    condition: crate::resources::combat_behavior::UseCondition::Always,
-                    priority: 10,
-                },
-            ]),
+            behavior,
             RepathTimer::default(),
             AiBrain::enemy(),
             InCombat,
             equipment,
             ZoneSpawnIndex(spawn_idx),
+            pack_id,
         ));
     }
 }

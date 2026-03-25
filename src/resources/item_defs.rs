@@ -120,7 +120,7 @@ fn register_weapons(reg: &mut ItemRegistry) {
         DamageType::Piercing, 12.0, 40, 1.5, true, 1.0));
 
     // --- Bows ---
-    reg.register(weapon(ITEM_BENT_STAVE, "Bent Stave", "Barely holds tension. Better than nothing.", BaseTier::Crude, 1, WeaponClass::Bow,
+    reg.register(weapon(ITEM_BENT_STAVE, "Peasant's Bow", "Rough-hewn and poorly strung, but it shoots.", BaseTier::Crude, 1, WeaponClass::Bow,
         DamageType::Piercing, 4.0, 110, 8.0, false, 1.5));
     reg.register(weapon(ITEM_RANGERS_LONGBOW, "Ranger's Longbow", "Yew and sinew, built for distance.", BaseTier::Tempered, 15, WeaponClass::Bow,
         DamageType::Piercing, 9.0, 100, 10.0, false, 2.0));

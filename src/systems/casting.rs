@@ -9,7 +9,8 @@ use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::casting::{calculate_ability_damage, calculate_ability_heal, AoeParams, resolve_aoe_targets};
 use crate::resources::combat::{apply_damage, resolve_hit};
 use crate::resources::damage::EquippedArmor;
-use crate::resources::events::{CastInterruptedEvent, DamageDealtEvent};
+use crate::resources::events::{AbilityCastEvent, CastInterruptedEvent, DamageDealtEvent};
+use crate::systems::spawning::EntityName;
 use crate::resources::game_time::GameTime;
 use crate::resources::map::GridPosition;
 use crate::resources::stats::Attributes;
@@ -60,6 +61,7 @@ pub fn begin_cast(
     status_registry: Res<StatusEffectRegistry>,
     body_templates: Res<BodyTemplates>,
     mut damage_events: MessageWriter<DamageDealtEvent>,
+    mut cast_events: MessageWriter<AbilityCastEvent>,
     mut casters: Query<
         (
             Entity,
@@ -80,6 +82,7 @@ pub fn begin_cast(
         &mut ActiveStatusEffects,
         &mut ThreatTable,
     )>,
+    names: Query<&EntityName>,
 ) {
     for (caster_entity, casting, mut slots, mut mana, mut stamina, attributes, caster_pos) in &mut casters {
         let ability = match ability_registry.get(casting.ability_id) {
@@ -104,6 +107,19 @@ pub fn begin_cast(
 
         // Start cooldown
         slots.start_cooldown(casting.slot_index, ability.cooldown_ticks);
+
+        // Fire cast event
+        let target_desc = match &casting.target {
+            CastTarget::Entity(e) => names.get(*e).map(|n| n.0.clone()).unwrap_or_else(|_| "???".into()),
+            CastTarget::SelfCast => "self".into(),
+            CastTarget::Position { x, y } => format!("({:.0}, {:.0})", x, y),
+            CastTarget::Direction { .. } => "area".into(),
+        };
+        cast_events.write(AbilityCastEvent {
+            caster: caster_entity,
+            ability_name: ability.name.clone(),
+            target_description: target_desc,
+        });
 
         // Instant cast: resolve immediately
         if ability.cast_time_ticks == 0 {
@@ -273,12 +289,14 @@ fn resolve_ability_effects(
                                 let part_name = &template.parts[body_part_index].name;
 
                                 damage_events.write(DamageDealtEvent {
+                                    attacker: caster_entity,
                                     target: target_entity,
                                     amount: result.damage_dealt,
                                     damage_type: dt,
                                     body_part_name: part_name.clone(),
                                     part_destroyed: result.part_destroyed,
                                     target_killed: result.target_killed,
+                                    ability_name: Some(ability.name.clone()),
                                 });
 
                                 threat_table.add_threat(caster_entity, result.damage_dealt);

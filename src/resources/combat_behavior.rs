@@ -39,6 +39,9 @@ pub struct CombatBehavior {
     pub flee_hp_threshold: f32,
     pub auto_use_abilities: bool,
     pub ability_priorities: Vec<AbilityPriority>,
+    /// If set, entity tries to stay at least this many tiles from its target.
+    /// Used by the MaintainRange evaluator for caster/ranged kiting.
+    pub preferred_min_range: Option<f32>,
 }
 
 impl CombatBehavior {
@@ -50,6 +53,7 @@ impl CombatBehavior {
             flee_hp_threshold: 0.0,
             auto_use_abilities: true,
             ability_priorities,
+            preferred_min_range: None,
         }
     }
 
@@ -61,6 +65,7 @@ impl CombatBehavior {
             flee_hp_threshold: 0.0,
             auto_use_abilities: true,
             ability_priorities,
+            preferred_min_range: None,
         }
     }
 
@@ -72,6 +77,7 @@ impl CombatBehavior {
             flee_hp_threshold: 0.0,
             auto_use_abilities: false,
             ability_priorities: Vec::new(),
+            preferred_min_range: None,
         }
     }
 }

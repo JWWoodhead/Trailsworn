@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
-use crate::resources::events::{AttackMissedEvent, DamageDealtEvent};
+use crate::resources::events::{AbilityCastEvent, AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
 use crate::resources::game_time::GameTime;
+use crate::resources::abilities::AbilityRegistry;
 use crate::resources::theme::Theme;
 use crate::systems::spawning::EntityName;
 
@@ -77,6 +78,9 @@ const MAX_LOG_ENTRIES: usize = 50;
 pub fn combat_log_damage(
     mut damage_events: MessageReader<DamageDealtEvent>,
     mut miss_events: MessageReader<AttackMissedEvent>,
+    mut cast_events: MessageReader<AbilityCastEvent>,
+    mut interrupt_events: MessageReader<CastInterruptedEvent>,
+    ability_registry: Res<AbilityRegistry>,
     theme: Res<Theme>,
     names: Query<&EntityName>,
     panel_query: Query<Entity, With<CombatLogPanel>>,
@@ -87,29 +91,48 @@ pub fn combat_log_damage(
         return;
     };
 
-    for event in damage_events.read() {
-        let target_name = names
-            .get(event.target)
-            .map(|n| n.0.as_str())
+    let name_of = |entity: Entity| -> &str {
+        names.get(entity).map(|n| n.0.as_str()).unwrap_or("???")
+    };
+
+    // Cast start events
+    for event in cast_events.read() {
+        let caster = name_of(event.caster);
+        let msg = format!("{} casts {} on {}", caster, event.ability_name, event.target_description);
+        spawn_log_entry(&mut commands, panel, &msg, theme.primary);
+    }
+
+    // Cast interrupt events
+    for event in interrupt_events.read() {
+        let caster = name_of(event.caster);
+        let ability_name = ability_registry
+            .get(event.ability_id)
+            .map(|a| a.name.as_str())
             .unwrap_or("???");
+        let msg = format!("{}'s {} was interrupted!", caster, ability_name);
+        spawn_log_entry(&mut commands, panel, &msg, Color::srgba(0.9, 0.6, 0.2, 1.0));
+    }
+
+    // Damage events
+    for event in damage_events.read() {
+        let attacker = name_of(event.attacker);
+        let target = name_of(event.target);
 
         let msg = if event.target_killed {
-            format!("{} was killed!", target_name)
+            format!("{} killed {}!", attacker, target)
         } else if event.part_destroyed {
-            format!(
-                "{}: {} destroyed! ({:.0} dmg)",
-                target_name, event.body_part_name, event.amount
-            )
+            if let Some(ref ability) = event.ability_name {
+                format!("{}'s {} on {}: {} destroyed! ({:.0})", attacker, ability, target, event.body_part_name, event.amount)
+            } else {
+                format!("{} hit {}: {} destroyed! ({:.0})", attacker, target, event.body_part_name, event.amount)
+            }
+        } else if let Some(ref ability) = event.ability_name {
+            format!("{}'s {} hit {}: {:.0} to {}", attacker, ability, target, event.amount, event.body_part_name)
         } else {
-            format!(
-                "{}: {:.0} to {}",
-                target_name, event.amount, event.body_part_name
-            )
+            format!("{} hit {}: {:.0} to {}", attacker, target, event.amount, event.body_part_name)
         };
 
-        let color = if event.target_killed {
-            theme.secondary
-        } else if event.part_destroyed {
+        let color = if event.target_killed || event.part_destroyed {
             theme.secondary
         } else {
             theme.text_parchment
@@ -118,19 +141,12 @@ pub fn combat_log_damage(
         spawn_log_entry(&mut commands, panel, &msg, color);
     }
 
+    // Miss events
     for event in miss_events.read() {
-        let target_name = names
-            .get(event.target)
-            .map(|n| n.0.as_str())
-            .unwrap_or("???");
-
-        let msg = format!("Missed {}", target_name);
-        spawn_log_entry(
-            &mut commands,
-            panel,
-            &msg,
-            Color::srgba(0.5, 0.5, 0.5, 0.7),
-        );
+        let attacker = name_of(event.attacker);
+        let target = name_of(event.target);
+        let msg = format!("{} missed {}", attacker, target);
+        spawn_log_entry(&mut commands, panel, &msg, Color::srgba(0.5, 0.5, 0.5, 0.7));
     }
 
     // Trim old entries
