@@ -15,14 +15,18 @@ struct TerrainParams {
 @group(3) @binding(3) var<uniform> params: TerrainParams;
 
 // Terrain blend priorities (must match TerrainType::blend_priority in Rust)
+// tex_index == blend_priority for all types (both follow enum order)
 fn priority(terrain_type: u32) -> u32 {
     switch terrain_type {
         case 0u: { return 0u; } // Grass
         case 1u: { return 1u; } // Dirt
-        case 2u: { return 2u; } // Stone
-        case 3u: { return 4u; } // Water (index 3, priority 4)
-        case 4u: { return 3u; } // Forest (index 4, priority 3)
-        case 5u: { return 5u; } // Mountain
+        case 2u: { return 2u; } // Sand
+        case 3u: { return 3u; } // Snow
+        case 4u: { return 4u; } // Swamp
+        case 5u: { return 5u; } // Stone
+        case 6u: { return 6u; } // Forest
+        case 7u: { return 7u; } // Water
+        case 8u: { return 8u; } // Mountain
         default: { return 0u; }
     }
 }
