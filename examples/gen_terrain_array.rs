@@ -10,7 +10,7 @@
 use image::{ImageReader, RgbaImage, Rgba};
 
 const LAYER_SIZE: u32 = 512;
-const NUM_LAYERS: u32 = 6;
+const NUM_LAYERS: u32 = 9;
 
 struct TerrainSource {
     name: &'static str,
@@ -18,12 +18,16 @@ struct TerrainSource {
     fallback_color: [u8; 4],
 }
 
-const SOURCES: [TerrainSource; 6] = [
+// Layer order must match TerrainType::tile_texture_index() in src/terrain.rs
+const SOURCES: [TerrainSource; 9] = [
     TerrainSource { name: "Grass",    path: None, fallback_color: [80, 130, 50, 255] },
     TerrainSource { name: "Dirt",     path: None, fallback_color: [120, 85, 55, 255] },
+    TerrainSource { name: "Sand",     path: None, fallback_color: [210, 190, 130, 255] },
+    TerrainSource { name: "Snow",     path: None, fallback_color: [230, 235, 240, 255] },
+    TerrainSource { name: "Swamp",    path: None, fallback_color: [60, 80, 50, 255] },
     TerrainSource { name: "Stone",    path: None, fallback_color: [140, 140, 135, 255] },
-    TerrainSource { name: "Water",    path: None, fallback_color: [40, 80, 140, 255] },
     TerrainSource { name: "Forest",   path: None, fallback_color: [40, 85, 30, 255] },
+    TerrainSource { name: "Water",    path: None, fallback_color: [40, 80, 140, 255] },
     TerrainSource { name: "Mountain", path: None, fallback_color: [90, 85, 80, 255] },
 ];
 

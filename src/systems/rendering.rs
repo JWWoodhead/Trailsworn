@@ -18,7 +18,7 @@ pub fn spawn_tilemap(
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
 ) {
-    // Load the terrain texture array (stacked 512×3072 → 6-layer 2D array)
+    // Load the terrain texture array (stacked 512×N → 2D array, one layer per terrain type)
     let terrain_tex_handle: Handle<Image> = asset_server.load_with_settings(
         "terrain_array.png",
         |settings: &mut bevy::image::ImageLoaderSettings| {
@@ -30,7 +30,7 @@ pub fn spawn_tilemap(
                 address_mode_w: bevy::image::ImageAddressMode::Repeat,
                 ..bevy::image::ImageSamplerDescriptor::linear()
             });
-            // Split the stacked image into 6 layers (each 512px tall)
+            // Split the stacked image into layers (each 512px tall)
             settings.array_layout = Some(bevy::image::ImageArrayLayout::RowHeight { pixels: 512 });
         },
     );

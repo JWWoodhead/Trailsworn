@@ -329,12 +329,12 @@ mod tests {
     fn atlas_index_uses_wang47_lookup() {
         // Mask with just NORTH cardinal = should map to a valid wang47 index
         let overlay = OverlayTile {
-            terrain: TerrainType::Water, // priority 4
+            terrain: TerrainType::Water,
             mask: NORTH,
         };
         let idx = overlay.atlas_index();
-        // Should be in row 4 (Water), column = WANG47_TABLE[NORTH]
-        assert_eq!(idx, 4 * ATLAS_COLS + WANG47_TABLE[NORTH as usize] as u32);
+        let water_row = TerrainType::Water.blend_priority() as u32;
+        assert_eq!(idx, water_row * ATLAS_COLS + WANG47_TABLE[NORTH as usize] as u32);
         assert!(idx > 0); // not transparent
     }
 }

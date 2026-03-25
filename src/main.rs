@@ -50,15 +50,14 @@ fn main() {
     register_starter_affixes(&mut affix_registry);
 
     // Generate world map
-    let world_map = generate_world_map(5, 5, world_seed);
+    let world_map = generate_world_map(256, 256, world_seed);
     let spawn_pos = world_map.spawn_pos;
     let current_zone = CurrentZone::new(world_seed, spawn_pos);
 
     // Generate the starting zone's tile world
-    let start_cell = world_map.get(spawn_pos).unwrap();
-    let start_zone = trailsworn::worldgen::zone::generate_zone(
-        start_cell.zone_type,
-        start_cell.has_cave,
+    let start_ctx = world_map.zone_context(spawn_pos).unwrap();
+    let start_zone = trailsworn::worldgen::zone::generate_zone_with_context(
+        &start_ctx,
         settings.width,
         settings.height,
         current_zone.zone_seed,

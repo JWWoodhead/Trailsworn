@@ -56,7 +56,7 @@ pub fn detect_zone_edge(
         };
 
         if let Some((entry_edge, new_pos)) = edge {
-            if (*world_map).in_bounds(new_pos) {
+            if (*world_map).is_passable(new_pos) {
                 transition_events.write(ZoneTransitionEvent {
                     new_pos,
                     entry_edge,
@@ -128,18 +128,15 @@ pub fn handle_zone_transition(
         commands.entity(entity).despawn();
     }
 
-    // Get zone info from world map
-    let cell = match (*world_map).get(new_pos) {
+    // Get zone context from world map
+    let ctx = match (*world_map).zone_context(new_pos) {
         Some(c) => c,
         None => return,
     };
-    let zone_type = cell.zone_type;
-    let has_cave = cell.has_cave;
 
     // Generate zone
-    let zone_data = crate::worldgen::zone::generate_zone(
-        zone_type,
-        has_cave,
+    let zone_data = crate::worldgen::zone::generate_zone_with_context(
+        &ctx,
         map_settings.width,
         map_settings.height,
         current_zone.zone_seed,

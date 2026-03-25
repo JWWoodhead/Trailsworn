@@ -1,5 +1,6 @@
 use rand::{Rng, RngExt, SeedableRng};
 
+use super::noise_util::NoiseLayer;
 use crate::resources::map::TileWorld;
 use crate::terrain::TerrainType;
 
@@ -10,6 +11,11 @@ pub enum ZoneType {
     Forest,
     Mountain,
     Settlement,
+    Desert,
+    Tundra,
+    Swamp,
+    Coast,
+    Ocean,
 }
 
 /// Points of interest within a generated zone.
@@ -33,7 +39,20 @@ pub struct ZoneData {
     pub pois: Vec<PointOfInterest>,
 }
 
-/// Generate a zone's tile map and points of interest.
+/// World-level context passed to zone generation for coherent terrain.
+#[derive(Clone, Debug)]
+pub struct ZoneGenContext {
+    pub zone_type: ZoneType,
+    pub has_cave: bool,
+    pub elevation: f32,
+    pub moisture: f32,
+    pub temperature: f32,
+    pub river: bool,
+    /// Neighbor zone types: [N, E, S, W]. None = ocean or map edge.
+    pub neighbors: [Option<ZoneType>; 4],
+}
+
+/// Generate a zone's tile map and points of interest (legacy API, no world context).
 pub fn generate_zone(
     zone_type: ZoneType,
     has_cave: bool,
@@ -41,21 +60,47 @@ pub fn generate_zone(
     height: u32,
     seed: u64,
 ) -> ZoneData {
+    generate_zone_with_context(
+        &ZoneGenContext {
+            zone_type,
+            has_cave,
+            elevation: 0.5,
+            moisture: 0.5,
+            temperature: 0.5,
+            river: false,
+            neighbors: [None; 4],
+        },
+        width,
+        height,
+        seed,
+    )
+}
+
+/// Generate a zone using world-level context for coherent terrain.
+pub fn generate_zone_with_context(
+    ctx: &ZoneGenContext,
+    width: u32,
+    height: u32,
+    seed: u64,
+) -> ZoneData {
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
-    let mut tile_world = match zone_type {
-        ZoneType::Grassland => generate_grassland(width, height, &mut rng),
-        ZoneType::Forest => generate_forest(width, height, &mut rng),
-        ZoneType::Mountain => generate_mountain(width, height, &mut rng),
+    let mut tile_world = match ctx.zone_type {
         ZoneType::Settlement => generate_settlement(width, height, &mut rng),
+        ZoneType::Ocean => TileWorld::filled(width, height, TerrainType::Water),
+        _ => generate_biome_terrain(ctx, width, height, seed, &mut rng),
     };
+
+    // Carve river if this zone has one
+    if ctx.river {
+        carve_river(&mut tile_world, ctx, &mut rng);
+    }
 
     let mut pois = Vec::new();
 
     // Place cave entrance
-    if has_cave {
+    if ctx.has_cave {
         let (cx, cy) = find_open_spot(width, height, &tile_world, &pois, &mut rng);
-        // Mark a small area as stone around the entrance
         for dx in -1i32..=1 {
             for dy in -1i32..=1 {
                 let tx = cx as i32 + dx;
@@ -73,7 +118,7 @@ pub fn generate_zone(
     }
 
     // Place enemy camps (1-3 per non-settlement zone)
-    if zone_type != ZoneType::Settlement {
+    if ctx.zone_type != ZoneType::Settlement {
         let camp_count = rng.random_range(1..=3);
         for _ in 0..camp_count {
             let (cx, cy) = find_open_spot(width, height, &tile_world, &pois, &mut rng);
@@ -86,8 +131,11 @@ pub fn generate_zone(
         }
     }
 
-    // Place wildlife spawns in grassland/forest
-    if matches!(zone_type, ZoneType::Grassland | ZoneType::Forest) {
+    // Place wildlife spawns
+    if matches!(
+        ctx.zone_type,
+        ZoneType::Grassland | ZoneType::Forest | ZoneType::Swamp | ZoneType::Coast
+    ) {
         let wildlife_count = rng.random_range(1..=2);
         for _ in 0..wildlife_count {
             let (cx, cy) = find_open_spot(width, height, &tile_world, &pois, &mut rng);
@@ -103,106 +151,243 @@ pub fn generate_zone(
     ZoneData { tile_world, pois }
 }
 
-/// Find a walkable tile far from existing POIs.
-fn find_open_spot(
+// ---------------------------------------------------------------------------
+// Noise-based biome terrain generation
+// ---------------------------------------------------------------------------
+
+/// Primary terrain for each zone type.
+fn base_terrain(zone_type: ZoneType) -> TerrainType {
+    match zone_type {
+        ZoneType::Grassland => TerrainType::Grass,
+        ZoneType::Forest => TerrainType::Forest,
+        ZoneType::Mountain => TerrainType::Stone,
+        ZoneType::Desert => TerrainType::Sand,
+        ZoneType::Tundra => TerrainType::Snow,
+        ZoneType::Swamp => TerrainType::Swamp,
+        ZoneType::Coast => TerrainType::Sand,
+        ZoneType::Settlement => TerrainType::Grass,
+        ZoneType::Ocean => TerrainType::Water,
+    }
+}
+
+/// Generate terrain for a non-settlement, non-ocean zone using noise layers.
+fn generate_biome_terrain(
+    ctx: &ZoneGenContext,
     width: u32,
     height: u32,
-    tile_world: &TileWorld,
-    existing_pois: &[PointOfInterest],
+    seed: u64,
     rng: &mut impl Rng,
-) -> (u32, u32) {
-    let margin = 20;
-    for _ in 0..100 {
-        let x = rng.random_range(margin..width - margin);
-        let y = rng.random_range(margin..height - margin);
+) -> TileWorld {
+    let base = base_terrain(ctx.zone_type);
+    let mut world = TileWorld::filled(width, height, base);
 
-        // Must be walkable
-        if tile_world.walk_cost[tile_world.idx(x, y)] <= 0.0 {
-            continue;
+    // Derive noise seeds from zone seed
+    let detail_seed = (seed & 0xFFFFFFFF) as u32;
+    let wet_seed = ((seed >> 16) & 0xFFFFFFFF) as u32;
+    let rocky_seed = ((seed >> 32) & 0xFFFFFFFF) as u32;
+
+    // Detail noise: drives secondary terrain placement
+    let detail = NoiseLayer::new(detail_seed, 0.03, 5);
+    // Wetness noise: drives water/swamp placement
+    let wetness = NoiseLayer::new(wet_seed, 0.025, 4);
+    // Rocky noise: drives stone/mountain placement
+    let rocky = NoiseLayer::new(rocky_seed, 0.02, 4);
+
+    // Context-driven thresholds: wetter world cells get more water, etc.
+    let wet_threshold = 0.7 - ctx.moisture * 0.3; // range 0.40-0.70
+    let rocky_threshold = 0.7 - ctx.elevation * 0.25; // range 0.45-0.70
+
+    for y in 0..height {
+        for x in 0..width {
+            let d = detail.sample_normalized(x as f64, y as f64);
+            let w = wetness.sample_normalized(x as f64, y as f64);
+            let r = rocky.sample_normalized(x as f64, y as f64);
+
+            let terrain = pick_biome_terrain(ctx.zone_type, d, w, r, wet_threshold, rocky_threshold);
+            if terrain != base {
+                world.set_terrain(x, y, terrain);
+            }
+        }
+    }
+
+    // Edge blending with neighbors
+    apply_edge_blending(&mut world, ctx, &detail, rng);
+
+    world
+}
+
+/// Pick terrain for a single tile based on biome recipe and noise values.
+fn pick_biome_terrain(
+    zone_type: ZoneType,
+    detail: f64,
+    wetness: f64,
+    rocky: f64,
+    wet_thresh: f32,
+    rocky_thresh: f32,
+) -> TerrainType {
+    let wt = wet_thresh as f64;
+    let rt = rocky_thresh as f64;
+
+    match zone_type {
+        ZoneType::Grassland => {
+            if wetness > wt + 0.15 { TerrainType::Water }
+            else if rocky > rt + 0.1 { TerrainType::Stone }
+            else if detail > 0.65 { TerrainType::Forest }
+            else if detail > 0.55 { TerrainType::Dirt }
+            else { TerrainType::Grass }
+        }
+        ZoneType::Forest => {
+            if wetness > wt + 0.1 { TerrainType::Swamp }
+            else if rocky > rt + 0.15 { TerrainType::Stone }
+            else if detail > 0.7 { TerrainType::Grass }
+            else if detail < 0.2 { TerrainType::Dirt }
+            else { TerrainType::Forest }
+        }
+        ZoneType::Mountain => {
+            if wetness > wt + 0.2 { TerrainType::Water }
+            else if rocky > rt { TerrainType::Mountain }
+            else if detail > 0.65 { TerrainType::Grass }
+            else if detail > 0.5 { TerrainType::Dirt }
+            else { TerrainType::Stone }
+        }
+        ZoneType::Desert => {
+            if wetness > wt + 0.25 { TerrainType::Water } // rare oasis
+            else if rocky > rt + 0.1 { TerrainType::Stone }
+            else if detail > 0.7 { TerrainType::Dirt }
+            else { TerrainType::Sand }
+        }
+        ZoneType::Tundra => {
+            if wetness > wt + 0.15 { TerrainType::Water }
+            else if rocky > rt { TerrainType::Mountain }
+            else if detail > 0.65 { TerrainType::Stone }
+            else if detail > 0.5 { TerrainType::Dirt }
+            else { TerrainType::Snow }
+        }
+        ZoneType::Swamp => {
+            if wetness > wt { TerrainType::Water }
+            else if detail > 0.75 { TerrainType::Dirt }
+            else if detail > 0.6 { TerrainType::Grass }
+            else { TerrainType::Swamp }
+        }
+        ZoneType::Coast => {
+            if wetness > wt + 0.05 { TerrainType::Water }
+            else if detail > 0.65 { TerrainType::Grass }
+            else if detail > 0.45 { TerrainType::Dirt }
+            else { TerrainType::Sand }
+        }
+        _ => base_terrain(zone_type),
+    }
+}
+
+/// Blend terrain near zone edges toward the neighbor's primary terrain.
+fn apply_edge_blending(
+    world: &mut TileWorld,
+    ctx: &ZoneGenContext,
+    detail: &NoiseLayer,
+    _rng: &mut impl Rng,
+) {
+    let w = world.width;
+    let h = world.height;
+    let blend_width = 30.0f32;
+
+    // [N, E, S, W] — each neighbor blends into the corresponding edge
+    for y in 0..h {
+        for x in 0..w {
+            // Calculate distance to each edge
+            let dist_n = (h - 1 - y) as f32; // North = top = high y
+            let dist_s = y as f32;            // South = bottom = low y
+            let dist_e = (w - 1 - x) as f32;
+            let dist_w = x as f32;
+
+            let edges = [
+                (dist_n, ctx.neighbors[0]), // N
+                (dist_e, ctx.neighbors[1]), // E
+                (dist_s, ctx.neighbors[2]), // S
+                (dist_w, ctx.neighbors[3]), // W
+            ];
+
+            for (dist, neighbor) in &edges {
+                if *dist >= blend_width {
+                    continue;
+                }
+                let Some(neighbor_type) = neighbor else {
+                    continue;
+                };
+
+                let blend_factor = 1.0 - dist / blend_width;
+                let noise_val = detail.sample_normalized(x as f64 * 1.5, y as f64 * 1.5);
+
+                // Higher blend_factor near edge = more likely to use neighbor terrain
+                if blend_factor as f64 > noise_val {
+                    let neighbor_terrain = base_terrain(*neighbor_type);
+                    world.set_terrain(x, y, neighbor_terrain);
+                }
+            }
+        }
+    }
+}
+
+/// Carve a river across the zone when ctx.river is true.
+fn carve_river(world: &mut TileWorld, _ctx: &ZoneGenContext, rng: &mut impl Rng) {
+    let w = world.width as i32;
+    let h = world.height as i32;
+
+    // Determine entry/exit edges based on which neighbors also have context
+    // (simplified: pick a random traversal direction)
+    let horizontal = rng.random::<bool>();
+
+    let (mut x, mut y) = if horizontal {
+        (0i32, rng.random_range(h / 4..h * 3 / 4))
+    } else {
+        (rng.random_range(w / 4..w * 3 / 4), 0i32)
+    };
+
+    let length = if horizontal { w } else { h };
+
+    for _ in 0..length {
+        // Place water in a 2-3 wide strip
+        let river_width = 1i32;
+        for dx in -river_width..=river_width {
+            for dy in -river_width..=river_width {
+                let rx = x + if horizontal { 0 } else { dx };
+                let ry = y + if horizontal { dy } else { 0 };
+                if rx >= 0 && ry >= 0 && rx < w && ry < h {
+                    world.set_terrain(rx as u32, ry as u32, TerrainType::Water);
+                }
+            }
         }
 
-        // Must be far from other POIs (at least 30 tiles)
-        let too_close = existing_pois.iter().any(|poi| {
-            let dx = x.abs_diff(poi.x);
-            let dy = y.abs_diff(poi.y);
-            dx * dx + dy * dy < 900
-        });
-        if too_close {
-            continue;
+        // Advance with meander
+        if horizontal {
+            x += 1;
+            y += rng.random_range(-1..=1);
+            y = y.clamp(2, h - 3);
+        } else {
+            y += 1;
+            x += rng.random_range(-1..=1);
+            x = x.clamp(2, w - 3);
         }
-
-        return (x, y);
     }
-
-    // Fallback
-    (width / 2, height / 2)
 }
 
-fn generate_grassland(width: u32, height: u32, rng: &mut impl Rng) -> TileWorld {
-    let mut world = TileWorld::filled(width, height, TerrainType::Grass);
-
-    // Scatter dirt patches
-    scatter_patches(&mut world, TerrainType::Dirt, 3, 8, 15, rng);
-
-    // Scatter stone outcrops
-    scatter_patches(&mut world, TerrainType::Stone, 2, 4, 8, rng);
-
-    // A few tree clusters
-    scatter_patches(&mut world, TerrainType::Forest, 2, 6, 12, rng);
-
-    // Maybe a small pond
-    if rng.random::<f32>() < 0.4 {
-        place_pond(&mut world, rng);
-    }
-
-    world
-}
-
-fn generate_forest(width: u32, height: u32, rng: &mut impl Rng) -> TileWorld {
-    let mut world = TileWorld::filled(width, height, TerrainType::Forest);
-
-    // Clearings of grass
-    scatter_patches(&mut world, TerrainType::Grass, 5, 10, 20, rng);
-
-    // Dirt paths between clearings
-    scatter_patches(&mut world, TerrainType::Dirt, 3, 3, 6, rng);
-
-    // Streams
-    if rng.random::<f32>() < 0.5 {
-        place_stream(&mut world, rng);
-    }
-
-    world
-}
-
-fn generate_mountain(width: u32, height: u32, rng: &mut impl Rng) -> TileWorld {
-    let mut world = TileWorld::filled(width, height, TerrainType::Stone);
-
-    // Grassy valleys
-    scatter_patches(&mut world, TerrainType::Grass, 4, 12, 25, rng);
-
-    // Mountain peaks (impassable)
-    scatter_patches(&mut world, TerrainType::Mountain, 3, 8, 15, rng);
-
-    // Dirt patches
-    scatter_patches(&mut world, TerrainType::Dirt, 2, 5, 10, rng);
-
-    world
-}
+// ---------------------------------------------------------------------------
+// Settlement (mostly hand-crafted, not noise-based)
+// ---------------------------------------------------------------------------
 
 fn generate_settlement(width: u32, height: u32, rng: &mut impl Rng) -> TileWorld {
     let mut world = TileWorld::filled(width, height, TerrainType::Grass);
 
-    // Central area is dirt (the town square)
     let cx = width / 2;
     let cy = height / 2;
+
+    // Central area is dirt (the town square)
     for x in (cx - 15)..(cx + 15) {
         for y in (cy - 15)..(cy + 15) {
             world.set_terrain(x, y, TerrainType::Dirt);
         }
     }
 
-    // Stone buildings (just impassable blocks for now)
+    // Stone buildings (impassable blocks)
     for _ in 0..6 {
         let bx = rng.random_range(cx - 12..cx + 12);
         let by = rng.random_range(cy - 12..cy + 12);
@@ -211,14 +396,12 @@ fn generate_settlement(width: u32, height: u32, rng: &mut impl Rng) -> TileWorld
         for x in bx..(bx + bw).min(width) {
             for y in by..(by + bh).min(height) {
                 world.set_terrain(x, y, TerrainType::Stone);
-                // Make walls impassable but leave a door
                 if x == bx || x == bx + bw - 1 || y == by || y == by + bh - 1 {
                     let i = world.idx(x, y);
                     world.walk_cost[i] = 0.0;
                 }
             }
         }
-        // Door on one side
         let door_x = bx + bw / 2;
         let door_i = world.idx(door_x, by);
         world.walk_cost[door_i] = 1.0;
@@ -235,98 +418,45 @@ fn generate_settlement(width: u32, height: u32, rng: &mut impl Rng) -> TileWorld
     world
 }
 
-fn scatter_patches(
-    world: &mut TileWorld,
-    terrain: TerrainType,
-    count: u32,
-    min_radius: u32,
-    max_radius: u32,
+// ---------------------------------------------------------------------------
+// POI helpers
+// ---------------------------------------------------------------------------
+
+/// Find a walkable tile far from existing POIs.
+fn find_open_spot(
+    width: u32,
+    height: u32,
+    tile_world: &TileWorld,
+    existing_pois: &[PointOfInterest],
     rng: &mut impl Rng,
-) {
-    let margin = max_radius + 5;
-    for _ in 0..count {
-        let cx = rng.random_range(margin..world.width - margin);
-        let cy = rng.random_range(margin..world.height - margin);
-        let radius = rng.random_range(min_radius..=max_radius);
-        let r2 = (radius * radius) as f32;
+) -> (u32, u32) {
+    let margin = 20;
+    for _ in 0..100 {
+        let x = rng.random_range(margin..width - margin);
+        let y = rng.random_range(margin..height - margin);
 
-        for dx in -(radius as i32)..=(radius as i32) {
-            for dy in -(radius as i32)..=(radius as i32) {
-                let dist2 = (dx * dx + dy * dy) as f32;
-                // Organic shape: jitter the boundary
-                let jitter = rng.random::<f32>() * 0.4 + 0.8;
-                if dist2 < r2 * jitter {
-                    let tx = cx as i32 + dx;
-                    let ty = cy as i32 + dy;
-                    if tx >= 0
-                        && ty >= 0
-                        && tx < world.width as i32
-                        && ty < world.height as i32
-                    {
-                        world.set_terrain(tx as u32, ty as u32, terrain);
-                    }
-                }
-            }
+        if tile_world.walk_cost[tile_world.idx(x, y)] <= 0.0 {
+            continue;
         }
+
+        let too_close = existing_pois.iter().any(|poi| {
+            let dx = x.abs_diff(poi.x);
+            let dy = y.abs_diff(poi.y);
+            dx * dx + dy * dy < 900
+        });
+        if too_close {
+            continue;
+        }
+
+        return (x, y);
     }
+
+    (width / 2, height / 2)
 }
 
-fn place_pond(world: &mut TileWorld, rng: &mut impl Rng) {
-    let margin = 30;
-    let cx = rng.random_range(margin..world.width - margin);
-    let cy = rng.random_range(margin..world.height - margin);
-    let radius = rng.random_range(5..12);
-    let r2 = (radius * radius) as f32;
-
-    for dx in -(radius as i32)..=(radius as i32) {
-        for dy in -(radius as i32)..=(radius as i32) {
-            let dist2 = (dx * dx + dy * dy) as f32;
-            let jitter = rng.random::<f32>() * 0.3 + 0.85;
-            if dist2 < r2 * jitter {
-                let tx = cx as i32 + dx;
-                let ty = cy as i32 + dy;
-                if tx >= 0 && ty >= 0 && tx < world.width as i32 && ty < world.height as i32 {
-                    world.set_terrain(tx as u32, ty as u32, TerrainType::Water);
-                }
-            }
-        }
-    }
-}
-
-fn place_stream(world: &mut TileWorld, rng: &mut impl Rng) {
-    // Meandering stream across the map
-    let horizontal = rng.random::<bool>();
-    let mut pos = if horizontal {
-        (0i32, rng.random_range(50..world.height as i32 - 50))
-    } else {
-        (rng.random_range(50..world.width as i32 - 50), 0i32)
-    };
-
-    let length = if horizontal { world.width } else { world.height };
-
-    for _ in 0..length {
-        // Place water in a 2-wide strip
-        for d in -1..=1 {
-            let (wx, wy) = if horizontal {
-                (pos.0, pos.1 + d)
-            } else {
-                (pos.0 + d, pos.1)
-            };
-            if wx >= 0 && wy >= 0 && wx < world.width as i32 && wy < world.height as i32 {
-                world.set_terrain(wx as u32, wy as u32, TerrainType::Water);
-            }
-        }
-
-        // Advance and meander
-        if horizontal {
-            pos.0 += 1;
-            pos.1 += rng.random_range(-1..=1);
-        } else {
-            pos.1 += 1;
-            pos.0 += rng.random_range(-1..=1);
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -335,9 +465,8 @@ mod tests {
     #[test]
     fn grassland_is_walkable() {
         let data = generate_zone(ZoneType::Grassland, false, 250, 250, 42);
-        // Most tiles should be walkable
         let walkable = data.tile_world.walk_cost.iter().filter(|c| **c > 0.0).count();
-        assert!(walkable > 50000); // more than 80% of 62500
+        assert!(walkable > 50000);
     }
 
     #[test]
@@ -378,5 +507,99 @@ mod tests {
         let data = generate_zone(ZoneType::Mountain, false, 250, 250, 42);
         let impassable = data.tile_world.walk_cost.iter().filter(|c| **c <= 0.0).count();
         assert!(impassable > 100);
+    }
+
+    #[test]
+    fn desert_uses_sand() {
+        let data = generate_zone(ZoneType::Desert, false, 250, 250, 42);
+        let sand_count = data
+            .tile_world
+            .terrain
+            .iter()
+            .filter(|t| **t == TerrainType::Sand)
+            .count();
+        assert!(sand_count > 30000, "Desert should be mostly sand, got {sand_count}");
+    }
+
+    #[test]
+    fn tundra_uses_snow() {
+        let data = generate_zone(ZoneType::Tundra, false, 250, 250, 42);
+        let snow_count = data
+            .tile_world
+            .terrain
+            .iter()
+            .filter(|t| **t == TerrainType::Snow)
+            .count();
+        assert!(snow_count > 20000, "Tundra should be mostly snow, got {snow_count}");
+    }
+
+    #[test]
+    fn swamp_uses_swamp_terrain() {
+        let data = generate_zone(ZoneType::Swamp, false, 250, 250, 42);
+        let swamp_count = data
+            .tile_world
+            .terrain
+            .iter()
+            .filter(|t| **t == TerrainType::Swamp)
+            .count();
+        assert!(swamp_count > 15000, "Swamp zone should have swamp terrain, got {swamp_count}");
+    }
+
+    #[test]
+    fn river_zone_has_water() {
+        let ctx = ZoneGenContext {
+            zone_type: ZoneType::Grassland,
+            has_cave: false,
+            elevation: 0.5,
+            moisture: 0.5,
+            temperature: 0.5,
+            river: true,
+            neighbors: [None; 4],
+        };
+        let data = generate_zone_with_context(&ctx, 250, 250, 42);
+        let water_count = data
+            .tile_world
+            .terrain
+            .iter()
+            .filter(|t| **t == TerrainType::Water)
+            .count();
+        assert!(water_count > 200, "River zone should have water tiles, got {water_count}");
+    }
+
+    #[test]
+    fn edge_blending_with_neighbor() {
+        let ctx = ZoneGenContext {
+            zone_type: ZoneType::Grassland,
+            has_cave: false,
+            elevation: 0.5,
+            moisture: 0.5,
+            temperature: 0.5,
+            river: false,
+            neighbors: [Some(ZoneType::Desert), None, None, None], // Desert to the north
+        };
+        let data = generate_zone_with_context(&ctx, 250, 250, 42);
+        // Check that the north edge (high y) has some sand tiles
+        let north_sand = (220..250)
+            .flat_map(|y| (0..250).map(move |x| (x, y)))
+            .filter(|&(x, y)| data.tile_world.terrain[data.tile_world.idx(x, y)] == TerrainType::Sand)
+            .count();
+        assert!(north_sand > 100, "North edge should blend toward desert (sand), got {north_sand}");
+    }
+
+    #[test]
+    fn all_biomes_generate_without_panic() {
+        let biomes = [
+            ZoneType::Grassland,
+            ZoneType::Forest,
+            ZoneType::Mountain,
+            ZoneType::Desert,
+            ZoneType::Tundra,
+            ZoneType::Swamp,
+            ZoneType::Coast,
+            ZoneType::Settlement,
+        ];
+        for biome in biomes {
+            let _ = generate_zone(biome, false, 250, 250, 42);
+        }
     }
 }

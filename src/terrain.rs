@@ -2,9 +2,12 @@
 pub enum TerrainType {
     Grass,
     Dirt,
+    Sand,
+    Snow,
+    Swamp,
     Stone,
-    Water,
     Forest,
+    Water,
     Mountain,
 }
 
@@ -14,9 +17,12 @@ impl TerrainType {
         match self {
             Self::Grass => 1.0,
             Self::Dirt => 1.0,
+            Self::Sand => 1.3,
+            Self::Snow => 1.4,
+            Self::Swamp => 2.0,
             Self::Stone => 1.0,
-            Self::Water => 0.0,
             Self::Forest => 1.5,
+            Self::Water => 0.0,
             Self::Mountain => 0.0,
         }
     }
@@ -35,6 +41,7 @@ impl TerrainType {
         match self {
             Self::Grass => 0.3,
             Self::Forest => 0.8,
+            Self::Swamp => 0.1,
             _ => 0.0,
         }
     }
@@ -44,10 +51,13 @@ impl TerrainType {
         match self {
             Self::Grass => 0,
             Self::Dirt => 1,
-            Self::Stone => 2,
-            Self::Forest => 3,
-            Self::Water => 4,
-            Self::Mountain => 5,
+            Self::Sand => 2,
+            Self::Snow => 3,
+            Self::Swamp => 4,
+            Self::Stone => 5,
+            Self::Forest => 6,
+            Self::Water => 7,
+            Self::Mountain => 8,
         }
     }
 
@@ -56,10 +66,13 @@ impl TerrainType {
         match self {
             Self::Grass => 0,
             Self::Dirt => 1,
-            Self::Stone => 2,
-            Self::Water => 3,
-            Self::Forest => 4,
-            Self::Mountain => 5,
+            Self::Sand => 2,
+            Self::Snow => 3,
+            Self::Swamp => 4,
+            Self::Stone => 5,
+            Self::Forest => 6,
+            Self::Water => 7,
+            Self::Mountain => 8,
         }
     }
 }
