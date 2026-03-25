@@ -21,9 +21,11 @@ src/
     ui_panel.rs        — Unified tabbed UI panel (Character/Inventory tabs)
     character_sheet.rs — Character tab content (body, stats, resources)
     inventory.rs       — Inventory tab content (equipment, grid, detail)
+    equipment.rs       — sync_equipment system (derives EquippedWeapon/Armor from ItemInstance)
     rendering.rs       — Custom terrain shader tilemap setup + terrain map updates
   resources/           — All Components, Resources, and data types
-    items.rs           — ItemDef, ItemInstance, Inventory, Equipment, Rarity, BaseTier
+    items.rs           — ItemDef, ItemInstance, Inventory (stacks + instances), Equipment (ItemInstanceId), Rarity, BaseTier
+    equipment_bonuses.rs — EquipmentBonuses component, compute_bonuses() aggregation
     affixes.rs         — AffixDef, AffixEffect, RolledAffix, AffixRegistry
     affix_defs.rs      — register_starter_affixes() — 20 affixes
     item_defs.rs       — register_starter_items() — 41 base items (15 weapons, 18 armor, 8 consumables/materials)
@@ -87,6 +89,7 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `movement::resolve_movement` — reads the current action from `CurrentTask`, extracts a movement goal, and runs A* pathfinding → `MovePath`. Handles repath throttling (`RepathTimer`, 30 ticks for AI), mid-movement repathing (`PendingPath` for AI, progress-preserving prepend for players).
 
 ### Combat (GameSet::Combat)
+- `equipment::sync_equipment` — derives `EquippedWeapon`/`EquippedArmor`/`EquipmentBonuses` from `Equipment` component's `ItemInstanceId` references. Bakes weapon affixes into `WeaponDef`, builds armor pieces, syncs `Mana.max`/`Stamina.max` from bonuses. Runs on `Changed<Equipment>`.
 - `combat::tick_weapon_cooldowns` — decrements weapon cooldown per tick
 - `combat::auto_attack` — entities with an `Engaging` marker attack their target when in range and weapon ready. Fires `DamageDealtEvent` / `AttackMissedEvent`.
 - `casting::tick_ability_cooldowns` — decrements per-slot ability cooldowns
@@ -450,11 +453,61 @@ All interactive UI nodes (`UiPanelRoot`, `AbilitySlotUi`, `UiTabButton`) have `I
 - `roll_affixes(rarity, item_level, kind, affix_registry, rng)` — respects prefix/suffix caps, no duplicate affixes, falls back to other slot type
 - `generate_item(params, registries, rng)` → `ItemInstanceId`
 
+### Integration status:
+- **Inventory** holds both `Vec<ItemStack>` (stackables) and `Vec<ItemInstanceId>` (equipment). Shared capacity pool.
+- **Equipment** stores `HashMap<EquipSlot, ItemInstanceId>` — references into `ItemInstanceRegistry`.
+- **`sync_equipment` system** (GameSet::Combat): Derives `EquippedWeapon`/`EquippedArmor` from equipped `ItemInstance` data. Bakes weapon affixes (FlatDamage, PercentDamage, AttackSpeed) into `WeaponDef`. Builds `ArmorPiece` entries with base + affix resistances. Computes `EquipmentBonuses` for attribute/resource bonuses.
+- **`EquipmentBonuses` component**: Aggregates all affix effects. Weapon bonuses baked into `EquippedWeapon`, resource bonuses applied to `Mana.max`/`Stamina.max`. Attribute bonuses accumulated but not yet applied to combat.
+- **Spawning** creates `ItemInstance` (Normal rarity) from `ItemRegistry` for player (`ITEM_CHIPPED_BLADE`) and enemies.
+- **UI** shows rolled item names, rarity colors from instance.
+
 ### Not yet implemented:
-- Inventory/Equipment migration to use `ItemInstanceId` instead of `ItemId` (Phase 3)
-- `EquipmentBonuses` component — recalculate stat bonuses from equipped affix effects (Phase 4)
-- Combat integration — auto_attack reads affix damage bonuses (Phase 4)
-- Mob drops / loot tables (Phase 5)
+- Mob drops / loot tables
+- Attribute bonuses applied to combat (needs `EffectiveAttributes` refactor)
+- Equip/unequip from UI (drag-and-drop or click-to-equip)
+- Inventory detail panel hover (affix details)
+
+## Extension Guide — Adding New Content
+
+When adding new content, the Rust compiler enforces exhaustive matches on most enums — you'll get compile errors for unhandled variants. The cases below document where to make changes and highlight the few spots where silent bugs are possible.
+
+### Adding a new base item
+**Just `item_defs.rs`** — add a `pub const ITEM_*: ItemId` and register it in the appropriate `register_*` function. Items are automatically available for generation and inventory. No other files need changes.
+
+### Adding a new affix (existing AffixEffect variant)
+**Just `affix_defs.rs`** — register a new `AffixDef` with a unique `AffixId`. Declare `allowed_kinds` and tiers. Everything else (generation, bonus computation, equipment sync) works automatically.
+
+### Adding a new AffixEffect variant
+1. `resources/affixes.rs` — add variant to `AffixEffect` enum
+2. `resources/equipment_bonuses.rs` — add field to `EquipmentBonuses` struct + match arm in `compute_bonuses()` (compiler enforces this)
+3. `systems/equipment.rs` — if the effect modifies weapon/armor, apply it in `sync_equipment`
+4. Add tests
+
+### Adding a new Rarity
+1. `resources/items.rs` — add variant + arms in `Rarity::text_color()`, `Rarity::bg_tint()`, `max_affixes_per_slot()`, `affix_count_range()` (compiler enforces all)
+2. `resources/item_gen.rs` — update `roll_rarity()` probability table
+
+### Adding a new DamageType
+1. `resources/damage.rs` — add variant to enum + update `DamageType::ALL` array + update `is_physical()` if physical
+2. `resources/affix_defs.rs` — **add resistance affix entry** in `register_resistance_suffixes()` (uses hardcoded list with labels — `DamageType::ALL` is available for iteration but labels are per-type)
+
+### Adding a new EquipSlot
+1. `resources/items.rs` — add variant to `EquipSlot` enum
+2. `systems/inventory.rs` — add entry to `EQUIP_DISPLAY_SLOTS` array (controls UI display)
+3. `systems/equipment.rs` — if it's a weapon slot, add to the MainHand/OffHand skip check in armor sync
+4. `resources/item_defs.rs` — create armor items for the new slot
+
+### Spawning an entity with equipment
+Use the shared helpers in `spawning.rs`:
+1. `create_item_instance(base_id, &mut instance_registry)` — creates Normal-rarity instance
+2. `placeholder_weapon(base_id, &item_registry)` — extracts WeaponDef for initial EquippedWeapon
+3. Insert `Equipment`, `EquippedWeapon`, `EquippedArmor`, `EquipmentBonuses` components
+4. `sync_equipment` system handles the rest on next frame
+
+### Key design principle
+- **Registries are open**: ItemRegistry, AffixRegistry, ItemInstanceRegistry — add entries without changing code
+- **Enums are closed**: AffixEffect, Rarity, DamageType, EquipSlot — adding variants requires updating match arms (compiler catches most, see above for manual spots)
+- **Rarity colors are centralized**: `Rarity::text_color()` and `Rarity::bg_tint()` on the enum — single source of truth for all UI
 
 ## Best Practices Enforced
 
@@ -479,7 +532,7 @@ Colors in `resources/theme.rs`:
 
 ## Tests
 
-~240 tests covering:
+~252 tests covering:
 - Pathfinding (A*, HPA*, bounded A*)
 - Body parts, stats, leveling
 - Combat resolution, damage, armor
@@ -495,6 +548,8 @@ Colors in `resources/theme.rs`:
 - Items/inventory (add, remove, stack, equip, weight, capacity)
 - Affixes (tier gating, candidate filtering, registry)
 - Item generation (rarity rolling, affix counts, deterministic seeding, display names)
+- Equipment bonuses (affix aggregation: flat damage, percent damage, attack speed, resistances, attributes, mana, stamina)
+- Inventory instances (add, remove, capacity sharing with stacks, weight including instances)
 
 ## Known Issues / Not Yet Implemented
 
@@ -502,7 +557,10 @@ Colors in `resources/theme.rs`:
 - **Zone persistence**: killed enemies respawn on re-entry (zones regenerate from seed).
 - **History → gameplay integration**: generated history not yet connected to zone generation or NPC dialogue.
 - **Diagonal speed**: entities move ~41% faster diagonally (accepted for now).
-- **Items/equipment not connected**: Item generation pipeline exists but Inventory/Equipment don't use `ItemInstance` yet. `EquipmentBonuses` not implemented. No mob drops.
+- **No mob drops**: Enemies don't drop loot on death. Loot tables not implemented.
+- **Attribute bonuses from equipment not applied**: `EquipmentBonuses` accumulates attribute bonuses from affixes but they don't affect combat yet (needs `EffectiveAttributes` refactor).
+- **No equip/unequip from UI**: Items can't be dragged or clicked to equip from inventory yet.
+- **Inventory detail panel**: Hovering items doesn't show affix details (placeholder text only).
 - **Cover system**: planned but not implemented.
 - **Save/load**: `StableId` infrastructure ready but serialization not built.
 - **UseCondition gaps**: `AllyHpBelow` and `EnemiesInRange` evaluator conditions are stubbed (return false).

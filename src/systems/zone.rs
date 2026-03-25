@@ -1,15 +1,18 @@
 use bevy::prelude::*;
 
 use crate::resources::combat_behavior::CombatBehavior;
+use crate::resources::equipment_bonuses::EquipmentBonuses;
 use crate::resources::movement::RepathTimer;
 use crate::resources::task::AiBrain;
 use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::combat::InCombat;
-use crate::resources::damage::{DamageType, EquippedArmor, EquippedWeapon, WeaponDef};
+use crate::resources::damage::{EquippedArmor, EquippedWeapon};
 use crate::resources::faction::Faction;
 use crate::resources::game_state::GameState;
 use crate::resources::game_time::GameTime;
 use crate::resources::identity::StableId;
+use crate::resources::item_defs::ITEM_CHIPPED_BLADE;
+use crate::resources::items::{Equipment, EquipSlot, ItemInstanceRegistry, ItemRegistry};
 use crate::resources::map::{GridPosition, MapSettings, render_layers};
 use crate::resources::movement::{FacingDirection, MovementSpeed, PathOffset};
 use crate::resources::stats::{Attributes, CharacterLevel};
@@ -17,7 +20,7 @@ use crate::resources::status_effects::ActiveStatusEffects;
 use crate::resources::threat::ThreatTable;
 use crate::resources::world::{CurrentZone, EntryEdge, ZoneTransitionEvent};
 use crate::resources::abilities::{Mana, Stamina};
-use crate::systems::spawning::{EntityName, PlayerControlled};
+use crate::systems::spawning::{create_item_instance, EntityName, PlayerControlled, placeholder_weapon};
 use crate::worldgen::zone::PoiKind;
 use crate::worldgen::{WorldMap, WorldPos};
 
@@ -70,6 +73,8 @@ pub fn handle_zone_transition(
     world_map: Res<WorldMap>,
     map_settings: Res<MapSettings>,
     body_templates: Res<BodyTemplates>,
+    item_registry: Res<ItemRegistry>,
+    mut instance_registry: ResMut<ItemInstanceRegistry>,
     asset_server: Res<AssetServer>,
     zone_entities: Query<Entity, With<ZoneEntity>>,
     mut player_query: Query<&mut GridPosition, With<PlayerControlled>>,
@@ -138,6 +143,8 @@ pub fn handle_zone_transition(
                     &pawn_texture,
                     &map_settings,
                     template,
+                    &item_registry,
+                    &mut instance_registry,
                     poi.x,
                     poi.y,
                     *enemy_count,
@@ -150,6 +157,8 @@ pub fn handle_zone_transition(
                     &pawn_texture,
                     &map_settings,
                     template,
+                    &item_registry,
+                    &mut instance_registry,
                     poi.x,
                     poi.y,
                     *creature_count,
@@ -168,26 +177,25 @@ pub fn handle_zone_transition(
 
 const FACTION_BANDITS: u32 = 2;
 
-fn spawn_enemy_camp(
+pub fn spawn_enemy_camp(
     commands: &mut Commands,
     texture: &Handle<Image>,
     map_settings: &MapSettings,
     body_template: &crate::resources::body::BodyTemplate,
+    item_registry: &ItemRegistry,
+    instance_registry: &mut ItemInstanceRegistry,
     cx: u32,
     cy: u32,
     count: u32,
 ) {
-    let weapon = WeaponDef {
-        name: "Rusty Sword".into(),
-        damage_type: DamageType::Slashing,
-        base_damage: 5.0,
-        attack_speed_ticks: 120,
-        range: 1.5,
-        projectile_speed: 0.0,
-        is_melee: true,
-    };
+    let placeholder = placeholder_weapon(ITEM_CHIPPED_BLADE, item_registry);
 
     for i in 0..count {
+        // Create a unique weapon instance per enemy
+        let weapon_instance_id = create_item_instance(ITEM_CHIPPED_BLADE, instance_registry);
+        let mut equipment = Equipment::default();
+        equipment.equip(EquipSlot::MainHand, weapon_instance_id);
+
         // Spread enemies around the camp center
         let offset_x = (i % 3) as i32 - 1;
         let offset_y = (i / 3) as i32 - 1;
@@ -225,8 +233,9 @@ fn spawn_enemy_camp(
             Body::from_template(body_template),
             Attributes { strength: 4, agility: 4, toughness: 4, ..Default::default() },
             CharacterLevel::default(),
-            EquippedWeapon::new(weapon.clone()),
+            EquippedWeapon::new(placeholder.clone()),
             EquippedArmor::default(),
+            EquipmentBonuses::default(),
             Mana::new(50.0),
             Stamina::new(50.0),
             ActiveStatusEffects::default(),
@@ -234,6 +243,8 @@ fn spawn_enemy_camp(
             crate::resources::abilities::AbilitySlots::new(vec![
                 crate::resources::ability_defs::ABILITY_CLEAVE,
             ]),
+        ));
+        entity_commands.insert((
             CombatBehavior::melee_enemy(vec![
                 crate::resources::combat_behavior::AbilityPriority {
                     ability_id: crate::resources::ability_defs::ABILITY_CLEAVE,
@@ -245,6 +256,7 @@ fn spawn_enemy_camp(
             RepathTimer::default(),
             AiBrain::enemy(),
             InCombat,
+            equipment,
         ));
     }
 }

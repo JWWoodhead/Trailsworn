@@ -4,6 +4,7 @@ pub mod character_sheet;
 pub mod casting;
 pub mod combat;
 pub mod debug;
+pub mod equipment;
 pub mod floating_text;
 pub mod game_time;
 pub mod health_bars;

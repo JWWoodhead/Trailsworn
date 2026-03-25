@@ -18,6 +18,13 @@ pub enum DamageType {
 }
 
 impl DamageType {
+    /// All damage types. Update this when adding a new variant.
+    pub const ALL: [DamageType; 10] = [
+        Self::Slashing, Self::Piercing, Self::Blunt,
+        Self::Fire, Self::Frost, Self::Storm,
+        Self::Arcane, Self::Holy, Self::Shadow, Self::Nature,
+    ];
+
     pub fn is_physical(self) -> bool {
         matches!(self, Self::Slashing | Self::Piercing | Self::Blunt)
     }

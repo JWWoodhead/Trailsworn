@@ -55,7 +55,16 @@
       "Read(//c/Users/joeww/Downloads/Grass003_1K-PNG \\(1\\)/**)",
       "Bash(cp \"c:/Users/joeww/Downloads/Grass001_1K-PNG/Grass001_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Grass.png)",
       "Bash(cp \"c:/Users/joeww/Downloads/Ground048_1K-PNG \\(1\\)/Ground048_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Dirt.png)",
-      "Bash(cp \"c:/Users/joeww/Downloads/Grass003_1K-PNG \\(1\\)/Grass003_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Forest.png)"
+      "Bash(cp \"c:/Users/joeww/Downloads/Grass003_1K-PNG \\(1\\)/Grass003_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Forest.png)",
+      "Bash(rustup show:*)",
+      "Bash(wc -l /c/ReposLocal/Trailsworn/tests/**/*.rs)",
+      "Bash(sed 's/fn //')",
+      "Bash(sed 's/\\(.*\\)//')",
+      "Bash(sed 's/.*fn //')",
+      "Bash(wc -l /c/ReposLocal/Trailsworn/src/**/*.rs)",
+      "Bash(echo $LIB)",
+      "Bash(echo $INCLUDE)",
+      "Bash(\"C:/Program Files \\(x86\\)/Microsoft Visual Studio/Installer/vswhere.exe\" -all -format json)"
     ]
   }
 }

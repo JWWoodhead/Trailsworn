@@ -4,7 +4,7 @@ use bevy::ecs::hierarchy::ChildSpawnerCommands;
 
 use crate::resources::{
     damage::EquippedWeapon,
-    items::{Equipment, EquipSlot, Inventory, ItemRegistry, Rarity},
+    items::{Equipment, EquipSlot, Inventory, ItemInstanceRegistry, ItemRegistry},
     selection::Selected,
     theme::Theme,
 };
@@ -311,6 +311,7 @@ fn spawn_detail_panel(
 
 pub fn update_inventory_panel(
     item_registry: Res<ItemRegistry>,
+    instance_registry: Res<ItemInstanceRegistry>,
     theme: Res<Theme>,
     active_tab: Res<ActiveUiTab>,
     selected: Query<
@@ -353,55 +354,84 @@ pub fn update_inventory_panel(
                 **text = format!("{} — Inventory", entity_name.0);
             }
             InvText::WeightTotal => {
-                let w = inventory.total_weight(&item_registry);
+                let w = inventory.total_weight(&item_registry, &instance_registry);
                 **text = format!("Weight: {:.1}", w);
             }
             InvText::SlotCount => {
-                **text = format!("{}/{}", inventory.items.len(), inventory.capacity);
+                **text = format!("{}/{}", inventory.occupied_slots(), inventory.capacity);
             }
             InvText::EquipSlotLabel(_) => {}
             InvText::EquipSlotItem(idx) => {
                 let slot = EQUIP_DISPLAY_SLOTS[*idx].0;
-                let item_name = equipment
+                let instance = equipment
                     .and_then(|eq| eq.in_slot(slot))
-                    .and_then(|id| item_registry.get(id))
-                    .map(|def| def.name.as_str());
+                    .and_then(|id| instance_registry.get(id));
 
-                let weapon_fallback = if slot == EquipSlot::MainHand && item_name.is_none() {
-                    weapon.map(|w| w.weapon.name.as_str())
-                } else {
-                    None
-                };
-
-                if let Some(name) = item_name.or(weapon_fallback) {
-                    **text = name.to_string();
-                    color.0 = theme.text_parchment;
+                if let Some(inst) = instance {
+                    // Show rolled display name (includes affix labels)
+                    **text = inst.display_name(&item_registry);
+                    color.0 = inst.rarity.text_color(&theme);
+                } else if slot == EquipSlot::MainHand {
+                    // Fallback to EquippedWeapon name if no Equipment entry
+                    if let Some(w) = weapon {
+                        **text = w.weapon.name.clone();
+                        color.0 = theme.text_parchment;
+                    } else {
+                        **text = "— empty —".to_string();
+                        color.0 = Color::srgba(0.961, 0.961, 0.863, 0.3);
+                    }
                 } else {
                     **text = "— empty —".to_string();
                     color.0 = Color::srgba(0.961, 0.961, 0.863, 0.3);
                 }
             }
             InvText::ItemName(idx) => {
-                if let Some(stack) = inventory.items.get(*idx) {
-                    if let Some(def) = item_registry.get(stack.item_id) {
-                        **text = truncate_name(&def.name, 8);
-                        color.0 = rarity_color(&def.rarity, &theme);
-                    } else {
-                        **text = "???".to_string();
-                        color.0 = theme.text_parchment;
+                let stack_count = inventory.items.len();
+                if *idx < stack_count {
+                    // Stackable item
+                    if let Some(stack) = inventory.items.get(*idx) {
+                        if let Some(def) = item_registry.get(stack.item_id) {
+                            **text = truncate_name(&def.name, 8);
+                            color.0 = def.rarity.text_color(&theme);
+                        } else {
+                            **text = "???".to_string();
+                            color.0 = theme.text_parchment;
+                        }
                     }
                 } else {
-                    **text = String::new();
+                    // Instance item (equipment in bag)
+                    let inst_idx = *idx - stack_count;
+                    if let Some(&inst_id) = inventory.instances.get(inst_idx) {
+                        if let Some(inst) = instance_registry.get(inst_id) {
+                            if let Some(def) = item_registry.get(inst.base_item_id) {
+                                **text = truncate_name(&def.name, 8);
+                                color.0 = inst.rarity.text_color(&theme);
+                            } else {
+                                **text = "???".to_string();
+                                color.0 = theme.text_parchment;
+                            }
+                        } else {
+                            **text = String::new();
+                        }
+                    } else {
+                        **text = String::new();
+                    }
                 }
             }
             InvText::ItemCount(idx) => {
-                if let Some(stack) = inventory.items.get(*idx) {
-                    if stack.count > 1 {
-                        **text = format!("x{}", stack.count);
+                let stack_count = inventory.items.len();
+                if *idx < stack_count {
+                    if let Some(stack) = inventory.items.get(*idx) {
+                        if stack.count > 1 {
+                            **text = format!("x{}", stack.count);
+                        } else {
+                            **text = String::new();
+                        }
                     } else {
                         **text = String::new();
                     }
                 } else {
+                    // Instance items never stack
                     **text = String::new();
                 }
             }
@@ -416,26 +446,35 @@ pub fn update_inventory_panel(
         let slot = EQUIP_DISPLAY_SLOTS[slot_bg.0].0;
         let rarity = equipment
             .and_then(|eq| eq.in_slot(slot))
-            .and_then(|id| item_registry.get(id))
-            .map(|def| &def.rarity);
+            .and_then(|id| instance_registry.get(id))
+            .map(|inst| &inst.rarity);
 
         bg.0 = if let Some(r) = rarity {
-            equip_slot_bg_color(r, &theme)
+            r.bg_tint()
         } else {
             Color::srgb(0.1, 0.1, 0.1)
         };
     }
 
     // Grid slot backgrounds — rarity tint
+    let stack_count = inventory.items.len();
     for (slot_bg, mut bg) in &mut grid_bgs {
-        let rarity = inventory
-            .items
-            .get(slot_bg.0)
-            .and_then(|stack| item_registry.get(stack.item_id))
-            .map(|def| &def.rarity);
+        let idx = slot_bg.0;
+        let rarity = if idx < stack_count {
+            // Stackable item
+            inventory.items.get(idx)
+                .and_then(|stack| item_registry.get(stack.item_id))
+                .map(|def| def.rarity)
+        } else {
+            // Instance item
+            let inst_idx = idx - stack_count;
+            inventory.instances.get(inst_idx)
+                .and_then(|&id| instance_registry.get(id))
+                .map(|inst| inst.rarity)
+        };
 
         bg.0 = if let Some(r) = rarity {
-            grid_slot_bg_color(r, &theme)
+            r.bg_tint()
         } else {
             Color::srgb(0.1, 0.1, 0.1)
         };
@@ -454,29 +493,3 @@ fn truncate_name(name: &str, max_len: usize) -> String {
     }
 }
 
-fn rarity_color(rarity: &Rarity, theme: &Theme) -> Color {
-    match rarity {
-        Rarity::Normal => theme.text_parchment,
-        Rarity::Magic => Color::srgb(0.4, 0.8, 0.4),
-        Rarity::Rare => Color::srgb(0.4, 0.5, 1.0),
-        Rarity::Unique => theme.primary,
-    }
-}
-
-fn equip_slot_bg_color(rarity: &Rarity, _theme: &Theme) -> Color {
-    match rarity {
-        Rarity::Normal => Color::srgb(0.1, 0.1, 0.1),
-        Rarity::Magic => Color::srgb(0.08, 0.14, 0.08),
-        Rarity::Rare => Color::srgb(0.08, 0.08, 0.16),
-        Rarity::Unique => Color::srgba(0.15, 0.12, 0.04, 1.0),
-    }
-}
-
-fn grid_slot_bg_color(rarity: &Rarity, _theme: &Theme) -> Color {
-    match rarity {
-        Rarity::Normal => Color::srgb(0.12, 0.12, 0.12),
-        Rarity::Magic => Color::srgb(0.08, 0.14, 0.08),
-        Rarity::Rare => Color::srgb(0.08, 0.08, 0.16),
-        Rarity::Unique => Color::srgba(0.15, 0.12, 0.04, 1.0),
-    }
-}

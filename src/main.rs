@@ -21,7 +21,7 @@ use trailsworn::resources::status_effects::StatusEffectRegistry;
 use trailsworn::resources::theme::Theme;
 use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::systems::{
-    ability_bar, camera, casting, character_sheet, combat, debug, floating_text, game_time,
+    ability_bar, camera, casting, character_sheet, combat, debug, equipment, floating_text, game_time,
     health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, zone,
 };
 use trailsworn::worldgen::world_map::generate_world_map;
@@ -177,7 +177,8 @@ fn main() {
                 .in_set(GameSet::Ai),
             // Combat
             (
-                combat::tick_weapon_cooldowns,
+                equipment::sync_equipment,
+                combat::tick_weapon_cooldowns.after(equipment::sync_equipment),
                 casting::tick_ability_cooldowns,
                 casting::regenerate_resources,
                 combat::auto_attack,
@@ -257,6 +258,8 @@ fn spawn_initial_zone_entities(
     asset_server: Res<AssetServer>,
     map_settings: Res<MapSettings>,
     body_templates: Res<BodyTemplates>,
+    item_registry: Res<ItemRegistry>,
+    mut instance_registry: ResMut<ItemInstanceRegistry>,
     current_zone: Res<CurrentZone>,
     world_map: Res<trailsworn::worldgen::WorldMap>,
 ) {
@@ -283,72 +286,17 @@ fn spawn_initial_zone_entities(
         match &poi.kind {
             trailsworn::worldgen::zone::PoiKind::EnemyCamp { enemy_count }
             | trailsworn::worldgen::zone::PoiKind::WildlifeSpawn { creature_count: enemy_count } => {
-                // Inline enemy spawning — reuses zone.rs pattern
-                let weapon = trailsworn::resources::damage::WeaponDef {
-                    name: "Rusty Sword".into(),
-                    damage_type: trailsworn::resources::damage::DamageType::Slashing,
-                    base_damage: 5.0,
-                    attack_speed_ticks: 120,
-                    range: 1.5,
-                    projectile_speed: 0.0,
-                    is_melee: true,
-                };
-                for i in 0..*enemy_count {
-                    let offset_x = (i % 3) as i32 - 1;
-                    let offset_y = (i / 3) as i32 - 1;
-                    let ex = (poi.x as i32 + offset_x * 2).max(0) as u32;
-                    let ey = (poi.y as i32 + offset_y * 2).max(0) as u32;
-                    let grid_pos = trailsworn::resources::map::GridPosition::new(ex, ey);
-                    let world_pos = grid_pos.to_world(map_settings.tile_size);
-                    let name = format!("Bandit {}", i + 1);
-
-                    let mut ec = commands.spawn((
-                        Name::new(name.clone()),
-                        trailsworn::resources::identity::StableId::next(),
-                        DespawnOnExit(trailsworn::resources::game_state::GameState::Playing),
-                        zone::ZoneEntity,
-                        Sprite {
-                            image: pawn_texture.clone(),
-                            color: Color::srgb(1.0, 0.4, 0.4),
-                            ..default()
-                        },
-                        Transform::from_translation(Vec3::new(
-                            world_pos.x, world_pos.y,
-                            trailsworn::resources::map::render_layers::ENTITIES,
-                        )),
-                        grid_pos,
-                        trailsworn::resources::movement::MovementSpeed::default(),
-                        trailsworn::resources::movement::FacingDirection::default(),
-                        trailsworn::resources::movement::PathOffset::random(&mut rand::rng()),
-                        trailsworn::resources::faction::Faction(2),
-                        trailsworn::systems::spawning::EntityName(name),
-                    ));
-                    ec.insert((
-                        trailsworn::resources::body::Body::from_template(template),
-                        trailsworn::resources::stats::Attributes { strength: 4, agility: 4, toughness: 4, ..Default::default() },
-                        trailsworn::resources::stats::CharacterLevel::default(),
-                        trailsworn::resources::damage::EquippedWeapon::new(weapon.clone()),
-                        trailsworn::resources::damage::EquippedArmor::default(),
-                        trailsworn::resources::abilities::Mana::new(50.0),
-                        trailsworn::resources::abilities::Stamina::new(50.0),
-                        trailsworn::resources::status_effects::ActiveStatusEffects::default(),
-                        trailsworn::resources::threat::ThreatTable::default(),
-                        trailsworn::resources::abilities::AbilitySlots::new(vec![
-                            trailsworn::resources::ability_defs::ABILITY_CLEAVE,
-                        ]),
-                        trailsworn::resources::combat_behavior::CombatBehavior::melee_enemy(vec![
-                            trailsworn::resources::combat_behavior::AbilityPriority {
-                                ability_id: trailsworn::resources::ability_defs::ABILITY_CLEAVE,
-                                slot_index: 0,
-                                condition: trailsworn::resources::combat_behavior::UseCondition::Always,
-                                priority: 10,
-                            },
-                        ]),
-                        trailsworn::resources::movement::RepathTimer::default(),
-                        trailsworn::resources::task::AiBrain::enemy(),
-                        trailsworn::resources::combat::InCombat,
-                    ));
-                }
+                zone::spawn_enemy_camp(
+                    &mut commands,
+                    &pawn_texture,
+                    &map_settings,
+                    template,
+                    &item_registry,
+                    &mut instance_registry,
+                    poi.x,
+                    poi.y,
+                    *enemy_count,
+                );
             }
             trailsworn::worldgen::zone::PoiKind::CaveEntrance => {
                 // TODO: cave entrance interactable

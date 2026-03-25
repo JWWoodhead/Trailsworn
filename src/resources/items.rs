@@ -13,6 +13,12 @@ use super::damage::{Resistances, WeaponDef};
 pub struct ItemId(pub u32);
 
 /// Item rarity — determines affix count and UI color.
+///
+/// When adding a new rarity:
+/// 1. Add variant here
+/// 2. Add arms to `text_color()`, `bg_tint()` below
+/// 3. Add arms to `max_affixes_per_slot()` and `affix_count_range()` at bottom of this file
+/// 4. Update `roll_rarity()` in item_gen.rs
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Rarity {
     #[default]
@@ -20,6 +26,28 @@ pub enum Rarity {
     Magic,      // 1-2 affixes (max 1 prefix + 1 suffix)
     Rare,       // 3-6 affixes (max 3 prefix + 3 suffix)
     Unique,     // Fixed affixes (future)
+}
+
+impl Rarity {
+    /// Text color for this rarity (used by all UI displays).
+    pub fn text_color(self, theme: &super::theme::Theme) -> Color {
+        match self {
+            Self::Normal => theme.text_parchment,
+            Self::Magic => Color::srgb(0.4, 0.8, 0.4),
+            Self::Rare => Color::srgb(0.4, 0.5, 1.0),
+            Self::Unique => theme.primary,
+        }
+    }
+
+    /// Subtle background tint for inventory/equipment slots.
+    pub fn bg_tint(self) -> Color {
+        match self {
+            Self::Normal => Color::srgb(0.12, 0.12, 0.12),
+            Self::Magic => Color::srgb(0.08, 0.14, 0.08),
+            Self::Rare => Color::srgb(0.08, 0.08, 0.16),
+            Self::Unique => Color::srgba(0.15, 0.12, 0.04, 1.0),
+        }
+    }
 }
 
 /// Broad item category — determines inventory tab, affix pool, and behavior.
@@ -237,10 +265,15 @@ impl ItemStack {
 // ---------------------------------------------------------------------------
 
 /// Bag of items carried by an entity.
+/// Holds both stackable items (consumables/materials) and unique equipment instances.
+/// Both types consume from the same `capacity` pool.
 #[derive(Component, Clone, Debug, Default)]
 pub struct Inventory {
+    /// Stackable items (consumables, materials).
     pub items: Vec<ItemStack>,
-    /// Maximum number of distinct stacks (slots).
+    /// Unique equipment instances (weapons, armor with rolled affixes).
+    pub instances: Vec<ItemInstanceId>,
+    /// Maximum number of occupied slots (stacks + instances combined).
     pub capacity: usize,
 }
 
@@ -248,12 +281,18 @@ impl Inventory {
     pub fn new(capacity: usize) -> Self {
         Self {
             items: Vec::new(),
+            instances: Vec::new(),
             capacity,
         }
     }
 
-    /// Try to add items. Stacks with existing matching items first, then uses
-    /// empty slots. Returns the leftover count that didn't fit (0 = all added).
+    /// Number of slots currently occupied (stacks + instances).
+    pub fn occupied_slots(&self) -> usize {
+        self.items.len() + self.instances.len()
+    }
+
+    /// Try to add stackable items. Stacks with existing matching items first,
+    /// then uses empty slots. Returns the leftover count that didn't fit (0 = all added).
     pub fn add(&mut self, item_id: ItemId, mut count: u32, registry: &ItemRegistry) -> u32 {
         let max_stack = registry
             .get(item_id)
@@ -273,8 +312,8 @@ impl Inventory {
             }
         }
 
-        // Fill new slots
-        while count > 0 && self.items.len() < self.capacity {
+        // Fill new slots (respecting shared capacity)
+        while count > 0 && self.occupied_slots() < self.capacity {
             let added = count.min(max_stack);
             self.items.push(ItemStack::new(item_id, added));
             count -= added;
@@ -283,7 +322,31 @@ impl Inventory {
         count
     }
 
-    /// Remove up to `count` of an item. Returns actual amount removed.
+    /// Try to add a unique equipment instance. Returns false if inventory is full.
+    pub fn add_instance(&mut self, id: ItemInstanceId) -> bool {
+        if self.occupied_slots() >= self.capacity {
+            return false;
+        }
+        self.instances.push(id);
+        true
+    }
+
+    /// Remove a unique equipment instance. Returns true if found and removed.
+    pub fn remove_instance(&mut self, id: ItemInstanceId) -> bool {
+        if let Some(pos) = self.instances.iter().position(|&i| i == id) {
+            self.instances.swap_remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if a specific instance is in the inventory.
+    pub fn has_instance(&self, id: ItemInstanceId) -> bool {
+        self.instances.contains(&id)
+    }
+
+    /// Remove up to `count` of a stackable item. Returns actual amount removed.
     pub fn remove(&mut self, item_id: ItemId, mut count: u32) -> u32 {
         let mut removed = 0;
         self.items.retain_mut(|stack| {
@@ -304,7 +367,7 @@ impl Inventory {
         removed
     }
 
-    /// Count total of an item across all stacks.
+    /// Count total of a stackable item across all stacks.
     pub fn count(&self, item_id: ItemId) -> u32 {
         self.items
             .iter()
@@ -313,17 +376,30 @@ impl Inventory {
             .sum()
     }
 
-    /// Total weight of all items.
-    pub fn total_weight(&self, registry: &ItemRegistry) -> f32 {
-        self.items
+    /// Total weight of all items (stacks + instances).
+    pub fn total_weight(
+        &self,
+        item_registry: &ItemRegistry,
+        instance_registry: &ItemInstanceRegistry,
+    ) -> f32 {
+        let stack_weight: f32 = self.items
             .iter()
             .map(|stack| {
-                registry
+                item_registry
                     .get(stack.item_id)
                     .map(|def| def.weight * stack.count as f32)
                     .unwrap_or(0.0)
             })
-            .sum()
+            .sum();
+
+        let instance_weight: f32 = self.instances
+            .iter()
+            .filter_map(|&id| instance_registry.get(id))
+            .filter_map(|inst| item_registry.get(inst.base_item_id))
+            .map(|def| def.weight)
+            .sum();
+
+        stack_weight + instance_weight
     }
 }
 
@@ -331,24 +407,25 @@ impl Inventory {
 // Equipment component
 // ---------------------------------------------------------------------------
 
-/// Currently equipped items, keyed by slot.
+/// Currently equipped items, keyed by slot. Stores `ItemInstanceId` references
+/// into the `ItemInstanceRegistry`.
 #[derive(Component, Clone, Debug, Default)]
 pub struct Equipment {
-    pub slots: HashMap<EquipSlot, ItemId>,
+    pub slots: HashMap<EquipSlot, ItemInstanceId>,
 }
 
 impl Equipment {
-    /// Equip an item in its slot. Returns the previously equipped item id, if any.
-    pub fn equip(&mut self, slot: EquipSlot, item_id: ItemId) -> Option<ItemId> {
-        self.slots.insert(slot, item_id)
+    /// Equip an item instance in its slot. Returns the previously equipped instance id, if any.
+    pub fn equip(&mut self, slot: EquipSlot, instance_id: ItemInstanceId) -> Option<ItemInstanceId> {
+        self.slots.insert(slot, instance_id)
     }
 
-    /// Unequip an item from a slot. Returns the item id if something was there.
-    pub fn unequip(&mut self, slot: EquipSlot) -> Option<ItemId> {
+    /// Unequip an item from a slot. Returns the instance id if something was there.
+    pub fn unequip(&mut self, slot: EquipSlot) -> Option<ItemInstanceId> {
         self.slots.remove(&slot)
     }
 
-    pub fn in_slot(&self, slot: EquipSlot) -> Option<ItemId> {
+    pub fn in_slot(&self, slot: EquipSlot) -> Option<ItemInstanceId> {
         self.slots.get(&slot).copied()
     }
 }
@@ -542,10 +619,11 @@ mod tests {
     #[test]
     fn total_weight() {
         let reg = test_registry();
+        let instance_reg = ItemInstanceRegistry::default();
         let mut inv = Inventory::new(10);
         inv.add(ItemId(1), 4, &reg);
         inv.add(ItemId(2), 1, &reg);
-        let w = inv.total_weight(&reg);
+        let w = inv.total_weight(&reg, &instance_reg);
         assert!((w - 5.0).abs() < 0.001);
     }
 
@@ -554,16 +632,75 @@ mod tests {
         let mut eq = Equipment::default();
         assert!(eq.in_slot(EquipSlot::MainHand).is_none());
 
-        let prev = eq.equip(EquipSlot::MainHand, ItemId(2));
+        let prev = eq.equip(EquipSlot::MainHand, ItemInstanceId(1));
         assert!(prev.is_none());
-        assert_eq!(eq.in_slot(EquipSlot::MainHand), Some(ItemId(2)));
+        assert_eq!(eq.in_slot(EquipSlot::MainHand), Some(ItemInstanceId(1)));
 
-        let prev = eq.equip(EquipSlot::MainHand, ItemId(5));
-        assert_eq!(prev, Some(ItemId(2)));
+        let prev = eq.equip(EquipSlot::MainHand, ItemInstanceId(2));
+        assert_eq!(prev, Some(ItemInstanceId(1)));
 
         let removed = eq.unequip(EquipSlot::MainHand);
-        assert_eq!(removed, Some(ItemId(5)));
+        assert_eq!(removed, Some(ItemInstanceId(2)));
         assert!(eq.in_slot(EquipSlot::MainHand).is_none());
+    }
+
+    #[test]
+    fn add_instance_to_inventory() {
+        let mut inv = Inventory::new(10);
+        assert!(inv.add_instance(ItemInstanceId(1)));
+        assert!(inv.add_instance(ItemInstanceId(2)));
+        assert_eq!(inv.occupied_slots(), 2);
+        assert!(inv.has_instance(ItemInstanceId(1)));
+        assert!(inv.has_instance(ItemInstanceId(2)));
+        assert!(!inv.has_instance(ItemInstanceId(99)));
+    }
+
+    #[test]
+    fn add_instance_respects_capacity() {
+        let reg = test_registry();
+        let mut inv = Inventory::new(3);
+        // Fill 2 slots with stacks
+        inv.add(ItemId(2), 2, &reg); // non-stackable, 2 slots
+        assert_eq!(inv.occupied_slots(), 2);
+        // 1 slot left
+        assert!(inv.add_instance(ItemInstanceId(1)));
+        assert_eq!(inv.occupied_slots(), 3);
+        // Full now
+        assert!(!inv.add_instance(ItemInstanceId(2)));
+        assert_eq!(inv.occupied_slots(), 3);
+    }
+
+    #[test]
+    fn remove_instance_from_inventory() {
+        let mut inv = Inventory::new(10);
+        inv.add_instance(ItemInstanceId(1));
+        inv.add_instance(ItemInstanceId(2));
+        assert!(inv.remove_instance(ItemInstanceId(1)));
+        assert!(!inv.has_instance(ItemInstanceId(1)));
+        assert!(inv.has_instance(ItemInstanceId(2)));
+        assert_eq!(inv.occupied_slots(), 1);
+        // Removing non-existent returns false
+        assert!(!inv.remove_instance(ItemInstanceId(99)));
+    }
+
+    #[test]
+    fn total_weight_includes_instances() {
+        let reg = test_registry();
+        let mut instance_reg = ItemInstanceRegistry::default();
+        let id = instance_reg.next_id();
+        instance_reg.insert(ItemInstance {
+            id,
+            base_item_id: ItemId(2), // Iron Sword, weight 3.0
+            rarity: Rarity::Normal,
+            item_level: 1,
+            prefixes: vec![],
+            suffixes: vec![],
+        });
+        let mut inv = Inventory::new(10);
+        inv.add(ItemId(1), 2, &reg); // 2 potions = 1.0 weight
+        inv.add_instance(id);         // sword = 3.0 weight
+        let w = inv.total_weight(&reg, &instance_reg);
+        assert!((w - 4.0).abs() < 0.001);
     }
 
     #[test]

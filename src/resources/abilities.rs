@@ -151,11 +151,13 @@ impl AbilitySlots {
 pub struct Mana {
     pub current: f32,
     pub max: f32,
+    /// Base max before equipment bonuses. Set at spawn, never changed by equipment.
+    pub base_max: f32,
 }
 
 impl Mana {
     pub fn new(max: f32) -> Self {
-        Self { current: max, max }
+        Self { current: max, max, base_max: max }
     }
 
     pub fn spend(&mut self, amount: f32) -> bool {
@@ -177,11 +179,13 @@ impl Mana {
 pub struct Stamina {
     pub current: f32,
     pub max: f32,
+    /// Base max before equipment bonuses. Set at spawn, never changed by equipment.
+    pub base_max: f32,
 }
 
 impl Stamina {
     pub fn new(max: f32) -> Self {
-        Self { current: max, max }
+        Self { current: max, max, base_max: max }
     }
 
     pub fn spend(&mut self, amount: f32) -> bool {

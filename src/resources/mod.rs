@@ -7,6 +7,7 @@ pub mod combat_behavior;
 pub mod body;
 pub mod combat;
 pub mod damage;
+pub mod equipment_bonuses;
 pub mod events;
 pub mod faction;
 pub mod game_state;
