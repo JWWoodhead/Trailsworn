@@ -6,20 +6,17 @@ use crate::resources::{
     abilities::{Mana, Stamina},
     body::{Body, BodyTemplates},
     damage::EquippedWeapon,
-    input::{Action, ActionState},
     selection::Selected,
     stats::{Attributes, CharacterLevel},
     status_effects::ActiveStatusEffects,
     theme::Theme,
 };
 use crate::systems::spawning::EntityName;
+use crate::systems::ui_panel::{ActiveUiTab, UiTab};
 
 // ---------------------------------------------------------------------------
 // Marker components — enum-based to keep query count low
 // ---------------------------------------------------------------------------
-
-#[derive(Component)]
-pub struct CharacterSheetRoot;
 
 /// Identifies which text element this entity represents.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -45,15 +42,10 @@ pub enum CsBar {
     Stamina,
 }
 
-#[derive(Component)]
-pub struct CsNoSelectionOverlay;
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const PANEL_WIDTH: f32 = 660.0;
-const PANEL_HEIGHT: f32 = 480.0;
 const SECTION_GAP: f32 = 12.0;
 const BAR_HEIGHT: f32 = 10.0;
 const BAR_WIDTH: f32 = 100.0;
@@ -75,263 +67,220 @@ const VITAL_BRAIN: usize = 1;
 const VITAL_HEART: usize = 6;
 
 // ---------------------------------------------------------------------------
-// Setup
+// Content setup — called by ui_panel::setup_ui_panel
 // ---------------------------------------------------------------------------
 
-pub fn setup_character_sheet(mut commands: Commands, theme: Res<Theme>) {
+pub fn spawn_character_sheet_content(parent: &mut ChildSpawnerCommands, theme: &Theme) {
     let label_color = Color::srgba(0.961, 0.961, 0.863, 0.5);
 
-    commands
-        .spawn((
-            CharacterSheetRoot,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                top: Val::Percent(50.0),
-                margin: UiRect {
-                    left: Val::Px(-(PANEL_WIDTH / 2.0)),
-                    top: Val::Px(-(PANEL_HEIGHT / 2.0)),
-                    ..default()
-                },
-                width: Val::Px(PANEL_WIDTH),
-                height: Val::Px(PANEL_HEIGHT),
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(16.0)),
-                display: Display::None,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.075, 0.075, 0.075, 0.95)),
-            GlobalZIndex(10),
-        ))
-        .with_children(|root| {
-            // "No character selected" overlay
-            root.spawn((
-                CsNoSelectionOverlay,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..default()
-                },
-            ))
-            .with_child((
-                Text::new("No character selected"),
-                TextFont { font_size: 16.0, ..default() },
-                TextColor(label_color),
+    // ── Header row ──────────────────────────────────────────
+    parent.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        justify_content: JustifyContent::SpaceBetween,
+        align_items: AlignItems::End,
+        width: Val::Percent(100.0),
+        margin: UiRect::bottom(Val::Px(SECTION_GAP)),
+        ..default()
+    })
+    .with_children(|header| {
+        header.spawn((
+            CsText::Name,
+            Text::new("—"),
+            TextFont { font_size: 22.0, ..default() },
+            TextColor(theme.primary),
+        ));
+        header.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::End,
+            row_gap: Val::Px(2.0),
+            ..default()
+        })
+        .with_children(|level_col| {
+            level_col.spawn((
+                CsText::Level,
+                Text::new("Level 1"),
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(theme.text_parchment),
             ));
-
-            // ── Header row ──────────────────────────────────────────
-            root.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::End,
-                width: Val::Percent(100.0),
-                margin: UiRect::bottom(Val::Px(SECTION_GAP)),
+            level_col.spawn(Node {
+                width: Val::Px(160.0),
+                height: Val::Px(6.0),
                 ..default()
             })
-            .with_children(|header| {
-                header.spawn((
-                    CsText::Name,
-                    Text::new("—"),
-                    TextFont { font_size: 22.0, ..default() },
-                    TextColor(theme.primary),
+            .insert(BackgroundColor(Color::srgb(0.05, 0.05, 0.05)))
+            .with_children(|xp_bg| {
+                xp_bg.spawn((
+                    CsBar::Xp,
+                    Node {
+                        width: Val::Percent(0.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(theme.primary_container),
                 ));
-                header.spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::End,
-                    row_gap: Val::Px(2.0),
-                    ..default()
-                })
-                .with_children(|level_col| {
-                    level_col.spawn((
-                        CsText::Level,
-                        Text::new("Level 1"),
-                        TextFont { font_size: 14.0, ..default() },
-                        TextColor(theme.text_parchment),
-                    ));
-                    level_col.spawn(Node {
-                        width: Val::Px(160.0),
-                        height: Val::Px(6.0),
-                        ..default()
-                    })
-                    .insert(BackgroundColor(Color::srgb(0.05, 0.05, 0.05)))
-                    .with_children(|xp_bg| {
-                        xp_bg.spawn((
-                            CsBar::Xp,
-                            Node {
-                                width: Val::Percent(0.0),
-                                height: Val::Percent(100.0),
-                                ..default()
-                            },
-                            BackgroundColor(theme.primary_container),
-                        ));
-                    });
-                });
-            });
-
-            // ── Divider ─────────────────────────────────────────────
-            root.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(1.0),
-                    margin: UiRect::bottom(Val::Px(SECTION_GAP)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.961, 0.961, 0.863, 0.1)),
-            ));
-
-            // ── Content columns (40/60 split) ───────────────────────
-            root.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                flex_grow: 1.0,
-                column_gap: Val::Px(20.0),
-                width: Val::Percent(100.0),
-                ..default()
-            })
-            .with_children(|content| {
-                // ── Left column (body) ──────────────────────────────
-                content
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        width: Val::Percent(40.0),
-                        row_gap: Val::Px(4.0),
-                        ..default()
-                    })
-                    .with_children(|left| {
-                        left.spawn((
-                            Text::new("BODY"),
-                            TextFont { font_size: 11.0, ..default() },
-                            TextColor(label_color),
-                            Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
-                        ));
-
-                        for &(part_idx, part_name) in &BODY_DISPLAY_PARTS {
-                            left.spawn(Node {
-                                flex_direction: FlexDirection::Row,
-                                align_items: AlignItems::Center,
-                                height: Val::Px(BODY_PART_ROW_HEIGHT),
-                                column_gap: Val::Px(6.0),
-                                ..default()
-                            })
-                            .with_children(|row| {
-                                row.spawn((
-                                    Text::new(part_name),
-                                    TextFont { font_size: 12.0, ..default() },
-                                    TextColor(theme.text_parchment),
-                                    Node { width: Val::Px(48.0), ..default() },
-                                ));
-                                row.spawn((
-                                    Node {
-                                        width: Val::Px(BAR_WIDTH),
-                                        height: Val::Px(BAR_HEIGHT),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::srgb(0.05, 0.05, 0.05)),
-                                ))
-                                .with_children(|bar_bg| {
-                                    bar_bg.spawn((
-                                        CsBar::BodyPart(part_idx),
-                                        Node {
-                                            width: Val::Percent(100.0),
-                                            height: Val::Percent(100.0),
-                                            ..default()
-                                        },
-                                        BackgroundColor(theme.hp_full),
-                                    ));
-                                });
-                                row.spawn((
-                                    CsText::BodyPartHp(part_idx),
-                                    Text::new("—"),
-                                    TextFont { font_size: 11.0, ..default() },
-                                    TextColor(theme.text_parchment),
-                                ));
-                            });
-                        }
-
-                        left.spawn((
-                            CsText::Vitals,
-                            Text::new(""),
-                            TextFont { font_size: 11.0, ..default() },
-                            TextColor(label_color),
-                            Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
-                        ));
-                        left.spawn((
-                            CsText::Pain,
-                            Text::new(""),
-                            TextFont { font_size: 12.0, ..default() },
-                            TextColor(theme.text_parchment),
-                            Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
-                        ));
-                    });
-
-                // ── Right column (stats + resources) ────────────────
-                content
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        width: Val::Percent(60.0),
-                        row_gap: Val::Px(4.0),
-                        overflow: Overflow::clip(),
-                        ..default()
-                    })
-                    .with_children(|right| {
-                        right.spawn((
-                            Text::new("ATTRIBUTES"),
-                            TextFont { font_size: 11.0, ..default() },
-                            TextColor(label_color),
-                            Node { margin: UiRect::bottom(Val::Px(2.0)), ..default() },
-                        ));
-                        right.spawn((
-                            CsText::Attributes,
-                            Text::new(""),
-                            TextFont { font_size: 13.0, ..default() },
-                            TextColor(theme.text_parchment),
-                            Node { margin: UiRect::bottom(Val::Px(SECTION_GAP)), ..default() },
-                        ));
-
-                        right.spawn((
-                            Text::new("COMBAT"),
-                            TextFont { font_size: 11.0, ..default() },
-                            TextColor(label_color),
-                            Node { margin: UiRect::bottom(Val::Px(2.0)), ..default() },
-                        ));
-                        right.spawn((
-                            CsText::Combat,
-                            Text::new(""),
-                            TextFont { font_size: 13.0, ..default() },
-                            TextColor(theme.text_parchment),
-                            Node { margin: UiRect::bottom(Val::Px(SECTION_GAP)), ..default() },
-                        ));
-
-                        right.spawn((
-                            Text::new("RESOURCES"),
-                            TextFont { font_size: 11.0, ..default() },
-                            TextColor(label_color),
-                            Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
-                        ));
-                        spawn_resource_bar(right, &theme, "Mana", true);
-                        spawn_resource_bar(right, &theme, "Stamina", false);
-
-                        right.spawn((
-                            Text::new("STATUS EFFECTS"),
-                            TextFont { font_size: 11.0, ..default() },
-                            TextColor(label_color),
-                            Node {
-                                margin: UiRect { top: Val::Px(SECTION_GAP), bottom: Val::Px(2.0), ..default() },
-                                ..default()
-                            },
-                        ));
-                        right.spawn((
-                            CsText::Status,
-                            Text::new("None"),
-                            TextFont { font_size: 12.0, ..default() },
-                            TextColor(theme.text_parchment),
-                        ));
-                    });
             });
         });
+    });
+
+    // ── Divider ─────────────────────────────────────────────
+    parent.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Px(1.0),
+            margin: UiRect::bottom(Val::Px(SECTION_GAP)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.961, 0.961, 0.863, 0.1)),
+    ));
+
+    // ── Content columns (40/60 split) ───────────────────────
+    parent.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        flex_grow: 1.0,
+        column_gap: Val::Px(20.0),
+        width: Val::Percent(100.0),
+        ..default()
+    })
+    .with_children(|content| {
+        // ── Left column (body) ──────────────────────────────
+        content
+            .spawn(Node {
+                flex_direction: FlexDirection::Column,
+                width: Val::Percent(40.0),
+                row_gap: Val::Px(4.0),
+                ..default()
+            })
+            .with_children(|left| {
+                left.spawn((
+                    Text::new("BODY"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(label_color),
+                    Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+                ));
+
+                for &(part_idx, part_name) in &BODY_DISPLAY_PARTS {
+                    left.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        height: Val::Px(BODY_PART_ROW_HEIGHT),
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn((
+                            Text::new(part_name),
+                            TextFont { font_size: 12.0, ..default() },
+                            TextColor(theme.text_parchment),
+                            Node { width: Val::Px(48.0), ..default() },
+                        ));
+                        row.spawn((
+                            Node {
+                                width: Val::Px(BAR_WIDTH),
+                                height: Val::Px(BAR_HEIGHT),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.05, 0.05, 0.05)),
+                        ))
+                        .with_children(|bar_bg| {
+                            bar_bg.spawn((
+                                CsBar::BodyPart(part_idx),
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(theme.hp_full),
+                            ));
+                        });
+                        row.spawn((
+                            CsText::BodyPartHp(part_idx),
+                            Text::new("—"),
+                            TextFont { font_size: 11.0, ..default() },
+                            TextColor(theme.text_parchment),
+                        ));
+                    });
+                }
+
+                left.spawn((
+                    CsText::Vitals,
+                    Text::new(""),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(label_color),
+                    Node { margin: UiRect::top(Val::Px(6.0)), ..default() },
+                ));
+                left.spawn((
+                    CsText::Pain,
+                    Text::new(""),
+                    TextFont { font_size: 12.0, ..default() },
+                    TextColor(theme.text_parchment),
+                    Node { margin: UiRect::top(Val::Px(4.0)), ..default() },
+                ));
+            });
+
+        // ── Right column (stats + resources) ────────────────
+        content
+            .spawn(Node {
+                flex_direction: FlexDirection::Column,
+                width: Val::Percent(60.0),
+                row_gap: Val::Px(4.0),
+                overflow: Overflow::clip(),
+                ..default()
+            })
+            .with_children(|right| {
+                right.spawn((
+                    Text::new("ATTRIBUTES"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(label_color),
+                    Node { margin: UiRect::bottom(Val::Px(2.0)), ..default() },
+                ));
+                right.spawn((
+                    CsText::Attributes,
+                    Text::new(""),
+                    TextFont { font_size: 13.0, ..default() },
+                    TextColor(theme.text_parchment),
+                    Node { margin: UiRect::bottom(Val::Px(SECTION_GAP)), ..default() },
+                ));
+
+                right.spawn((
+                    Text::new("COMBAT"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(label_color),
+                    Node { margin: UiRect::bottom(Val::Px(2.0)), ..default() },
+                ));
+                right.spawn((
+                    CsText::Combat,
+                    Text::new(""),
+                    TextFont { font_size: 13.0, ..default() },
+                    TextColor(theme.text_parchment),
+                    Node { margin: UiRect::bottom(Val::Px(SECTION_GAP)), ..default() },
+                ));
+
+                right.spawn((
+                    Text::new("RESOURCES"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(label_color),
+                    Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+                ));
+                spawn_resource_bar(right, theme, "Mana", true);
+                spawn_resource_bar(right, theme, "Stamina", false);
+
+                right.spawn((
+                    Text::new("STATUS EFFECTS"),
+                    TextFont { font_size: 11.0, ..default() },
+                    TextColor(label_color),
+                    Node {
+                        margin: UiRect { top: Val::Px(SECTION_GAP), bottom: Val::Px(2.0), ..default() },
+                        ..default()
+                    },
+                ));
+                right.spawn((
+                    CsText::Status,
+                    Text::new("None"),
+                    TextFont { font_size: 12.0, ..default() },
+                    TextColor(theme.text_parchment),
+                ));
+            });
+    });
 }
 
 fn spawn_resource_bar(parent: &mut ChildSpawnerCommands, theme: &Theme, label: &str, is_mana: bool) {
@@ -387,34 +336,13 @@ fn spawn_resource_bar(parent: &mut ChildSpawnerCommands, theme: &Theme, label: &
 }
 
 // ---------------------------------------------------------------------------
-// Toggle visibility (Input set)
-// ---------------------------------------------------------------------------
-
-pub fn toggle_character_sheet(
-    actions: Res<ActionState>,
-    mut root_query: Query<&mut Node, With<CharacterSheetRoot>>,
-) {
-    if !actions.just_pressed(Action::ToggleCharacterSheet) {
-        return;
-    }
-    let Ok(mut node) = root_query.single_mut() else {
-        return;
-    };
-    node.display = if node.display == Display::None {
-        Display::Flex
-    } else {
-        Display::None
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Update content (Ui set)
 // ---------------------------------------------------------------------------
 
 pub fn update_character_sheet(
     theme: Res<Theme>,
     body_templates: Res<BodyTemplates>,
-    root_query: Query<&Node, With<CharacterSheetRoot>>,
+    active_tab: Res<ActiveUiTab>,
     selected: Query<
         (
             &EntityName,
@@ -429,31 +357,25 @@ pub fn update_character_sheet(
         With<Selected>,
     >,
     mut texts: Query<(&CsText, &mut Text)>,
-    mut bars: Query<(&CsBar, &mut Node, &mut BackgroundColor), Without<CharacterSheetRoot>>,
-    mut no_sel: Query<&mut Node, (With<CsNoSelectionOverlay>, Without<CharacterSheetRoot>, Without<CsBar>)>,
+    mut bars: Query<(&CsBar, &mut Node, &mut BackgroundColor)>,
 ) {
-    // Only update when visible
-    let Ok(root_node) = root_query.single() else {
-        return;
-    };
-    if root_node.display == Display::None {
+    // Only update when this tab is active
+    if active_tab.0 != Some(UiTab::Character) {
         return;
     }
 
     let selected_data = selected.iter().next();
 
-    // Show/hide "no selection" overlay
-    if let Ok(mut no_sel_node) = no_sel.single_mut() {
-        no_sel_node.display = if selected_data.is_none() {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-
     let Some((entity_name, char_level, attrs, body, weapon, mana, stamina, status_effects)) =
         selected_data
     else {
+        // Clear all content so nothing bleeds through behind the overlay
+        for (_marker, mut text) in &mut texts {
+            **text = String::new();
+        }
+        for (_marker, mut node, _bg) in &mut bars {
+            node.width = Val::Percent(0.0);
+        }
         return;
     };
 

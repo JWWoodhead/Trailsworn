@@ -95,6 +95,7 @@ pub fn setup_ability_bar(mut commands: Commands, theme: Res<Theme>) {
                 },
                 BackgroundColor(theme.surface),
                 AbilitySlotUi { slot_index: i },
+                Interaction::default(),
             ))
             .id();
 
@@ -274,12 +275,25 @@ pub fn update_ability_bar(
     ability_registry: Res<AbilityRegistry>,
     theme: Res<Theme>,
     selected: Query<(&AbilitySlots, &Mana, &Stamina), (With<Selected>, With<PlayerControlled>)>,
-    mut slot_bgs: Query<(&AbilitySlotUi, &mut BackgroundColor)>,
+    mut root_query: Query<&mut Node, With<AbilityBarRoot>>,
+    mut slot_bgs: Query<(&AbilitySlotUi, &mut BackgroundColor), Without<AbilityBarRoot>>,
     mut slot_texts: Query<(&AbilitySlotText, &mut Text, &mut TextColor)>,
-    mut cooldown_overlays: Query<(&CooldownOverlay, &mut Node), Without<AbilitySlotUi>>,
+    mut cooldown_overlays: Query<(&CooldownOverlay, &mut Node), (Without<AbilitySlotUi>, Without<AbilityBarRoot>)>,
     targeting_mode: Res<TargetingMode>,
 ) {
     let selected_data = selected.iter().next();
+
+    // Hide entire ability bar when nothing is selected
+    if let Ok(mut root_node) = root_query.single_mut() {
+        root_node.display = if selected_data.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    if selected_data.is_none() {
+        return;
+    }
 
     for (slot_ui, mut bg) in &mut slot_bgs {
         let i = slot_ui.slot_index;

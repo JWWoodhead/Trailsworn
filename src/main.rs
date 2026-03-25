@@ -1,9 +1,12 @@
 use bevy::prelude::*;
-use bevy_ecs_tilemap::TilemapPlugin;
+use bevy_ecs_tilemap::prelude::*;
+use trailsworn::resources::terrain_material::TerrainMaterial;
 use trailsworn::resources::abilities::AbilityRegistry;
 use trailsworn::resources::ability_defs::register_starter_abilities;
+use trailsworn::resources::affix_defs::register_starter_affixes;
+use trailsworn::resources::affixes::AffixRegistry;
 use trailsworn::resources::item_defs::register_starter_items;
-use trailsworn::resources::items::ItemRegistry;
+use trailsworn::resources::items::{ItemInstanceRegistry, ItemRegistry};
 use trailsworn::resources::body::{humanoid_template, BodyTemplates};
 use trailsworn::resources::events::{AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
 use trailsworn::resources::faction::{Disposition, FactionRelations};
@@ -19,7 +22,7 @@ use trailsworn::resources::theme::Theme;
 use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::systems::{
     ability_bar, camera, casting, character_sheet, combat, debug, floating_text, game_time,
-    health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, zone,
+    health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, zone,
 };
 use trailsworn::worldgen::world_map::generate_world_map;
 
@@ -43,6 +46,9 @@ fn main() {
     let mut item_registry = ItemRegistry::default();
     register_starter_items(&mut item_registry);
 
+    let mut affix_registry = AffixRegistry::default();
+    register_starter_affixes(&mut affix_registry);
+
     // Generate world map
     let world_map = generate_world_map(5, 5, world_seed);
     let spawn_pos = world_map.spawn_pos;
@@ -60,14 +66,18 @@ fn main() {
 
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Trailsworn".into(),
+    app.add_plugins(DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Trailsworn".into(),
+                ..default()
+            }),
             ..default()
-        }),
-        ..default()
-    }))
+        })
+        .set(ImagePlugin::default_nearest())
+    )
     .add_plugins(TilemapPlugin)
+    .add_plugins(MaterialTilemapPlugin::<TerrainMaterial>::default())
     // State
     .init_state::<GameState>()
     // Resources
@@ -79,6 +89,8 @@ fn main() {
     .insert_resource(ability_registry)
     .insert_resource(status_registry)
     .insert_resource(item_registry)
+    .insert_resource(affix_registry)
+    .insert_resource(ItemInstanceRegistry::default())
     .insert_resource(Theme::default())
     .insert_resource(StableIdRegistry::default())
     .insert_resource(trailsworn::resources::selection::DragSelection::default())
@@ -86,6 +98,7 @@ fn main() {
     .insert_resource(InputMap::default())
     .insert_resource(ActionState::default())
     .insert_resource(trailsworn::systems::profiling::FrameProfiler::default())
+    .insert_resource(ui_panel::ActiveUiTab::default())
     .insert_resource(trailsworn::resources::map::CursorPosition::default())
     .insert_resource(world_map)
     .insert_resource(current_zone)
@@ -119,8 +132,7 @@ fn main() {
             hover_info::setup_hover_tooltip,
             hud::setup_hud,
             ability_bar::setup_ability_bar,
-            character_sheet::setup_character_sheet,
-            inventory::setup_inventory_panel,
+            ui_panel::setup_ui_panel,
             spawn_initial_zone_entities,
             transition_to_playing,
         )
@@ -140,8 +152,7 @@ fn main() {
                 selection::selection_input.after(camera::update_cursor_position),
                 selection::right_click_command.after(camera::update_cursor_position),
                 selection::ability_input.after(input::process_input),
-                character_sheet::toggle_character_sheet.after(input::process_input),
-                inventory::toggle_inventory.after(input::process_input),
+                ui_panel::toggle_ui_panel.after(input::process_input),
             )
                 .in_set(GameSet::Input),
             // Tick
@@ -203,6 +214,8 @@ fn main() {
                 ability_bar::update_cast_bar,
                 ability_bar::update_resource_bars,
                 ability_bar::draw_targeting_reticle,
+                ui_panel::update_tab_visuals,
+                ui_panel::update_ui_panel_overlay,
                 character_sheet::update_character_sheet,
                 inventory::update_inventory_panel,
             )
@@ -210,7 +223,7 @@ fn main() {
             // Render
             (
                 movement::sync_transforms,
-                rendering::sync_tilemap,
+                rendering::update_terrain_map,
             ).in_set(GameSet::Render),
             // Identity (runs always, not state-gated)
             register_stable_ids,

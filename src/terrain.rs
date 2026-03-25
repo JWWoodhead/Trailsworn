@@ -39,6 +39,18 @@ impl TerrainType {
         }
     }
 
+    /// Render priority for terrain blending. Higher priority bleeds onto lower.
+    pub fn blend_priority(self) -> u8 {
+        match self {
+            Self::Grass => 0,
+            Self::Dirt => 1,
+            Self::Stone => 2,
+            Self::Forest => 3,
+            Self::Water => 4,
+            Self::Mountain => 5,
+        }
+    }
+
     /// Texture atlas index for this terrain type.
     pub fn tile_texture_index(self) -> u32 {
         match self {

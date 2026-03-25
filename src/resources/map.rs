@@ -99,9 +99,16 @@ impl GridPosition {
 /// Render layer z-values for consistent ordering.
 pub mod render_layers {
     pub const TERRAIN: f32 = 0.0;
+    pub const TERRAIN_OVERLAY: f32 = 0.5;
     pub const TERRAIN_FEATURES: f32 = 1.0;
     pub const FLOOR_ITEMS: f32 = 2.0;
     pub const ENTITIES: f32 = 3.0;
     pub const PROJECTILES: f32 = 4.0;
     pub const UI_OVERLAY: f32 = 5.0;
+
+    /// Compute z for y-sorted depth ordering within a layer.
+    /// Entities with lower world_y (bottom of screen) get higher z (rendered in front).
+    pub fn y_sorted_z(world_y: f32, map_height_px: f32, base: f32) -> f32 {
+        base + (1.0 - (world_y / map_height_px).clamp(0.0, 1.0)) * 0.999
+    }
 }

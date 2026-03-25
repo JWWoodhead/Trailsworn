@@ -7,6 +7,7 @@ use crate::resources::movement::RepathTimer;
 use crate::resources::task::PartyMode;
 use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::combat::InCombat;
+use crate::resources::items::{Equipment, Inventory};
 use crate::resources::damage::{DamageType, EquippedArmor, EquippedWeapon, WeaponDef};
 use crate::resources::faction::{Faction, FACTION_PLAYER};
 use crate::resources::game_state::GameState;
@@ -94,5 +95,7 @@ pub fn spawn_player(
         InCombat,
         PlayerControlled,
         PartyMode::Passive,
+        Inventory::new(24),
+        Equipment::default(),
     ));
 }

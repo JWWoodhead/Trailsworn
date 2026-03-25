@@ -47,7 +47,15 @@
       "Bash(cargo check:*)",
       "Bash(find /c/ReposLocal/GoldAndGlory/tests -type f -name *.rs)",
       "Bash(wc -l /c/ReposLocal/GoldAndGlory/tests/resources_tests/*.rs)",
-      "Bash(find /c/ReposLocal/GoldAndGlory -type f \\\\\\(-name *.png -o -name *.jpg -o -name *.txt \\\\\\))"
+      "Bash(find /c/ReposLocal/GoldAndGlory -type f \\\\\\(-name *.png -o -name *.jpg -o -name *.txt \\\\\\))",
+      "Bash(find /c/ReposLocal/GoldAndGlory -name inventory.rs -o -name *inventory*)",
+      "WebFetch(domain:bevy-cheatbook.github.io)",
+      "Read(//c/Users/joeww/Downloads/Ground048_1K-PNG \\(1\\)/**)",
+      "Read(//c/Users/joeww/Downloads/Grass001_1K-PNG/**)",
+      "Read(//c/Users/joeww/Downloads/Grass003_1K-PNG \\(1\\)/**)",
+      "Bash(cp \"c:/Users/joeww/Downloads/Grass001_1K-PNG/Grass001_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Grass.png)",
+      "Bash(cp \"c:/Users/joeww/Downloads/Ground048_1K-PNG \\(1\\)/Ground048_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Dirt.png)",
+      "Bash(cp \"c:/Users/joeww/Downloads/Grass003_1K-PNG \\(1\\)/Grass003_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Forest.png)"
     ]
   }
 }

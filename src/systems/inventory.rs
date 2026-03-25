@@ -4,19 +4,16 @@ use bevy::ecs::hierarchy::ChildSpawnerCommands;
 
 use crate::resources::{
     damage::EquippedWeapon,
-    input::{Action, ActionState},
     items::{Equipment, EquipSlot, Inventory, ItemRegistry, Rarity},
     selection::Selected,
     theme::Theme,
 };
 use crate::systems::spawning::EntityName;
+use crate::systems::ui_panel::{ActiveUiTab, UiTab};
 
 // ---------------------------------------------------------------------------
 // Marker components
 // ---------------------------------------------------------------------------
-
-#[derive(Component)]
-pub struct InventoryPanelRoot;
 
 /// Identifies text elements in the inventory panel.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -42,17 +39,12 @@ pub struct InvEquipSlotBg(pub usize);
 pub struct InvGridSlotBg(pub usize);
 
 #[derive(Component)]
-pub struct InvNoSelectionOverlay;
-
-#[derive(Component)]
 pub struct InvDetailPanel;
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const PANEL_WIDTH: f32 = 720.0;
-const PANEL_HEIGHT: f32 = 520.0;
 const GRID_COLS: usize = 6;
 const GRID_ROWS: usize = 4;
 const GRID_SLOTS: usize = GRID_COLS * GRID_ROWS;
@@ -73,128 +65,85 @@ const EQUIP_DISPLAY_SLOTS: [(EquipSlot, &str); 7] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Setup
+// Content setup — called by ui_panel::setup_ui_panel
 // ---------------------------------------------------------------------------
 
-pub fn setup_inventory_panel(mut commands: Commands, theme: Res<Theme>) {
+pub fn spawn_inventory_content(parent: &mut ChildSpawnerCommands, theme: &Theme) {
     let label_color = Color::srgba(0.961, 0.961, 0.863, 0.5);
 
-    commands
-        .spawn((
-            InventoryPanelRoot,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
-                top: Val::Percent(50.0),
-                margin: UiRect {
-                    left: Val::Px(-(PANEL_WIDTH / 2.0)),
-                    top: Val::Px(-(PANEL_HEIGHT / 2.0)),
-                    ..default()
-                },
-                width: Val::Px(PANEL_WIDTH),
-                height: Val::Px(PANEL_HEIGHT),
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(16.0)),
-                display: Display::None,
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.075, 0.075, 0.075, 0.95)),
-            GlobalZIndex(10),
-        ))
-        .with_children(|root| {
-            // "No character selected" overlay
-            root.spawn((
-                InvNoSelectionOverlay,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    display: Display::None,
-                    ..default()
-                },
-            ))
-            .with_child((
-                Text::new("No character selected"),
-                TextFont { font_size: 16.0, ..default() },
+    // ── Header ───────────────────────────────────────────────
+    parent.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        justify_content: JustifyContent::SpaceBetween,
+        align_items: AlignItems::Center,
+        width: Val::Percent(100.0),
+        margin: UiRect::bottom(Val::Px(8.0)),
+        ..default()
+    })
+    .with_children(|header| {
+        header.spawn((
+            InvText::CharacterName,
+            Text::new("INVENTORY"),
+            TextFont { font_size: 20.0, ..default() },
+            TextColor(theme.primary),
+        ));
+        header.spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(16.0),
+            ..default()
+        })
+        .with_children(|stats| {
+            stats.spawn((
+                InvText::WeightTotal,
+                Text::new("Weight: 0.0"),
+                TextFont { font_size: 12.0, ..default() },
+                TextColor(theme.text_parchment),
+            ));
+            stats.spawn((
+                InvText::SlotCount,
+                Text::new("0/0"),
+                TextFont { font_size: 12.0, ..default() },
                 TextColor(label_color),
             ));
-
-            // ── Header ───────────────────────────────────────────────
-            root.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::Center,
-                width: Val::Percent(100.0),
-                margin: UiRect::bottom(Val::Px(8.0)),
-                ..default()
-            })
-            .with_children(|header| {
-                header.spawn((
-                    InvText::CharacterName,
-                    Text::new("INVENTORY"),
-                    TextFont { font_size: 20.0, ..default() },
-                    TextColor(theme.primary),
-                ));
-                header.spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(16.0),
-                    ..default()
-                })
-                .with_children(|stats| {
-                    stats.spawn((
-                        InvText::WeightTotal,
-                        Text::new("Weight: 0.0"),
-                        TextFont { font_size: 12.0, ..default() },
-                        TextColor(theme.text_parchment),
-                    ));
-                    stats.spawn((
-                        InvText::SlotCount,
-                        Text::new("0/0"),
-                        TextFont { font_size: 12.0, ..default() },
-                        TextColor(label_color),
-                    ));
-                });
-            });
-
-            // ── Divider ──────────────────────────────────────────────
-            root.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(1.0),
-                    margin: UiRect::bottom(Val::Px(8.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.961, 0.961, 0.863, 0.1)),
-            ));
-
-            // ── Content columns (30/70 split) ────────────────────────
-            root.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                flex_grow: 1.0,
-                column_gap: Val::Px(16.0),
-                width: Val::Percent(100.0),
-                ..default()
-            })
-            .with_children(|content| {
-                // ── Left: equipment slots ─────────────────────────────
-                spawn_equipment_column(content, &theme, label_color);
-
-                // ── Right: grid + detail ──────────────────────────────
-                content
-                    .spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        width: Val::Percent(70.0),
-                        row_gap: Val::Px(8.0),
-                        ..default()
-                    })
-                    .with_children(|right| {
-                        spawn_inventory_grid(right, &theme, label_color);
-                        spawn_detail_panel(right, &theme, label_color);
-                    });
-            });
         });
+    });
+
+    // ── Divider ──────────────────────────────────────────────
+    parent.spawn((
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Px(1.0),
+            margin: UiRect::bottom(Val::Px(8.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.961, 0.961, 0.863, 0.1)),
+    ));
+
+    // ── Content columns (30/70 split) ────────────────────────
+    parent.spawn(Node {
+        flex_direction: FlexDirection::Row,
+        flex_grow: 1.0,
+        column_gap: Val::Px(16.0),
+        width: Val::Percent(100.0),
+        ..default()
+    })
+    .with_children(|content| {
+        // ── Left: equipment slots ─────────────────────────────
+        spawn_equipment_column(content, theme, label_color);
+
+        // ── Right: grid + detail ──────────────────────────────
+        content
+            .spawn(Node {
+                flex_direction: FlexDirection::Column,
+                width: Val::Percent(70.0),
+                row_gap: Val::Px(8.0),
+                ..default()
+            })
+            .with_children(|right| {
+                spawn_inventory_grid(right, theme, label_color);
+                spawn_detail_panel(right, theme, label_color);
+            });
+    });
 }
 
 fn spawn_equipment_column(
@@ -357,34 +306,13 @@ fn spawn_detail_panel(
 }
 
 // ---------------------------------------------------------------------------
-// Toggle visibility (Input set)
-// ---------------------------------------------------------------------------
-
-pub fn toggle_inventory(
-    actions: Res<ActionState>,
-    mut root_query: Query<&mut Node, With<InventoryPanelRoot>>,
-) {
-    if !actions.just_pressed(Action::ToggleInventory) {
-        return;
-    }
-    let Ok(mut node) = root_query.single_mut() else {
-        return;
-    };
-    node.display = if node.display == Display::None {
-        Display::Flex
-    } else {
-        Display::None
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Update content (Ui set)
 // ---------------------------------------------------------------------------
 
 pub fn update_inventory_panel(
     item_registry: Res<ItemRegistry>,
     theme: Res<Theme>,
-    root_query: Query<&Node, With<InventoryPanelRoot>>,
+    active_tab: Res<ActiveUiTab>,
     selected: Query<
         (
             &EntityName,
@@ -397,35 +325,25 @@ pub fn update_inventory_panel(
     mut texts: Query<(&InvText, &mut Text, &mut TextColor)>,
     mut equip_bgs: Query<(&InvEquipSlotBg, &mut BackgroundColor), Without<InvGridSlotBg>>,
     mut grid_bgs: Query<(&InvGridSlotBg, &mut BackgroundColor), Without<InvEquipSlotBg>>,
-    mut no_sel: Query<
-        &mut Node,
-        (
-            With<InvNoSelectionOverlay>,
-            Without<InventoryPanelRoot>,
-            Without<InvGridSlotBg>,
-            Without<InvEquipSlotBg>,
-        ),
-    >,
 ) {
-    let Ok(root_node) = root_query.single() else {
-        return;
-    };
-    if root_node.display == Display::None {
+    // Only update when this tab is active
+    if active_tab.0 != Some(UiTab::Inventory) {
         return;
     }
 
     let selected_data = selected.iter().next();
 
-    // Show/hide overlay
-    if let Ok(mut no_sel_node) = no_sel.single_mut() {
-        no_sel_node.display = if selected_data.is_none() {
-            Display::Flex
-        } else {
-            Display::None
-        };
-    }
-
     let Some((entity_name, inventory, equipment, weapon)) = selected_data else {
+        // Clear all content so nothing bleeds through behind the overlay
+        for (_marker, mut text, _color) in &mut texts {
+            **text = String::new();
+        }
+        for (_slot_bg, mut bg) in &mut equip_bgs {
+            bg.0 = Color::srgb(0.1, 0.1, 0.1);
+        }
+        for (_slot_bg, mut bg) in &mut grid_bgs {
+            bg.0 = Color::srgb(0.1, 0.1, 0.1);
+        }
         return;
     };
 
@@ -444,7 +362,6 @@ pub fn update_inventory_panel(
             InvText::EquipSlotLabel(_) => {}
             InvText::EquipSlotItem(idx) => {
                 let slot = EQUIP_DISPLAY_SLOTS[*idx].0;
-                // Check Equipment component first, then fall back to EquippedWeapon
                 let item_name = equipment
                     .and_then(|eq| eq.in_slot(slot))
                     .and_then(|id| item_registry.get(id))
@@ -488,9 +405,7 @@ pub fn update_inventory_panel(
                     **text = String::new();
                 }
             }
-            InvText::SelectedItemName => {
-                // For now show first item as placeholder — hover selection comes later
-            }
+            InvText::SelectedItemName => {}
             InvText::SelectedItemDesc => {}
             InvText::SelectedItemStats => {}
         }
@@ -541,27 +456,27 @@ fn truncate_name(name: &str, max_len: usize) -> String {
 
 fn rarity_color(rarity: &Rarity, theme: &Theme) -> Color {
     match rarity {
-        Rarity::Common => theme.text_parchment,
-        Rarity::Uncommon => Color::srgb(0.4, 0.8, 0.4),   // green
-        Rarity::Rare => Color::srgb(0.4, 0.5, 1.0),       // blue
-        Rarity::Legendary => theme.primary,                 // gold
+        Rarity::Normal => theme.text_parchment,
+        Rarity::Magic => Color::srgb(0.4, 0.8, 0.4),
+        Rarity::Rare => Color::srgb(0.4, 0.5, 1.0),
+        Rarity::Unique => theme.primary,
     }
 }
 
 fn equip_slot_bg_color(rarity: &Rarity, _theme: &Theme) -> Color {
     match rarity {
-        Rarity::Common => Color::srgb(0.1, 0.1, 0.1),
-        Rarity::Uncommon => Color::srgb(0.08, 0.14, 0.08),
+        Rarity::Normal => Color::srgb(0.1, 0.1, 0.1),
+        Rarity::Magic => Color::srgb(0.08, 0.14, 0.08),
         Rarity::Rare => Color::srgb(0.08, 0.08, 0.16),
-        Rarity::Legendary => Color::srgba(0.15, 0.12, 0.04, 1.0),
+        Rarity::Unique => Color::srgba(0.15, 0.12, 0.04, 1.0),
     }
 }
 
 fn grid_slot_bg_color(rarity: &Rarity, _theme: &Theme) -> Color {
     match rarity {
-        Rarity::Common => Color::srgb(0.12, 0.12, 0.12),
-        Rarity::Uncommon => Color::srgb(0.08, 0.14, 0.08),
+        Rarity::Normal => Color::srgb(0.12, 0.12, 0.12),
+        Rarity::Magic => Color::srgb(0.08, 0.14, 0.08),
         Rarity::Rare => Color::srgb(0.08, 0.08, 0.16),
-        Rarity::Legendary => Color::srgba(0.15, 0.12, 0.04, 1.0),
+        Rarity::Unique => Color::srgba(0.15, 0.12, 0.04, 1.0),
     }
 }

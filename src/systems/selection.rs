@@ -36,8 +36,14 @@ pub fn selection_input(
     already_selected: Query<Entity, With<Selected>>,
     targetable_entities: Query<(Entity, &GridPosition, &Faction), Without<PlayerControlled>>,
     caster_positions: Query<&GridPosition>,
+    ui_interactions: Query<&Interaction, With<Node>>,
 ) {
     let Some(cursor_screen) = cursor.screen else { return };
+
+    // Don't process world clicks when cursor is over UI
+    if ui_interactions.iter().any(|i| matches!(i, Interaction::Hovered | Interaction::Pressed)) {
+        return;
+    }
 
     // Drag tracking (only when not targeting)
     if matches!(*targeting_mode, TargetingMode::None) {
@@ -198,8 +204,13 @@ pub fn right_click_command(
         With<Selected>,
     >,
     target_query: Query<(Entity, &GridPosition, &Faction), Without<PlayerControlled>>,
+    ui_interactions: Query<&Interaction, With<Node>>,
 ) {
     if !actions.just_pressed(Action::Command) {
+        return;
+    }
+    // Don't process world clicks when cursor is over UI
+    if ui_interactions.iter().any(|i| matches!(i, Interaction::Hovered | Interaction::Pressed)) {
         return;
     }
 

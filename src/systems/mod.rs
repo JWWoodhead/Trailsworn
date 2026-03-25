@@ -16,4 +16,5 @@ pub mod rendering;
 pub mod selection;
 pub mod spawning;
 pub mod task;
+pub mod ui_panel;
 pub mod zone;

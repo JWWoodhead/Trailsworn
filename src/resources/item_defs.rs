@@ -1,33 +1,82 @@
 use super::damage::{DamageType, Resistances, WeaponDef};
 use super::items::*;
 
-// --- Item IDs ---
+// ---------------------------------------------------------------------------
+// Weapon IDs (by class × tier)
+// ---------------------------------------------------------------------------
 
-// Weapons
-pub const ITEM_RUSTY_SWORD: ItemId = ItemId(1);
-pub const ITEM_IRON_SWORD: ItemId = ItemId(2);
-pub const ITEM_IRON_MACE: ItemId = ItemId(3);
-pub const ITEM_HUNTING_BOW: ItemId = ItemId(4);
-pub const ITEM_IRON_DAGGER: ItemId = ItemId(5);
-pub const ITEM_WOODEN_STAFF: ItemId = ItemId(6);
+// Swords
+pub const ITEM_CHIPPED_BLADE: ItemId = ItemId(1);
+pub const ITEM_WATCHMANS_SWORD: ItemId = ItemId(2);
+pub const ITEM_OATHBRAND: ItemId = ItemId(3);
 
-// Armor
-pub const ITEM_LEATHER_CAP: ItemId = ItemId(100);
-pub const ITEM_LEATHER_VEST: ItemId = ItemId(101);
-pub const ITEM_LEATHER_GLOVES: ItemId = ItemId(102);
-pub const ITEM_LEATHER_PANTS: ItemId = ItemId(103);
-pub const ITEM_LEATHER_BOOTS: ItemId = ItemId(104);
-pub const ITEM_IRON_HELM: ItemId = ItemId(110);
-pub const ITEM_IRON_CUIRASS: ItemId = ItemId(111);
-pub const ITEM_WOODEN_SHIELD: ItemId = ItemId(120);
+// Maces
+pub const ITEM_KNOBWOOD_CLUB: ItemId = ItemId(10);
+pub const ITEM_IRONBOUND_MAUL: ItemId = ItemId(11);
+pub const ITEM_CINDERHAMMER: ItemId = ItemId(12);
 
+// Daggers
+pub const ITEM_WHITTLED_SHIV: ItemId = ItemId(20);
+pub const ITEM_REAVERS_FANG: ItemId = ItemId(21);
+pub const ITEM_WHISPERPOINT: ItemId = ItemId(22);
+
+// Bows
+pub const ITEM_BENT_STAVE: ItemId = ItemId(30);
+pub const ITEM_RANGERS_LONGBOW: ItemId = ItemId(31);
+pub const ITEM_GALESTRING: ItemId = ItemId(32);
+
+// Staves
+pub const ITEM_GNARLED_BRANCH: ItemId = ItemId(40);
+pub const ITEM_WANDERERS_STAFF: ItemId = ItemId(41);
+pub const ITEM_SPELLWARDEN: ItemId = ItemId(42);
+
+// ---------------------------------------------------------------------------
+// Armor IDs (by slot × tier)
+// ---------------------------------------------------------------------------
+
+// Head
+pub const ITEM_STITCHED_HOOD: ItemId = ItemId(100);
+pub const ITEM_RIVETED_COIF: ItemId = ItemId(101);
+pub const ITEM_WARDCREST_HELM: ItemId = ItemId(102);
+
+// Chest
+pub const ITEM_SCRAPED_HIDE_VEST: ItemId = ItemId(110);
+pub const ITEM_BANDED_HAUBERK: ItemId = ItemId(111);
+pub const ITEM_RUNEWOVEN_CUIRASS: ItemId = ItemId(112);
+
+// Hands
+pub const ITEM_FRAYED_WRAPS: ItemId = ItemId(120);
+pub const ITEM_PADDED_GRIPS: ItemId = ItemId(121);
+pub const ITEM_IRONWEAVE_GLOVES: ItemId = ItemId(122);
+
+// Legs
+pub const ITEM_PATCHED_LEGGINGS: ItemId = ItemId(130);
+pub const ITEM_PLATED_GREAVES: ItemId = ItemId(131);
+pub const ITEM_VANGUARD_TASSETS: ItemId = ItemId(132);
+
+// Feet
+pub const ITEM_COBBLED_BOOTS: ItemId = ItemId(140);
+pub const ITEM_STRIDERS_TREADS: ItemId = ItemId(141);
+pub const ITEM_ASHWALKERS: ItemId = ItemId(142);
+
+// Shields
+pub const ITEM_SPLINTERED_BUCKLER: ItemId = ItemId(150);
+pub const ITEM_BOSSED_KITE_SHIELD: ItemId = ItemId(151);
+pub const ITEM_BULWARK_OF_THE_MARK: ItemId = ItemId(152);
+
+// ---------------------------------------------------------------------------
 // Consumables
+// ---------------------------------------------------------------------------
+
 pub const ITEM_HEALTH_POTION: ItemId = ItemId(200);
 pub const ITEM_MANA_POTION: ItemId = ItemId(201);
 pub const ITEM_STAMINA_POTION: ItemId = ItemId(202);
 pub const ITEM_BANDAGE: ItemId = ItemId(203);
 
+// ---------------------------------------------------------------------------
 // Materials
+// ---------------------------------------------------------------------------
+
 pub const ITEM_BONE_FRAGMENT: ItemId = ItemId(300);
 pub const ITEM_IRON_INGOT: ItemId = ItemId(301);
 pub const ITEM_LEATHER_SCRAP: ItemId = ItemId(302);
@@ -42,277 +91,156 @@ pub fn register_starter_items(registry: &mut ItemRegistry) {
 }
 
 // ---------------------------------------------------------------------------
-// Weapons
+// Weapons (5 classes × 3 tiers = 15 weapons)
 // ---------------------------------------------------------------------------
 
 fn register_weapons(reg: &mut ItemRegistry) {
-    reg.register(ItemDef {
-        id: ITEM_RUSTY_SWORD,
-        name: "Rusty Sword".into(),
-        description: "A chipped blade caked in old blood.".into(),
-        kind: ItemKind::Weapon,
-        rarity: Rarity::Common,
-        weight: 2.5,
-        max_stack: 1,
-        icon: "sword_rusty".into(),
-        properties: ItemProperties::Weapon(WeaponDef {
-            name: "Rusty Sword".into(),
-            damage_type: DamageType::Slashing,
-            base_damage: 5.0,
-            attack_speed_ticks: 120,
-            range: 1.5,
-            projectile_speed: 0.0,
-            is_melee: true,
-        }),
-    });
+    // --- Swords ---
+    reg.register(weapon(ITEM_CHIPPED_BLADE, "Chipped Blade", "A notched edge, barely sharp.", BaseTier::Crude, 1, WeaponClass::Sword,
+        DamageType::Slashing, 5.0, 100, 1.5, true, 2.5));
+    reg.register(weapon(ITEM_WATCHMANS_SWORD, "Watchman's Sword", "Standard-issue. Gets the job done.", BaseTier::Tempered, 15, WeaponClass::Sword,
+        DamageType::Slashing, 12.0, 90, 1.5, true, 3.0));
+    reg.register(weapon(ITEM_OATHBRAND, "Oathbrand", "Etched with binding glyphs along the fuller.", BaseTier::Runic, 30, WeaponClass::Sword,
+        DamageType::Slashing, 20.0, 80, 1.5, true, 3.5));
 
-    reg.register(ItemDef {
-        id: ITEM_IRON_SWORD,
-        name: "Iron Sword".into(),
-        description: "A sturdy blade, well-balanced.".into(),
-        kind: ItemKind::Weapon,
-        rarity: Rarity::Common,
-        weight: 3.0,
-        max_stack: 1,
-        icon: "sword_iron".into(),
-        properties: ItemProperties::Weapon(WeaponDef {
-            name: "Iron Sword".into(),
-            damage_type: DamageType::Slashing,
-            base_damage: 8.0,
-            attack_speed_ticks: 90,
-            range: 1.5,
-            projectile_speed: 0.0,
-            is_melee: true,
-        }),
-    });
+    // --- Maces ---
+    reg.register(weapon(ITEM_KNOBWOOD_CLUB, "Knobwood Club", "A heavy branch with a purpose.", BaseTier::Crude, 1, WeaponClass::Mace,
+        DamageType::Blunt, 6.0, 130, 1.5, true, 3.5));
+    reg.register(weapon(ITEM_IRONBOUND_MAUL, "Ironbound Maul", "Iron bands reinforce each crushing blow.", BaseTier::Tempered, 15, WeaponClass::Mace,
+        DamageType::Blunt, 15.0, 120, 1.5, true, 4.5));
+    reg.register(weapon(ITEM_CINDERHAMMER, "Cinderhammer", "The head glows faintly, as if freshly quenched.", BaseTier::Runic, 30, WeaponClass::Mace,
+        DamageType::Blunt, 25.0, 110, 1.5, true, 5.5));
 
-    reg.register(ItemDef {
-        id: ITEM_IRON_MACE,
-        name: "Iron Mace".into(),
-        description: "Slow but punishing. Crushes armor.".into(),
-        kind: ItemKind::Weapon,
-        rarity: Rarity::Common,
-        weight: 4.0,
-        max_stack: 1,
-        icon: "mace_iron".into(),
-        properties: ItemProperties::Weapon(WeaponDef {
-            name: "Iron Mace".into(),
-            damage_type: DamageType::Blunt,
-            base_damage: 10.0,
-            attack_speed_ticks: 150,
-            range: 1.5,
-            projectile_speed: 0.0,
-            is_melee: true,
-        }),
-    });
+    // --- Daggers ---
+    reg.register(weapon(ITEM_WHITTLED_SHIV, "Whittled Shiv", "Bone handle, crude but quick.", BaseTier::Crude, 1, WeaponClass::Dagger,
+        DamageType::Piercing, 3.0, 50, 1.5, true, 0.8));
+    reg.register(weapon(ITEM_REAVERS_FANG, "Reaver's Fang", "Hooked blade for close work.", BaseTier::Tempered, 15, WeaponClass::Dagger,
+        DamageType::Piercing, 7.0, 45, 1.5, true, 1.0));
+    reg.register(weapon(ITEM_WHISPERPOINT, "Whisperpoint", "So thin it parts the air silently.", BaseTier::Runic, 30, WeaponClass::Dagger,
+        DamageType::Piercing, 12.0, 40, 1.5, true, 1.0));
 
-    reg.register(ItemDef {
-        id: ITEM_HUNTING_BOW,
-        name: "Hunting Bow".into(),
-        description: "Simple but reliable at range.".into(),
-        kind: ItemKind::Weapon,
-        rarity: Rarity::Common,
-        weight: 1.5,
-        max_stack: 1,
-        icon: "bow_hunting".into(),
-        properties: ItemProperties::Weapon(WeaponDef {
-            name: "Hunting Bow".into(),
-            damage_type: DamageType::Piercing,
-            base_damage: 6.0,
-            attack_speed_ticks: 100,
-            range: 8.0,
-            projectile_speed: 12.0,
-            is_melee: false,
-        }),
-    });
+    // --- Bows ---
+    reg.register(weapon(ITEM_BENT_STAVE, "Bent Stave", "Barely holds tension. Better than nothing.", BaseTier::Crude, 1, WeaponClass::Bow,
+        DamageType::Piercing, 4.0, 110, 8.0, false, 1.5));
+    reg.register(weapon(ITEM_RANGERS_LONGBOW, "Ranger's Longbow", "Yew and sinew, built for distance.", BaseTier::Tempered, 15, WeaponClass::Bow,
+        DamageType::Piercing, 9.0, 100, 10.0, false, 2.0));
+    reg.register(weapon(ITEM_GALESTRING, "Galestring", "The string hums with stored force.", BaseTier::Runic, 30, WeaponClass::Bow,
+        DamageType::Piercing, 16.0, 90, 12.0, false, 2.0));
 
-    reg.register(ItemDef {
-        id: ITEM_IRON_DAGGER,
-        name: "Iron Dagger".into(),
-        description: "Quick and light. Favored by scouts.".into(),
-        kind: ItemKind::Weapon,
-        rarity: Rarity::Common,
-        weight: 1.0,
-        max_stack: 1,
-        icon: "dagger_iron".into(),
-        properties: ItemProperties::Weapon(WeaponDef {
-            name: "Iron Dagger".into(),
-            damage_type: DamageType::Piercing,
-            base_damage: 4.0,
-            attack_speed_ticks: 60,
-            range: 1.5,
-            projectile_speed: 0.0,
-            is_melee: true,
-        }),
-    });
+    // --- Staves ---
+    reg.register(weapon(ITEM_GNARLED_BRANCH, "Gnarled Branch", "Knotted wood, faintly warm to the touch.", BaseTier::Crude, 1, WeaponClass::Staff,
+        DamageType::Blunt, 2.0, 110, 1.5, true, 1.5));
+    reg.register(weapon(ITEM_WANDERERS_STAFF, "Wanderer's Staff", "Carved with road-signs of forgotten trails.", BaseTier::Tempered, 15, WeaponClass::Staff,
+        DamageType::Blunt, 5.0, 100, 1.5, true, 2.0));
+    reg.register(weapon(ITEM_SPELLWARDEN, "Spellwarden", "The grain spirals inward, drawing the eye.", BaseTier::Runic, 30, WeaponClass::Staff,
+        DamageType::Blunt, 9.0, 90, 1.5, true, 2.5));
+}
 
-    reg.register(ItemDef {
-        id: ITEM_WOODEN_STAFF,
-        name: "Wooden Staff".into(),
-        description: "A channeling focus for the arcane arts.".into(),
-        kind: ItemKind::Weapon,
-        rarity: Rarity::Common,
-        weight: 2.0,
-        max_stack: 1,
-        icon: "staff_wooden".into(),
+fn weapon(
+    id: ItemId, name: &str, desc: &str, tier: BaseTier, ilvl: u32, class: WeaponClass,
+    damage_type: DamageType, base_damage: f32, speed: u32, range: f32, melee: bool, weight: f32,
+) -> ItemDef {
+    let proj_speed = if melee { 0.0 } else { 12.0 };
+    ItemDef {
+        id, name: name.into(), description: desc.into(),
+        kind: ItemKind::Weapon, rarity: Rarity::Normal,
+        weight, max_stack: 1, icon: format!("weapon_{}", name.to_lowercase().replace(' ', "_").replace('\'', "")),
         properties: ItemProperties::Weapon(WeaponDef {
-            name: "Wooden Staff".into(),
-            damage_type: DamageType::Blunt,
-            base_damage: 3.0,
-            attack_speed_ticks: 110,
-            range: 1.5,
-            projectile_speed: 0.0,
-            is_melee: true,
+            name: name.into(), damage_type, base_damage,
+            attack_speed_ticks: speed, range, projectile_speed: proj_speed, is_melee: melee,
         }),
-    });
+        base_tier: Some(tier), item_level_req: ilvl,
+        weapon_class: Some(class), armor_class: None,
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Armor
+// Armor (6 slots × 3 tiers + 3 shields = 21 armor pieces)
 // ---------------------------------------------------------------------------
 
 fn register_armor(reg: &mut ItemRegistry) {
-    // Leather set — light, small physical resistances
-    reg.register(armor_def(
-        ITEM_LEATHER_CAP,
-        "Leather Cap",
-        "Hardened hide shaped into a skullcap.",
-        EquipSlot::Head,
-        Rarity::Common,
-        1.0,
-        "armor_leather_cap",
-        vec![0], // Head
-        &[(DamageType::Slashing, 0.1), (DamageType::Piercing, 0.05)],
-    ));
+    // --- Head ---
+    reg.register(armor_def(ITEM_STITCHED_HOOD, "Stitched Hood", "Scraps of hide sewn into a cap.",
+        EquipSlot::Head, BaseTier::Crude, 1, ArmorClass::Light, 1.0, vec![0],
+        &[(DamageType::Slashing, 0.05), (DamageType::Piercing, 0.03)]));
+    reg.register(armor_def(ITEM_RIVETED_COIF, "Riveted Coif", "Iron rings linked over padded cloth.",
+        EquipSlot::Head, BaseTier::Tempered, 15, ArmorClass::Medium, 2.0, vec![0],
+        &[(DamageType::Slashing, 0.15), (DamageType::Piercing, 0.10), (DamageType::Blunt, 0.08)]));
+    reg.register(armor_def(ITEM_WARDCREST_HELM, "Wardcrest Helm", "Rune-scored steel with a crest of hammered bronze.",
+        EquipSlot::Head, BaseTier::Runic, 30, ArmorClass::Heavy, 3.0, vec![0],
+        &[(DamageType::Slashing, 0.25), (DamageType::Piercing, 0.20), (DamageType::Blunt, 0.15)]));
 
-    reg.register(armor_def(
-        ITEM_LEATHER_VEST,
-        "Leather Vest",
-        "Boiled leather over a padded lining.",
-        EquipSlot::Chest,
-        Rarity::Common,
-        3.0,
-        "armor_leather_vest",
-        vec![5, 10, 12], // Torso, L.Arm, R.Arm
-        &[(DamageType::Slashing, 0.15), (DamageType::Piercing, 0.1)],
-    ));
+    // --- Chest ---
+    reg.register(armor_def(ITEM_SCRAPED_HIDE_VEST, "Scraped Hide Vest", "Stiff and poorly tanned. Smells worse.",
+        EquipSlot::Chest, BaseTier::Crude, 1, ArmorClass::Light, 2.5, vec![5, 10, 12],
+        &[(DamageType::Slashing, 0.08), (DamageType::Piercing, 0.05)]));
+    reg.register(armor_def(ITEM_BANDED_HAUBERK, "Banded Hauberk", "Overlapping bands of iron over leather.",
+        EquipSlot::Chest, BaseTier::Tempered, 15, ArmorClass::Medium, 4.5, vec![5, 10, 12],
+        &[(DamageType::Slashing, 0.20), (DamageType::Piercing, 0.15), (DamageType::Blunt, 0.12)]));
+    reg.register(armor_def(ITEM_RUNEWOVEN_CUIRASS, "Runewoven Cuirass", "Plate and chainmail interlaced with silver thread.",
+        EquipSlot::Chest, BaseTier::Runic, 30, ArmorClass::Heavy, 6.5, vec![5, 10, 12],
+        &[(DamageType::Slashing, 0.30), (DamageType::Piercing, 0.25), (DamageType::Blunt, 0.20)]));
 
-    reg.register(armor_def(
-        ITEM_LEATHER_GLOVES,
-        "Leather Gloves",
-        "Supple hide with reinforced knuckles.",
-        EquipSlot::Hands,
-        Rarity::Common,
-        0.5,
-        "armor_leather_gloves",
-        vec![11, 13], // L.Hand, R.Hand
-        &[(DamageType::Slashing, 0.1)],
-    ));
+    // --- Hands ---
+    reg.register(armor_def(ITEM_FRAYED_WRAPS, "Frayed Wraps", "Strips of linen wound tight.",
+        EquipSlot::Hands, BaseTier::Crude, 1, ArmorClass::Light, 0.3, vec![11, 13],
+        &[(DamageType::Slashing, 0.04)]));
+    reg.register(armor_def(ITEM_PADDED_GRIPS, "Padded Grips", "Leather over wool, reinforced at the knuckles.",
+        EquipSlot::Hands, BaseTier::Tempered, 15, ArmorClass::Medium, 0.6, vec![11, 13],
+        &[(DamageType::Slashing, 0.10), (DamageType::Blunt, 0.08)]));
+    reg.register(armor_def(ITEM_IRONWEAVE_GLOVES, "Ironweave Gloves", "Flexible mail woven into supple hide.",
+        EquipSlot::Hands, BaseTier::Runic, 30, ArmorClass::Heavy, 1.0, vec![11, 13],
+        &[(DamageType::Slashing, 0.18), (DamageType::Piercing, 0.12), (DamageType::Blunt, 0.10)]));
 
-    reg.register(armor_def(
-        ITEM_LEATHER_PANTS,
-        "Leather Pants",
-        "Thick hide legwear. Stiff but protective.",
-        EquipSlot::Legs,
-        Rarity::Common,
-        2.0,
-        "armor_leather_pants",
-        vec![14, 16], // L.Leg, R.Leg
-        &[(DamageType::Slashing, 0.1), (DamageType::Piercing, 0.05)],
-    ));
+    // --- Legs ---
+    reg.register(armor_def(ITEM_PATCHED_LEGGINGS, "Patched Leggings", "More patch than original cloth.",
+        EquipSlot::Legs, BaseTier::Crude, 1, ArmorClass::Light, 1.5, vec![14, 16],
+        &[(DamageType::Slashing, 0.05), (DamageType::Piercing, 0.03)]));
+    reg.register(armor_def(ITEM_PLATED_GREAVES, "Plated Greaves", "Shin guards of riveted iron.",
+        EquipSlot::Legs, BaseTier::Tempered, 15, ArmorClass::Medium, 2.5, vec![14, 16],
+        &[(DamageType::Slashing, 0.12), (DamageType::Piercing, 0.08), (DamageType::Blunt, 0.10)]));
+    reg.register(armor_def(ITEM_VANGUARD_TASSETS, "Vanguard Tassets", "Articulated plate protecting thigh to knee.",
+        EquipSlot::Legs, BaseTier::Runic, 30, ArmorClass::Heavy, 3.5, vec![14, 16],
+        &[(DamageType::Slashing, 0.22), (DamageType::Piercing, 0.18), (DamageType::Blunt, 0.15)]));
 
-    reg.register(armor_def(
-        ITEM_LEATHER_BOOTS,
-        "Leather Boots",
-        "Worn but reliable footwear.",
-        EquipSlot::Feet,
-        Rarity::Common,
-        1.0,
-        "armor_leather_boots",
-        vec![15, 17], // L.Foot, R.Foot
-        &[(DamageType::Slashing, 0.1)],
-    ));
+    // --- Feet ---
+    reg.register(armor_def(ITEM_COBBLED_BOOTS, "Cobbled Boots", "Mismatched soles. Better than barefoot.",
+        EquipSlot::Feet, BaseTier::Crude, 1, ArmorClass::Light, 1.0, vec![15, 17],
+        &[(DamageType::Slashing, 0.04)]));
+    reg.register(armor_def(ITEM_STRIDERS_TREADS, "Strider's Treads", "Soft-soled for long marches.",
+        EquipSlot::Feet, BaseTier::Tempered, 15, ArmorClass::Medium, 1.5, vec![15, 17],
+        &[(DamageType::Slashing, 0.10), (DamageType::Piercing, 0.06)]));
+    reg.register(armor_def(ITEM_ASHWALKERS, "Ashwalkers", "Charcoal-grey boots that leave no mark.",
+        EquipSlot::Feet, BaseTier::Runic, 30, ArmorClass::Heavy, 2.0, vec![15, 17],
+        &[(DamageType::Slashing, 0.16), (DamageType::Piercing, 0.12), (DamageType::Blunt, 0.08)]));
 
-    // Iron pieces — heavier, better physical resistance
-    reg.register(armor_def(
-        ITEM_IRON_HELM,
-        "Iron Helm",
-        "A dented helm. Still stops a blade.",
-        EquipSlot::Head,
-        Rarity::Uncommon,
-        2.5,
-        "armor_iron_helm",
-        vec![0], // Head
-        &[
-            (DamageType::Slashing, 0.25),
-            (DamageType::Piercing, 0.2),
-            (DamageType::Blunt, 0.15),
-        ],
-    ));
-
-    reg.register(armor_def(
-        ITEM_IRON_CUIRASS,
-        "Iron Cuirass",
-        "Plate over chain. Heavy but formidable.",
-        EquipSlot::Chest,
-        Rarity::Uncommon,
-        6.0,
-        "armor_iron_cuirass",
-        vec![5, 10, 12], // Torso, L.Arm, R.Arm
-        &[
-            (DamageType::Slashing, 0.3),
-            (DamageType::Piercing, 0.25),
-            (DamageType::Blunt, 0.2),
-        ],
-    ));
-
-    reg.register(armor_def(
-        ITEM_WOODEN_SHIELD,
-        "Wooden Shield",
-        "Splintered around the edges but still holds.",
-        EquipSlot::OffHand,
-        Rarity::Common,
-        3.5,
-        "shield_wooden",
-        vec![10, 11], // L.Arm, L.Hand (shield arm)
-        &[
-            (DamageType::Slashing, 0.2),
-            (DamageType::Piercing, 0.15),
-            (DamageType::Blunt, 0.1),
-        ],
-    ));
+    // --- Shields ---
+    reg.register(armor_def(ITEM_SPLINTERED_BUCKLER, "Splintered Buckler", "Held together by stubbornness.",
+        EquipSlot::OffHand, BaseTier::Crude, 1, ArmorClass::Shield, 2.5, vec![10, 11],
+        &[(DamageType::Slashing, 0.10), (DamageType::Piercing, 0.08), (DamageType::Blunt, 0.05)]));
+    reg.register(armor_def(ITEM_BOSSED_KITE_SHIELD, "Bossed Kite Shield", "Iron boss deflects thrusts, kite shape covers the flank.",
+        EquipSlot::OffHand, BaseTier::Tempered, 15, ArmorClass::Shield, 4.0, vec![10, 11],
+        &[(DamageType::Slashing, 0.20), (DamageType::Piercing, 0.18), (DamageType::Blunt, 0.12)]));
+    reg.register(armor_def(ITEM_BULWARK_OF_THE_MARK, "Bulwark of the Mark", "Tower shield branded with a warding sigil.",
+        EquipSlot::OffHand, BaseTier::Runic, 30, ArmorClass::Shield, 6.0, vec![10, 11],
+        &[(DamageType::Slashing, 0.30), (DamageType::Piercing, 0.25), (DamageType::Blunt, 0.20)]));
 }
 
-/// Helper to build armor ItemDefs without repeating boilerplate.
 fn armor_def(
-    id: ItemId,
-    name: &str,
-    description: &str,
-    slot: EquipSlot,
-    rarity: Rarity,
-    weight: f32,
-    icon: &str,
-    covered_parts: Vec<usize>,
-    resists: &[(DamageType, f32)],
+    id: ItemId, name: &str, desc: &str, slot: EquipSlot, tier: BaseTier, ilvl: u32,
+    class: ArmorClass, weight: f32, covered_parts: Vec<usize>, resists: &[(DamageType, f32)],
 ) -> ItemDef {
     let mut resistances = Resistances::default();
     for &(dt, val) in resists {
         resistances.set(dt, val);
     }
     ItemDef {
-        id,
-        name: name.into(),
-        description: description.into(),
-        kind: ItemKind::Armor,
-        rarity,
-        weight,
-        max_stack: 1,
-        icon: icon.into(),
-        properties: ItemProperties::Armor {
-            slot,
-            covered_parts,
-            resistances,
-        },
+        id, name: name.into(), description: desc.into(),
+        kind: ItemKind::Armor, rarity: Rarity::Normal,
+        weight, max_stack: 1, icon: format!("armor_{}", name.to_lowercase().replace(' ', "_").replace('\'', "")),
+        properties: ItemProperties::Armor { slot, covered_parts, resistances },
+        base_tier: Some(tier), item_level_req: ilvl,
+        weapon_class: None, armor_class: Some(class),
     }
 }
 
@@ -321,61 +249,22 @@ fn armor_def(
 // ---------------------------------------------------------------------------
 
 fn register_consumables(reg: &mut ItemRegistry) {
-    reg.register(ItemDef {
-        id: ITEM_HEALTH_POTION,
-        name: "Health Potion".into(),
-        description: "Bitter red liquid. Mends flesh.".into(),
-        kind: ItemKind::Consumable,
-        rarity: Rarity::Common,
-        weight: 0.5,
-        max_stack: 10,
-        icon: "potion_red".into(),
-        properties: ItemProperties::Consumable {
-            effect: ConsumableEffect::Heal { amount: 25.0 },
-        },
-    });
+    let consumable = |id, name: &str, desc: &str, effect, weight| ItemDef {
+        id, name: name.into(), description: desc.into(),
+        kind: ItemKind::Consumable, rarity: Rarity::Normal,
+        weight, max_stack: 10, icon: format!("consumable_{}", name.to_lowercase().replace(' ', "_")),
+        properties: ItemProperties::Consumable { effect },
+        base_tier: None, item_level_req: 0, weapon_class: None, armor_class: None,
+    };
 
-    reg.register(ItemDef {
-        id: ITEM_MANA_POTION,
-        name: "Mana Potion".into(),
-        description: "Shimmering blue draught. Restores arcane reserves.".into(),
-        kind: ItemKind::Consumable,
-        rarity: Rarity::Common,
-        weight: 0.5,
-        max_stack: 10,
-        icon: "potion_blue".into(),
-        properties: ItemProperties::Consumable {
-            effect: ConsumableEffect::RestoreMana { amount: 30.0 },
-        },
-    });
-
-    reg.register(ItemDef {
-        id: ITEM_STAMINA_POTION,
-        name: "Stamina Potion".into(),
-        description: "Green tonic that steadies the limbs.".into(),
-        kind: ItemKind::Consumable,
-        rarity: Rarity::Common,
-        weight: 0.5,
-        max_stack: 10,
-        icon: "potion_green".into(),
-        properties: ItemProperties::Consumable {
-            effect: ConsumableEffect::RestoreStamina { amount: 30.0 },
-        },
-    });
-
-    reg.register(ItemDef {
-        id: ITEM_BANDAGE,
-        name: "Linen Bandage".into(),
-        description: "Stops bleeding. Won't fix what's broken.".into(),
-        kind: ItemKind::Consumable,
-        rarity: Rarity::Common,
-        weight: 0.2,
-        max_stack: 20,
-        icon: "bandage".into(),
-        properties: ItemProperties::Consumable {
-            effect: ConsumableEffect::Heal { amount: 10.0 },
-        },
-    });
+    reg.register(consumable(ITEM_HEALTH_POTION, "Health Potion", "Bitter red liquid. Mends flesh.",
+        ConsumableEffect::Heal { amount: 25.0 }, 0.5));
+    reg.register(consumable(ITEM_MANA_POTION, "Mana Potion", "Shimmering blue draught. Restores arcane reserves.",
+        ConsumableEffect::RestoreMana { amount: 30.0 }, 0.5));
+    reg.register(consumable(ITEM_STAMINA_POTION, "Stamina Potion", "Green tonic that steadies the limbs.",
+        ConsumableEffect::RestoreStamina { amount: 30.0 }, 0.5));
+    reg.register(consumable(ITEM_BANDAGE, "Linen Bandage", "Stops bleeding. Won't fix what's broken.",
+        ConsumableEffect::Heal { amount: 10.0 }, 0.2));
 }
 
 // ---------------------------------------------------------------------------
@@ -383,54 +272,23 @@ fn register_consumables(reg: &mut ItemRegistry) {
 // ---------------------------------------------------------------------------
 
 fn register_materials(reg: &mut ItemRegistry) {
-    reg.register(ItemDef {
-        id: ITEM_BONE_FRAGMENT,
-        name: "Bone Fragment".into(),
-        description: "Splintered bone. Useful for crude tools.".into(),
-        kind: ItemKind::Material,
-        rarity: Rarity::Common,
-        weight: 0.1,
-        max_stack: 50,
-        icon: "mat_bone".into(),
+    let material = |id, name: &str, desc: &str, max_stack, weight| ItemDef {
+        id, name: name.into(), description: desc.into(),
+        kind: ItemKind::Material, rarity: Rarity::Normal,
+        weight, max_stack, icon: format!("mat_{}", name.to_lowercase().replace(' ', "_")),
         properties: ItemProperties::Inert,
-    });
+        base_tier: None, item_level_req: 0, weapon_class: None, armor_class: None,
+    };
 
-    reg.register(ItemDef {
-        id: ITEM_IRON_INGOT,
-        name: "Iron Ingot".into(),
-        description: "Smelted bar of pig iron. Foundation of arms and armor.".into(),
-        kind: ItemKind::Material,
-        rarity: Rarity::Common,
-        weight: 1.0,
-        max_stack: 20,
-        icon: "mat_iron".into(),
-        properties: ItemProperties::Inert,
-    });
-
-    reg.register(ItemDef {
-        id: ITEM_LEATHER_SCRAP,
-        name: "Leather Scrap".into(),
-        description: "Rough-cut hide. Can be worked into gear.".into(),
-        kind: ItemKind::Material,
-        rarity: Rarity::Common,
-        weight: 0.3,
-        max_stack: 30,
-        icon: "mat_leather".into(),
-        properties: ItemProperties::Inert,
-    });
-
-    reg.register(ItemDef {
-        id: ITEM_HERB,
-        name: "Meadow Herb".into(),
-        description: "Common wildflower with mild restorative properties.".into(),
-        kind: ItemKind::Material,
-        rarity: Rarity::Common,
-        weight: 0.1,
-        max_stack: 30,
-        icon: "mat_herb".into(),
-        properties: ItemProperties::Inert,
-    });
+    reg.register(material(ITEM_BONE_FRAGMENT, "Bone Fragment", "Splintered bone. Useful for crude tools.", 50, 0.1));
+    reg.register(material(ITEM_IRON_INGOT, "Iron Ingot", "Smelted bar of pig iron.", 20, 1.0));
+    reg.register(material(ITEM_LEATHER_SCRAP, "Leather Scrap", "Rough-cut hide. Can be worked into gear.", 30, 0.3));
+    reg.register(material(ITEM_HERB, "Meadow Herb", "Common wildflower with mild restorative properties.", 30, 0.1));
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -441,62 +299,49 @@ mod tests {
         let mut reg = ItemRegistry::default();
         register_starter_items(&mut reg);
 
-        // Weapons (6)
-        assert!(reg.get(ITEM_RUSTY_SWORD).is_some());
-        assert!(reg.get(ITEM_IRON_SWORD).is_some());
-        assert!(reg.get(ITEM_IRON_MACE).is_some());
-        assert!(reg.get(ITEM_HUNTING_BOW).is_some());
-        assert!(reg.get(ITEM_IRON_DAGGER).is_some());
-        assert!(reg.get(ITEM_WOODEN_STAFF).is_some());
-
-        // Armor (8)
-        assert!(reg.get(ITEM_LEATHER_CAP).is_some());
-        assert!(reg.get(ITEM_LEATHER_VEST).is_some());
-        assert!(reg.get(ITEM_LEATHER_GLOVES).is_some());
-        assert!(reg.get(ITEM_LEATHER_PANTS).is_some());
-        assert!(reg.get(ITEM_LEATHER_BOOTS).is_some());
-        assert!(reg.get(ITEM_IRON_HELM).is_some());
-        assert!(reg.get(ITEM_IRON_CUIRASS).is_some());
-        assert!(reg.get(ITEM_WOODEN_SHIELD).is_some());
-
-        // Consumables (4)
-        assert!(reg.get(ITEM_HEALTH_POTION).is_some());
-        assert!(reg.get(ITEM_MANA_POTION).is_some());
-        assert!(reg.get(ITEM_STAMINA_POTION).is_some());
-        assert!(reg.get(ITEM_BANDAGE).is_some());
-
-        // Materials (4)
-        assert!(reg.get(ITEM_BONE_FRAGMENT).is_some());
-        assert!(reg.get(ITEM_IRON_INGOT).is_some());
-        assert!(reg.get(ITEM_LEATHER_SCRAP).is_some());
-        assert!(reg.get(ITEM_HERB).is_some());
+        // 15 weapons + 18 armor (6 slots × 3) + 4 consumables + 4 materials = 41
+        let count = reg.all().count();
+        assert_eq!(count, 41, "Expected 41 items, got {}", count);
     }
 
     #[test]
-    fn rusty_sword_matches_existing_weapon() {
+    fn three_tiers_per_weapon_class() {
         let mut reg = ItemRegistry::default();
         register_starter_items(&mut reg);
-        let item = reg.get(ITEM_RUSTY_SWORD).unwrap();
-        if let ItemProperties::Weapon(w) = &item.properties {
-            assert_eq!(w.base_damage, 5.0);
-            assert_eq!(w.attack_speed_ticks, 120);
-            assert!(w.is_melee);
-        } else {
-            panic!("Rusty Sword should be a weapon");
+
+        for class in [WeaponClass::Sword, WeaponClass::Mace, WeaponClass::Dagger, WeaponClass::Bow, WeaponClass::Staff] {
+            let count = reg.all()
+                .filter(|d| d.weapon_class == Some(class))
+                .count();
+            assert_eq!(count, 3, "{:?} should have 3 tiers, got {}", class, count);
         }
     }
 
     #[test]
-    fn armor_body_part_coverage() {
+    fn three_tiers_per_armor_slot() {
         let mut reg = ItemRegistry::default();
         register_starter_items(&mut reg);
-        let vest = reg.get(ITEM_LEATHER_VEST).unwrap();
-        if let ItemProperties::Armor { covered_parts, .. } = &vest.properties {
-            assert!(covered_parts.contains(&5));  // Torso
-            assert!(covered_parts.contains(&10)); // L.Arm
-            assert!(covered_parts.contains(&12)); // R.Arm
-        } else {
-            panic!("Leather Vest should be armor");
+
+        for slot in [EquipSlot::Head, EquipSlot::Chest, EquipSlot::Hands, EquipSlot::Legs, EquipSlot::Feet, EquipSlot::OffHand] {
+            let count = reg.all()
+                .filter(|d| d.kind == ItemKind::Armor)
+                .filter(|d| matches!(&d.properties, ItemProperties::Armor { slot: s, .. } if *s == slot))
+                .count();
+            assert_eq!(count, 3, "{:?} should have 3 armor tiers, got {}", slot, count);
+        }
+    }
+
+    #[test]
+    fn base_tiers_ordered_by_ilvl() {
+        let mut reg = ItemRegistry::default();
+        register_starter_items(&mut reg);
+
+        for def in reg.all().filter(|d| d.base_tier.is_some()) {
+            match def.base_tier.unwrap() {
+                BaseTier::Crude => assert!(def.item_level_req <= 5),
+                BaseTier::Tempered => assert!(def.item_level_req >= 10 && def.item_level_req <= 20),
+                BaseTier::Runic => assert!(def.item_level_req >= 25),
+            }
         }
     }
 
@@ -506,15 +351,25 @@ mod tests {
         register_starter_items(&mut reg);
         let potion = reg.get(ITEM_HEALTH_POTION).unwrap();
         assert!(potion.max_stack > 1);
-        let bandage = reg.get(ITEM_BANDAGE).unwrap();
-        assert!(bandage.max_stack > 1);
     }
 
     #[test]
     fn weapons_are_not_stackable() {
         let mut reg = ItemRegistry::default();
         register_starter_items(&mut reg);
-        let sword = reg.get(ITEM_IRON_SWORD).unwrap();
+        let sword = reg.get(ITEM_CHIPPED_BLADE).unwrap();
         assert_eq!(sword.max_stack, 1);
+    }
+
+    #[test]
+    fn armor_body_part_coverage() {
+        let mut reg = ItemRegistry::default();
+        register_starter_items(&mut reg);
+        let vest = reg.get(ITEM_SCRAPED_HIDE_VEST).unwrap();
+        if let ItemProperties::Armor { covered_parts, .. } = &vest.properties {
+            assert!(covered_parts.contains(&5));  // Torso
+        } else {
+            panic!("Should be armor");
+        }
     }
 }

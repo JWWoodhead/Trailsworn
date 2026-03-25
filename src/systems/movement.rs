@@ -107,8 +107,12 @@ pub fn sync_transforms(
             base
         };
 
+        let map_height_px = map_settings.height as f32 * ts;
         transform.translation.x = pos.x;
         transform.translation.y = pos.y;
+        transform.translation.z = crate::resources::map::render_layers::y_sorted_z(
+            pos.y, map_height_px, crate::resources::map::render_layers::ENTITIES,
+        );
     }
 }
 
