@@ -18,8 +18,16 @@ src/
 
   systems/             — All Bevy systems (ECS logic that runs each frame)
     task/              — Task execution + AI evaluator systems (one file per evaluator + scheduling)
+    ui_panel.rs        — Unified tabbed UI panel (Character/Inventory tabs)
+    character_sheet.rs — Character tab content (body, stats, resources)
+    inventory.rs       — Inventory tab content (equipment, grid, detail)
     rendering.rs       — Custom terrain shader tilemap setup + terrain map updates
   resources/           — All Components, Resources, and data types
+    items.rs           — ItemDef, ItemInstance, Inventory, Equipment, Rarity, BaseTier
+    affixes.rs         — AffixDef, AffixEffect, RolledAffix, AffixRegistry
+    affix_defs.rs      — register_starter_affixes() — 20 affixes
+    item_defs.rs       — register_starter_items() — 41 base items (15 weapons, 18 armor, 8 consumables/materials)
+    item_gen.rs        — Item generation pipeline (roll_rarity, pick_base_type, roll_affixes, generate_item)
     terrain_material.rs — TerrainMaterial (MaterialTilemap) + shader params
     terrain_blend.rs   — Terrain transition computation (Wang 47 tileset, used by tests)
   pathfinding/         — A* and HPA* (pure algorithms, no Bevy)
@@ -105,6 +113,11 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `selection::draw_drag_box` — draws selection rectangle with gizmos
 - `hud::update_speed_indicator` — shows "PAUSED" or "1x/2x/3x" top-right
 - `hud::combat_log_damage` — appends combat events to bottom-left panel (capped at 50 entries)
+- `ui_panel::update_tab_visuals` — highlights active tab button, handles tab click switching
+- `ui_panel::update_ui_panel_overlay` — shows "No character selected" overlay when no selection
+- `character_sheet::update_character_sheet` — updates body/stats/resources on Character tab (only when active)
+- `inventory::update_inventory_panel` — updates equipment/grid/weight on Inventory tab (only when active)
+- `ability_bar::update_ability_bar` — hides bar when nothing selected, shows slots when selected
 
 ### Render (GameSet::Render)
 - `movement::sync_transforms` — sets entity `Transform` from `GridPosition` + `MovePath.progress` + `PathOffset`. Computes y-sorted z-depth via `render_layers::y_sorted_z()` so entities further north render behind entities further south.
@@ -370,10 +383,78 @@ All keybindings centralized. Systems read `ActionState`, never raw `ButtonInput<
 
 - `InputMap`: maps `InputBinding` (key or mouse button) → `Action`
 - `ActionState`: populated each frame by `process_input` system
-- `Action` enum: CameraPan(Up/Down/Left/Right), Pause, Speed(1/2/3), Select, Command, Cancel, AbilitySlot(1-6), Debug toggles
+- `Action` enum: CameraPan(Up/Down/Left/Right), Pause, Speed(1/2/3), Select, Command, Cancel, AbilitySlot(1-6), ToggleCharacterSheet, ToggleInventory, Debug toggles
 - `CursorPosition`: resource computed once per frame by `selection::update_cursor_position` (early Input set). Holds screen, world, and tile coordinates. All downstream systems read this instead of querying raw cursor position.
 - Scroll wheel for zoom reads raw `MessageReader<MouseWheel>` (not action-mapped)
 - To rebind: `input_map.bind(InputBinding::Key(KeyCode::KeyQ), Action::Pause)`
+
+## UI Panel System (`systems/ui_panel.rs`)
+
+Unified tabbed panel replacing separate character sheet and inventory windows. One panel, multiple tabs.
+
+### Architecture:
+- `UiPanelRoot` — single root node (720×540, centered, opaque dark iron bg, z-index 10)
+- `ActiveUiTab` resource — `Option<UiTab>`: `None` = closed, `Some(Character|Inventory)` = open
+- `UiTabButton` — clickable tab buttons with `Interaction` component
+- `UiTabContent(UiTab)` — container per tab, toggled `Display::None/Flex` by active tab
+- `UiNoSelectionOverlay` — shared overlay across all tabs
+
+### Tab content (spawned by panel, updated by own systems):
+- **Character tab** (`systems/character_sheet.rs`): body part HP bars, attributes, combat stats, mana/stamina, status effects. Uses `CsText`/`CsBar` enum markers.
+- **Inventory tab** (`systems/inventory.rs`): equipment slots (7 slots), item grid (6×4 = 24 slots), detail panel. Uses `InvText`/`InvEquipSlotBg`/`InvGridSlotBg` markers.
+
+### Toggle behavior:
+- `C` → open to Character tab / close if already on Character / switch if on another tab
+- `I` → same for Inventory tab
+- Tab buttons clickable to switch while panel is open
+
+### UI click-through prevention:
+All interactive UI nodes (`UiPanelRoot`, `AbilitySlotUi`, `UiTabButton`) have `Interaction::default()`. `selection_input` and `right_click_command` query all `Interaction` components and skip world input if any are `Hovered` or `Pressed`. Future UI elements just need `Interaction` to automatically block world clicks.
+
+## Item & Affix System
+
+### Item definitions (`resources/items.rs`, `resources/item_defs.rs`):
+- `ItemDef` — static template: id, name, description, kind, rarity, weight, max_stack, icon, properties, base_tier, item_level_req, weapon_class, armor_class
+- `ItemKind`: Weapon, Armor, Consumable, Material, Quest
+- `EquipSlot`: Head, Chest, Hands, Legs, Feet, MainHand, OffHand
+- `BaseTier`: Crude (ilvl 1+), Tempered (ilvl 15+), Runic (ilvl 30+) — craftsmanship quality
+- `WeaponClass`: Sword, Mace, Dagger, Bow, Staff (5 classes × 3 tiers = 15 weapons)
+- `ArmorClass`: Light, Medium, Heavy, Shield (6 slots × 3 tiers = 18 armor pieces)
+- `ItemRegistry` — HashMap storage with `all()` iterator
+
+### Rarity model (D2-inspired):
+| Rarity | Affixes | Max Prefix | Max Suffix |
+|--------|---------|------------|------------|
+| Normal | 0 | 0 | 0 |
+| Magic | 1-2 | 1 | 1 |
+| Rare | 3-6 | 3 | 3 |
+| Unique | fixed (future) | — | — |
+
+### Affix system (`resources/affixes.rs`, `resources/affix_defs.rs`):
+- `AffixDef` — id, name, slot_type (Prefix/Suffix), allowed_kinds, tiered values
+- `AffixTier` — min_item_level gate + effect value + display label
+- `AffixEffect` enum: FlatDamage, PercentDamage, Resistance, Attribute, AttackSpeed, MaxMana, MaxStamina
+- `RolledAffix` — specific affix instance on a rolled item
+- `AffixRegistry` — with `candidates(kind, slot_type, ilvl)` filtering
+- 20 starter affixes: 2 weapon prefixes, 2 armor prefixes, 1 weapon suffix, 10 resistance suffixes (all damage types), 5 attribute suffixes
+
+### Item instances (`resources/items.rs`):
+- `ItemInstance` — rolled item: base_item_id + rarity + item_level + prefixes + suffixes
+- `ItemInstanceId(u64)` — unique per rolled item
+- `ItemInstanceRegistry` Resource — HashMap storage + id counter
+- `display_name()` — "Prefix BaseType Suffix" (e.g., "Keen Oathbrand of the Colossus")
+
+### Generation pipeline (`resources/item_gen.rs`):
+- `roll_rarity(item_level, rng)` — ilvl-scaled: 88% Normal at ilvl 1, 50% Normal at ilvl 40+
+- `pick_base_type(item_level, kind, registry, rng)` — weighted toward tier-appropriate items
+- `roll_affixes(rarity, item_level, kind, affix_registry, rng)` — respects prefix/suffix caps, no duplicate affixes, falls back to other slot type
+- `generate_item(params, registries, rng)` → `ItemInstanceId`
+
+### Not yet implemented:
+- Inventory/Equipment migration to use `ItemInstanceId` instead of `ItemId` (Phase 3)
+- `EquipmentBonuses` component — recalculate stat bonuses from equipped affix effects (Phase 4)
+- Combat integration — auto_attack reads affix damage bonuses (Phase 4)
+- Mob drops / loot tables (Phase 5)
 
 ## Best Practices Enforced
 
@@ -398,7 +479,7 @@ Colors in `resources/theme.rs`:
 
 ## Tests
 
-~220 tests covering:
+~240 tests covering:
 - Pathfinding (A*, HPA*, bounded A*)
 - Body parts, stats, leveling
 - Combat resolution, damage, armor
@@ -412,6 +493,8 @@ Colors in `resources/theme.rs`:
 - Terrain blending (Wang 47 transition computation, atlas indexing, neighbor priority)
 - Task execution (action sequencing, completion/failure, Engaging marker, CC)
 - Items/inventory (add, remove, stack, equip, weight, capacity)
+- Affixes (tier gating, candidate filtering, registry)
+- Item generation (rarity rolling, affix counts, deterministic seeding, display names)
 
 ## Known Issues / Not Yet Implemented
 
@@ -419,6 +502,7 @@ Colors in `resources/theme.rs`:
 - **Zone persistence**: killed enemies respawn on re-entry (zones regenerate from seed).
 - **History → gameplay integration**: generated history not yet connected to zone generation or NPC dialogue.
 - **Diagonal speed**: entities move ~41% faster diagonally (accepted for now).
+- **Items/equipment not connected**: Item generation pipeline exists but Inventory/Equipment don't use `ItemInstance` yet. `EquipmentBonuses` not implemented. No mob drops.
 - **Cover system**: planned but not implemented.
 - **Save/load**: `StableId` infrastructure ready but serialization not built.
 - **UseCondition gaps**: `AllyHpBelow` and `EnemiesInRange` evaluator conditions are stubbed (return false).
