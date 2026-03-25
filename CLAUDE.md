@@ -26,6 +26,7 @@ src/
   resources/           — All Components, Resources, and data types
     items.rs           — ItemDef, ItemInstance, Inventory (stacks + instances), Equipment (ItemInstanceId), Rarity, BaseTier
     equipment_bonuses.rs — EquipmentBonuses component, compute_bonuses() aggregation
+    zone_persistence.rs  — ZoneSpawnIndex, EntitySnapshot, ZoneSnapshot, ZoneStateCache
     affixes.rs         — AffixDef, AffixEffect, RolledAffix, AffixRegistry
     affix_defs.rs      — register_starter_affixes() — 20 affixes
     item_defs.rs       — register_starter_items() — 41 base items (15 weapons, 18 armor, 8 consumables/materials)
@@ -103,7 +104,7 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 ### Movement (GameSet::Movement)
 - `movement::movement` — advances `MovePath.progress` each tick. Updates `GridPosition` when arriving at next tile. Swaps in `PendingPath` at tile boundaries (AI only). Applies ease-in/ease-out speed multiplier over the whole path (first 1.5 tiles accelerate, last 1.5 tiles decelerate).
 - `zone::detect_zone_edge` — fires `ZoneTransitionEvent` when player reaches map edge
-- `zone::handle_zone_transition` — despawns zone entities, generates new zone, respawns enemies, repositions player
+- `zone::handle_zone_transition` — snapshots alive zone entities to `ZoneStateCache`, despawns zone entities, generates new zone, respawns enemies (skipping dead, restoring alive state from snapshot), repositions player
 
 ### UI (GameSet::Ui)
 - `health_bars::spawn_health_bars` — attaches health bar sprites to entities with `Body`. Adds `HealthBarBackground` marker to the parent entity to prevent re-spawning.
@@ -281,7 +282,7 @@ Diagonal movement is ~41% faster visually because progress 0→1 takes the same 
 
 ### Zone transitions (`systems/zone.rs`):
 - `detect_zone_edge`: fires event when player reaches map boundary
-- `handle_zone_transition`: despawns `ZoneEntity` marked entities, generates new zone, replaces `TileWorld` resource, spawns new enemies, repositions player at opposite edge
+- `handle_zone_transition`: snapshots alive entities to `ZoneStateCache`, despawns `ZoneEntity` marked entities, generates new zone, applies snapshot (skips dead, restores alive state), replaces `TileWorld` resource, repositions player at opposite edge
 - `rendering::update_terrain_map`: detects `TileWorld` change and rebuilds the terrain map GPU texture
 
 ## Terrain Rendering
@@ -504,6 +505,30 @@ Use the shared helpers in `spawning.rs`:
 3. Insert `Equipment`, `EquippedWeapon`, `EquippedArmor`, `EquipmentBonuses` components
 4. `sync_equipment` system handles the rest on next frame
 
+### Adding a new Component
+When adding a new component that holds game state, you MUST categorize it for save/load:
+
+- **Must save**: position, HP, stats, equipment, inventory, faction, abilities, combat config. Add a field to `SavedEntity` (when built) and ensure the type can derive `Serialize`.
+- **Derived/reconstructable**: components computed from saved state (e.g., `EquippedWeapon` from `Equipment` via `sync_equipment`, `Transform` from `GridPosition`). Skip in save, reconstruct on load.
+- **Transient**: runtime-only state that resets naturally (e.g., `CurrentTask`, `MovePath`, `ThreatTable`, `CastingState`). Skip in save.
+- **Rendering/UI**: engine state reconstructed from assets (e.g., `Sprite`, UI markers). Skip in save.
+
+If the component holds mutable game state that the player would expect to persist, it **must be saved.** When in doubt, it's a save candidate.
+
+Currently saved via zone persistence (`ZoneSnapshot`): GridPosition, Body (part HP/destroyed), Mana, Stamina, Equipment (ItemInstanceIds). Full entity serialization will be added when quests/NPC state require it.
+
+### Component save categorization reference
+
+**Must save (18):** StableId, EntityName, GridPosition, Body, Attributes, CharacterLevel, Mana, Stamina, ActiveStatusEffects, Faction, Equipment, Inventory, AbilitySlots, CombatBehavior, PartyMode, MovementSpeed, FacingDirection, ThreatTable
+
+**Must save (identity/markers):** PlayerControlled, ZoneEntity, ZoneSpawnIndex
+
+**Derived (reconstruct on load):** EquippedWeapon, EquippedArmor, EquipmentBonuses, Transform
+
+**Transient (skip):** CurrentTask, MovePath, PendingPath, RepathTimer, InCombat, Engaging, CastingState, PathOffset
+
+**Rendering/UI (skip):** Sprite, Name, DespawnOnExit, Selected, all UI markers
+
 ### Key design principle
 - **Registries are open**: ItemRegistry, AffixRegistry, ItemInstanceRegistry — add entries without changing code
 - **Enums are closed**: AffixEffect, Rarity, DamageType, EquipSlot — adding variants requires updating match arms (compiler catches most, see above for manual spots)
@@ -532,7 +557,7 @@ Colors in `resources/theme.rs`:
 
 ## Tests
 
-~252 tests covering:
+~257 tests covering:
 - Pathfinding (A*, HPA*, bounded A*)
 - Body parts, stats, leveling
 - Combat resolution, damage, armor
@@ -550,11 +575,12 @@ Colors in `resources/theme.rs`:
 - Item generation (rarity rolling, affix counts, deterministic seeding, display names)
 - Equipment bonuses (affix aggregation: flat damage, percent damage, attack speed, resistances, attributes, mana, stamina)
 - Inventory instances (add, remove, capacity sharing with stacks, weight including instances)
+- Zone persistence (snapshot cache, dead/alive tracking, item instance preservation)
 
 ## Known Issues / Not Yet Implemented
 
 - **Tile occupancy**: entities can overlap on the same tile. Needs pathfinding-level solution.
-- **Zone persistence**: killed enemies respawn on re-entry (zones regenerate from seed).
+- **Zone persistence (partial)**: zones now track killed enemies and preserve alive entity state (position, HP, mana/stamina) across transitions via `ZoneStateCache`. Ground items and terrain modifications not yet persisted.
 - **History → gameplay integration**: generated history not yet connected to zone generation or NPC dialogue.
 - **Diagonal speed**: entities move ~41% faster diagonally (accepted for now).
 - **No mob drops**: Enemies don't drop loot on death. Loot tables not implemented.

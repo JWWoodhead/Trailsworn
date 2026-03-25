@@ -29,3 +29,4 @@ pub mod theme;
 pub mod task;
 pub mod threat;
 pub mod world;
+pub mod zone_persistence;

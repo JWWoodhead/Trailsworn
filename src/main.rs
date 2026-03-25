@@ -102,6 +102,7 @@ fn main() {
     .insert_resource(trailsworn::resources::map::CursorPosition::default())
     .insert_resource(world_map)
     .insert_resource(current_zone)
+    .insert_resource(trailsworn::resources::zone_persistence::ZoneStateCache::default())
     // Messages
     .add_message::<DamageDealtEvent>()
     .add_message::<AttackMissedEvent>()
@@ -282,6 +283,7 @@ fn spawn_initial_zone_entities(
         None => return,
     };
 
+    let mut spawn_index = 0u32;
     for poi in &zone_data.pois {
         match &poi.kind {
             trailsworn::worldgen::zone::PoiKind::EnemyCamp { enemy_count }
@@ -296,7 +298,10 @@ fn spawn_initial_zone_entities(
                     poi.x,
                     poi.y,
                     *enemy_count,
+                    spawn_index,
+                    None, // No snapshot for initial spawn
                 );
+                spawn_index += enemy_count;
             }
             trailsworn::worldgen::zone::PoiKind::CaveEntrance => {
                 // TODO: cave entrance interactable

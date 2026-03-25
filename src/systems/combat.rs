@@ -155,19 +155,44 @@ pub fn auto_attack(
     }
 }
 
-/// Remove dead entities from the game.
+/// Remove dead entities from the game. Records zone kills and cleans up
+/// orphaned ItemInstances.
 pub fn cleanup_dead(
     mut commands: Commands,
     body_templates: Res<BodyTemplates>,
-    query: Query<(Entity, &Body, &EntityName)>,
+    current_zone: Res<crate::resources::world::CurrentZone>,
+    mut zone_cache: ResMut<crate::resources::zone_persistence::ZoneStateCache>,
+    mut instance_registry: ResMut<crate::resources::items::ItemInstanceRegistry>,
+    query: Query<(
+        Entity,
+        &Body,
+        &EntityName,
+        Option<&crate::resources::zone_persistence::ZoneSpawnIndex>,
+        Option<&crate::resources::items::Equipment>,
+    )>,
 ) {
-    for (entity, body, name) in &query {
+    for (entity, body, name, spawn_idx, equipment) in &query {
         let template = match body_templates.get(&body.template_id) {
             Some(t) => t,
             None => continue,
         };
         if body.is_dead(template) {
             info!("{} has died!", name.0);
+
+            // Track zone kill for persistence
+            if let Some(idx) = spawn_idx {
+                let snapshot = zone_cache.get_or_create_mut(current_zone.world_pos);
+                snapshot.dead_indices.insert(idx.0);
+                snapshot.alive_overrides.remove(&idx.0);
+            }
+
+            // Clean up ItemInstances to prevent orphan leak
+            if let Some(eq) = equipment {
+                for (_, instance_id) in &eq.slots {
+                    instance_registry.remove(*instance_id);
+                }
+            }
+
             commands.entity(entity).despawn();
         }
     }
