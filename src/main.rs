@@ -22,7 +22,7 @@ use trailsworn::resources::theme::Theme;
 use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::systems::{
     ability_bar, camera, casting, character_sheet, combat, debug, equipment, floating_text, game_time,
-    health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, zone,
+    health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, world_map_ui, zone,
 };
 use trailsworn::worldgen::world_map::generate_world_map;
 
@@ -98,6 +98,7 @@ fn main() {
     .insert_resource(ActionState::default())
     .insert_resource(trailsworn::systems::profiling::FrameProfiler::default())
     .insert_resource(ui_panel::ActiveUiTab::default())
+    .insert_resource(world_map_ui::WorldMapVisible::default())
     .insert_resource(trailsworn::resources::map::CursorPosition::default())
     .insert_resource(world_map)
     .insert_resource(current_zone)
@@ -133,6 +134,7 @@ fn main() {
             hud::setup_hud,
             ability_bar::setup_ability_bar,
             ui_panel::setup_ui_panel,
+            world_map_ui::setup_world_map_ui,
             spawn_initial_zone_entities,
             transition_to_playing,
         )
@@ -153,6 +155,7 @@ fn main() {
                 selection::right_click_command.after(camera::update_cursor_position),
                 selection::ability_input.after(input::process_input),
                 ui_panel::toggle_ui_panel.after(input::process_input),
+                world_map_ui::toggle_world_map.after(input::process_input),
             )
                 .in_set(GameSet::Input),
             // Tick
@@ -219,6 +222,7 @@ fn main() {
                 ui_panel::update_ui_panel_overlay,
                 character_sheet::update_character_sheet,
                 inventory::update_inventory_panel,
+                world_map_ui::update_world_map_marker,
             )
                 .in_set(GameSet::Ui),
             // Render
