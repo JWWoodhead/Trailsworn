@@ -19,4 +19,5 @@ pub mod selection;
 pub mod spawning;
 pub mod task;
 pub mod ui_panel;
+pub mod world_map_ui;
 pub mod zone;

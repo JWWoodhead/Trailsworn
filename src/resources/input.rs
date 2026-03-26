@@ -36,6 +36,9 @@ pub enum Action {
     ToggleCharacterSheet,
     ToggleInventory,
 
+    // World map
+    ToggleWorldMap,
+
     // Debug
     DebugGrid,
     DebugPathing,
@@ -97,6 +100,9 @@ impl Default for InputMap {
         // UI panels
         map.bind(InputBinding::Key(KeyCode::KeyC), Action::ToggleCharacterSheet);
         map.bind(InputBinding::Key(KeyCode::KeyI), Action::ToggleInventory);
+
+        // World map
+        map.bind(InputBinding::Key(KeyCode::KeyM), Action::ToggleWorldMap);
 
         // Debug
         map.bind(InputBinding::Key(KeyCode::F1), Action::DebugGrid);
