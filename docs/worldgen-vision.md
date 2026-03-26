@@ -110,25 +110,36 @@ Each god gets a randomly ordered subset of these functions, filled with specific
 - [x] Improve world map generation — 256x256 noise-driven with elevation/moisture/temperature, rivers, regions
 - [x] Add terrain types — Sand, Snow, Swamp (DeadForest, Lava deferred to god system)
 - [x] Improve zone generation — noise-based terrain with biome recipes, edge blending, river carving
+- [x] In-game world map overlay (M key) with player position and zone info
 - [ ] Design and implement initial god pool (6-8 gods to start, system supports 25)
 
+### Phase 1b: World Gen Polish (before moving to gods)
+- [ ] World map UI improvements — legend, settlement labels, zoom/pan, clickable zones
+- [ ] Biome balance tuning — forest still dominant (~31%), needs testing across many seeds
+- [ ] Zone-level visual verification — desert/tundra/swamp/coast zones need in-game visual QA
+- [ ] Zone-level river appearance — current zone river carving is basic meandering stream, should match world-level river width/path
+- [ ] Mountain range aesthetics — ridges could be more linear/dramatic, less blobby
+- [ ] More ocean variety between seeds — some seeds still produce very land-heavy worlds
+- [ ] Settlement generation improvements — current settlements are basic (dirt square + stone blocks), should reflect biome (sand buildings in desert, etc.)
+
 ### Phase 2: Divine History
-- Propp narrative engine — template system for generating story arcs
-- Divine era simulation — gods act on the world, shape geography
-- The Fall generator — derives cause from divine era state
-- Divine artifacts with real history
+- [ ] Propp narrative engine — template system for generating story arcs
+- [ ] Divine era simulation — gods act on the world, shape geography
+- [ ] The Fall generator — derives cause from divine era state
+- [ ] Divine artifacts with real history
+- [ ] God pool design — 6-8 hand-crafted gods with domains, emotions, terrain influence, spell lists
 
 ### Phase 3: Mortal History Upgrade
-- Population model — demographics, migration, growth
-- World map with borders, trade routes, resource distribution
-- Existing faction sim upgraded to inherit from divine era
-- Cultural memory of gods and the Fall
+- [ ] Population model — demographics, migration, growth
+- [ ] World map with borders, trade routes, resource distribution
+- [ ] Existing faction sim upgraded to inherit from divine era
+- [ ] Cultural memory of gods and the Fall
 
 ### Phase 4: Player-Facing Integration
-- Ruins/sites generated from divine history
-- Lore delivery — texts, NPC knowledge, environmental storytelling
-- Quest generation using Propp templates
-- The central mystery — discovering and acting on the Fall
+- [ ] Ruins/sites generated from divine history
+- [ ] Lore delivery — texts, NPC knowledge, environmental storytelling
+- [ ] Quest generation using Propp templates
+- [ ] The central mystery — discovering and acting on the Fall
 
 ## Starting God Pool (Initial 6-8)
 
