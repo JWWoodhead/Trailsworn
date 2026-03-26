@@ -1,5 +1,6 @@
 use rand::{Rng, RngExt, SeedableRng};
 
+use super::names;
 use super::noise_util::NoiseLayer;
 use super::zone::{ZoneGenContext, ZoneType};
 
@@ -35,7 +36,12 @@ pub struct WorldCell {
     pub moisture: f32,
     pub temperature: f32,
     pub river: bool,
+    /// Which edges the river enters/exits: [N, E, S, W].
+    pub river_entry: [bool; 4],
+    /// Normalized river width at this cell (0.0 = source, 1.0 = mouth).
+    pub river_width: f32,
     pub region_id: Option<u32>,
+    pub settlement_name: Option<String>,
 }
 
 impl WorldCell {
@@ -48,7 +54,10 @@ impl WorldCell {
             moisture: 0.0,
             temperature: 0.0,
             river: false,
+            river_entry: [false; 4],
+            river_width: 0.0,
             region_id: None,
+            settlement_name: None,
         }
     }
 }
@@ -105,6 +114,8 @@ impl WorldMap {
             moisture: cell.moisture,
             temperature: cell.temperature,
             river: cell.river,
+            river_entry: cell.river_entry,
+            river_width: cell.river_width,
             neighbors,
         })
     }
@@ -129,20 +140,37 @@ pub fn generate_world_map(width: u32, height: u32, seed: u64) -> WorldMap {
 
     // --- Layer 1: Elevation ---
     // Base continental noise (low freq, big landmasses) + ridge noise for mountain ranges
+    // + continent-scale modulation for ocean variety across seeds
     let elev_noise = NoiseLayer::new(elev_seed, 0.008, 6);
     let ridge_noise = NoiseLayer::new(elev_seed.wrapping_add(1000), 0.025, 4);
+    let continent_noise = NoiseLayer::new(elev_seed.wrapping_add(2000), 0.003, 2);
+    // Domain warp layer: distorts ridge coordinates to create elongated mountain ranges
+    let warp_noise = NoiseLayer::new(elev_seed.wrapping_add(3000), 0.005, 3);
+    // Seed-derived directional bias for ridge stretch (varies range orientation per world)
+    let ridge_angle = (elev_seed as f64 % 1000.0) / 1000.0 * std::f64::consts::PI;
+    let cos_a = ridge_angle.cos();
+    let sin_a = ridge_angle.sin();
     let mut elevation = vec![0.0f32; n];
     for y in 0..height {
         for x in 0..width {
             let i = (y * width + x) as usize;
             let base = elev_noise.sample_normalized(x as f64, y as f64) as f32;
-            // Ridge noise: invert so ridges (near 0 in raw noise) become peaks
-            let ridge_raw = ridge_noise.sample(x as f64, y as f64) as f32;
-            let ridge = (1.0 - ridge_raw.abs()) * 0.15; // subtle ridge contribution
+            // Continent-scale modulation: creates large-scale highs/lows so some regions
+            // are structurally low (ocean) regardless of detail noise
+            let continent = continent_noise.sample_normalized(x as f64, y as f64) as f32;
+            let modulated = base * 0.75 + continent * 0.25;
+            // Domain-warped ridge noise for elongated mountain ranges
+            let warp = warp_noise.sample(x as f64, y as f64) * 40.0;
+            // Rotate + stretch coordinates so ridges trend in a seed-specific direction
+            let rx = x as f64 * cos_a - y as f64 * sin_a;
+            let ry = x as f64 * sin_a + y as f64 * cos_a;
+            let ridge_raw = ridge_noise.sample(rx * 0.7 + warp, ry * 1.3 + warp) as f32;
+            // Power curve for sharper, narrower ridges
+            let ridge = (1.0 - ridge_raw.abs()).powf(1.8) * 0.16;
             // Only apply ridges on land (where base is already above ocean level)
-            let ridge_masked = if base > 0.45 { ridge } else { 0.0 };
+            let ridge_masked = if modulated > 0.45 { ridge } else { 0.0 };
             // Apply contrast curve: push values away from the midpoint for steeper slopes
-            let combined = base * 0.85 + ridge_masked;
+            let combined = modulated * 0.85 + ridge_masked;
             let contrasted = ((combined - 0.5) * 1.3 + 0.5).clamp(0.0, 1.0);
             elevation[i] = contrasted;
         }
@@ -159,7 +187,22 @@ pub fn generate_world_map(width: u32, height: u32, seed: u64) -> WorldMap {
     }
 
     // Boost moisture near ocean (distance-based falloff)
-    let ocean_threshold = 0.42f32;
+    let mut ocean_threshold = 0.42f32;
+
+    // Ocean fraction safety check: adjust threshold to keep ocean between 15-60%.
+    // This ensures every seed has meaningful ocean coverage and land variety.
+    loop {
+        let ocean_count = elevation.iter().filter(|&&e| e < ocean_threshold).count();
+        let ocean_frac = ocean_count as f32 / n as f32;
+        if ocean_frac < 0.15 {
+            ocean_threshold += 0.02;
+        } else if ocean_frac > 0.60 {
+            ocean_threshold -= 0.02;
+        } else {
+            break;
+        }
+    }
+
     boost_moisture_near_ocean(&elevation, &mut moisture, width, height, ocean_threshold);
 
     // --- Layer 3: Temperature ---
@@ -181,9 +224,13 @@ pub fn generate_world_map(width: u32, height: u32, seed: u64) -> WorldMap {
 
     // --- River generation ---
     let mut river = vec![false; n];
+    let mut river_progress = vec![0.0f32; n]; // 0.0 = source, 1.0 = mouth
+    let mut river_edges: Vec<[bool; 4]> = vec![[false; 4]; n]; // [N, E, S, W]
     generate_rivers(
         &elevation,
         &mut river,
+        &mut river_progress,
+        &mut river_edges,
         &mut moisture,
         width,
         height,
@@ -206,9 +253,14 @@ pub fn generate_world_map(width: u32, height: u32, seed: u64) -> WorldMap {
             cell.moisture = m;
             cell.temperature = t;
             cell.river = river[i];
+            cell.river_entry = river_edges[i];
+            cell.river_width = river_progress[i];
             cells.push(cell);
         }
     }
+
+    // --- Mountain range smoothing: connect isolated mountain cells to form ranges ---
+    smooth_mountain_ranges(&mut cells, width, height);
 
     // --- Coast detection: land cells adjacent to ocean ---
     apply_coast_zones(&mut cells, width, height);
@@ -269,10 +321,47 @@ fn classify_biome(elevation: f32, moisture: f32, temperature: f32, ocean_thresh:
     if moisture > 0.70 && elevation < 0.55 {
         return ZoneType::Swamp;
     }
-    if moisture > 0.50 && temperature > 0.25 {
+    if moisture > 0.55 && temperature > 0.25 {
         return ZoneType::Forest;
     }
     ZoneType::Grassland
+}
+
+/// Fill gaps in mountain ranges: non-ocean cells adjacent to ≥2 mountains become mountains.
+/// This connects the domain-warped ridges into cohesive linear ranges.
+fn smooth_mountain_ranges(cells: &mut [WorldCell], width: u32, height: u32) {
+    let offsets: [(i32, i32); 8] = [
+        (0, 1), (0, -1), (1, 0), (-1, 0),
+        (1, 1), (1, -1), (-1, 1), (-1, -1),
+    ];
+    let promote: Vec<usize> = (0..cells.len())
+        .filter(|&i| {
+            let cell = &cells[i];
+            // Only promote high-elevation non-ocean land cells
+            if cell.zone_type == ZoneType::Ocean || cell.zone_type == ZoneType::Mountain {
+                return false;
+            }
+            if cell.elevation < 0.70 {
+                return false;
+            }
+            let x = (i as u32) % width;
+            let y = (i as u32) / width;
+            let mountain_neighbors = offsets.iter().filter(|(dx, dy)| {
+                let nx = x as i32 + dx;
+                let ny = y as i32 + dy;
+                if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                    return false;
+                }
+                let ni = (ny as u32 * width + nx as u32) as usize;
+                cells[ni].zone_type == ZoneType::Mountain
+            }).count();
+            mountain_neighbors >= 2
+        })
+        .collect();
+
+    for i in promote {
+        cells[i].zone_type = ZoneType::Mountain;
+    }
 }
 
 /// Turn land cells adjacent to ocean into Coast (except Mountain).
@@ -353,7 +442,7 @@ fn boost_moisture_near_ocean(
     for i in 0..n {
         if dist[i] > 0 && dist[i] < max_dist {
             let factor = 1.0 - (dist[i] as f32 / max_dist as f32);
-            moisture[i] = (moisture[i] + factor * 0.3).min(1.0);
+            moisture[i] = (moisture[i] + factor * 0.20).min(1.0);
         }
     }
 }
@@ -362,6 +451,8 @@ fn boost_moisture_near_ocean(
 fn generate_rivers(
     elevation: &[f32],
     river: &mut [bool],
+    river_progress: &mut [f32],
+    river_edges: &mut [[bool; 4]],
     moisture: &mut [f32],
     width: u32,
     height: u32,
@@ -398,7 +489,7 @@ fn generate_rivers(
             continue;
         }
         sources.push((cx, cy));
-        walk_river(c, elevation, river, moisture, width, height, ocean_threshold);
+        walk_river(c, elevation, river, river_progress, river_edges, moisture, width, height, ocean_threshold);
     }
 }
 
@@ -411,6 +502,8 @@ fn walk_river(
     start: usize,
     elevation: &[f32],
     river: &mut [bool],
+    river_progress: &mut [f32],
+    river_edges: &mut [[bool; 4]],
     moisture: &mut [f32],
     width: u32,
     height: u32,
@@ -498,8 +591,9 @@ fn walk_river(
         }
     }
 
-    // Rasterize the smooth path with increasing width
+    // Rasterize the smooth path with increasing width + track edge crossings
     let path_len = path.len() as f32;
+    let mut prev_cell: Option<(u32, u32)> = None;
     // Subsample path to avoid over-painting (take every ~2 points)
     let paint_step = 2.max(1);
     for (step, &(px, py)) in path.iter().enumerate().step_by(paint_step) {
@@ -518,9 +612,39 @@ fn walk_river(
                 if rx >= 0 && ry >= 0 && rx < width as i32 && ry < height as i32 {
                     let ri = (ry as u32 * width + rx as u32) as usize;
                     river[ri] = true;
+                    // Track maximum progress (width) for each cell
+                    if progress > river_progress[ri] {
+                        river_progress[ri] = progress;
+                    }
                 }
             }
         }
+
+        // Track edge crossings between world cells
+        let cur_cell = (cx.max(0) as u32, cy.max(0) as u32);
+        if let Some(prev) = prev_cell {
+            if cur_cell != prev {
+                let pi = (prev.1 * width + prev.0) as usize;
+                let ci = (cur_cell.1.min(height - 1) * width + cur_cell.0.min(width - 1)) as usize;
+                // Determine which edge was crossed: N=+y, S=-y, E=+x, W=-x
+                if cur_cell.1 > prev.1 {
+                    // Moved north: prev exits N, cur enters S
+                    if pi < river_edges.len() { river_edges[pi][0] = true; }
+                    if ci < river_edges.len() { river_edges[ci][2] = true; }
+                } else if cur_cell.1 < prev.1 {
+                    if pi < river_edges.len() { river_edges[pi][2] = true; }
+                    if ci < river_edges.len() { river_edges[ci][0] = true; }
+                }
+                if cur_cell.0 > prev.0 {
+                    if pi < river_edges.len() { river_edges[pi][1] = true; }
+                    if ci < river_edges.len() { river_edges[ci][3] = true; }
+                } else if cur_cell.0 < prev.0 {
+                    if pi < river_edges.len() { river_edges[pi][3] = true; }
+                    if ci < river_edges.len() { river_edges[ci][1] = true; }
+                }
+            }
+        }
+        prev_cell = Some(cur_cell);
 
         // Moisture boost
         let moist_r = half_width + 2;
@@ -624,6 +748,7 @@ fn place_settlements(cells: &mut [WorldCell], width: u32, height: u32, rng: &mut
 
         cells[*i].zone_type = ZoneType::Settlement;
         cells[*i].has_cave = false;
+        cells[*i].settlement_name = Some(names::settlement_name(rng));
         placed.push((x, y));
     }
 }
@@ -793,6 +918,59 @@ mod tests {
                 assert!(!map.is_passable(pos));
             } else {
                 assert!(map.is_passable(pos));
+            }
+        }
+    }
+
+    #[test]
+    fn biome_balance_across_seeds() {
+        // Verify biome distribution is reasonable across multiple seeds
+        for seed in [1, 42, 123, 999, 2025, 7777, 31415, 54321, 100_000, 999_999] {
+            let map = generate_world_map(128, 128, seed);
+            let total = map.cells.len() as f32;
+
+            let mut counts = std::collections::HashMap::new();
+            for cell in &map.cells {
+                *counts.entry(cell.zone_type).or_insert(0u32) += 1;
+            }
+
+            let ocean_pct = *counts.get(&ZoneType::Ocean).unwrap_or(&0) as f32 / total;
+            let forest_pct = *counts.get(&ZoneType::Forest).unwrap_or(&0) as f32 / total;
+
+            // Ocean should be between 15% and 65%
+            assert!(
+                ocean_pct > 0.15 && ocean_pct < 0.65,
+                "Seed {seed}: ocean {:.1}% out of range (expected 15-65%)",
+                ocean_pct * 100.0
+            );
+
+            // Forest should not dominate (< 30%)
+            assert!(
+                forest_pct < 0.30,
+                "Seed {seed}: forest {:.1}% too high (expected < 30%)",
+                forest_pct * 100.0
+            );
+
+            // Should have at least 5 distinct biome types
+            assert!(
+                counts.len() >= 5,
+                "Seed {seed}: only {} biome types: {:?}",
+                counts.len(),
+                counts.keys().collect::<Vec<_>>()
+            );
+
+            // No single land biome should exceed 35%
+            for (biome, count) in &counts {
+                if *biome == ZoneType::Ocean {
+                    continue;
+                }
+                let pct = *count as f32 / total;
+                assert!(
+                    pct < 0.35,
+                    "Seed {seed}: {:?} at {:.1}% exceeds 35% cap",
+                    biome,
+                    pct * 100.0
+                );
             }
         }
     }

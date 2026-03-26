@@ -1,4 +1,5 @@
 pub mod cave;
+pub mod gods;
 pub mod history;
 pub mod names;
 pub mod noise_util;

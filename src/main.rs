@@ -24,6 +24,7 @@ use trailsworn::systems::{
     ability_bar, camera, cast_bars, casting, character_sheet, combat, debug, equipment, floating_text, game_time,
     health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, world_map_ui, zone,
 };
+use rand::SeedableRng;
 use trailsworn::worldgen::world_map::generate_world_map;
 
 fn main() {
@@ -53,6 +54,11 @@ fn main() {
     let world_map = generate_world_map(256, 256, world_seed);
     let spawn_pos = world_map.spawn_pos;
     let current_zone = CurrentZone::new(world_seed, spawn_pos);
+
+    // Build god pool and draw this run's pantheon
+    let god_pool = trailsworn::worldgen::gods::build_god_pool();
+    let mut pantheon_rng = rand::rngs::StdRng::seed_from_u64(world_seed);
+    let drawn_pantheon = god_pool.draw_pantheon(6, &mut pantheon_rng);
 
     // Generate the starting zone's tile world
     let start_ctx = world_map.zone_context(spawn_pos).unwrap();
@@ -99,9 +105,12 @@ fn main() {
     .insert_resource(trailsworn::systems::profiling::FrameProfiler::default())
     .insert_resource(ui_panel::ActiveUiTab::default())
     .insert_resource(world_map_ui::WorldMapVisible::default())
+    .insert_resource(world_map_ui::WorldMapViewState::default())
     .insert_resource(trailsworn::resources::map::CursorPosition::default())
     .insert_resource(world_map)
     .insert_resource(current_zone)
+    .insert_resource(god_pool)
+    .insert_resource(drawn_pantheon)
     .insert_resource(trailsworn::resources::zone_persistence::ZoneStateCache::default())
     // Messages
     .add_message::<DamageDealtEvent>()
@@ -157,6 +166,9 @@ fn main() {
                 selection::ability_input.after(input::process_input),
                 ui_panel::toggle_ui_panel.after(input::process_input),
                 world_map_ui::toggle_world_map.after(input::process_input),
+                world_map_ui::world_map_zoom.after(world_map_ui::toggle_world_map),
+                world_map_ui::world_map_pan.after(world_map_ui::toggle_world_map),
+                world_map_ui::world_map_click.after(world_map_ui::toggle_world_map),
             )
                 .in_set(GameSet::Input),
             // Tick

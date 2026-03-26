@@ -4,6 +4,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::resources::input::{Action, ActionState};
 use crate::resources::map::{CursorPosition, MapSettings};
+use crate::systems::world_map_ui::WorldMapVisible;
 
 /// Marker for the main game camera.
 #[derive(Component)]
@@ -37,7 +38,12 @@ pub fn camera_pan(
     window_query: Query<&Window, With<PrimaryWindow>>,
     mut camera_query: Query<(&mut Transform, &Projection), With<MainCamera>>,
     map_settings: Res<MapSettings>,
+    world_map_visible: Res<WorldMapVisible>,
 ) {
+    // Don't pan camera when world map is open (keys control map pan instead)
+    if world_map_visible.0 {
+        return;
+    }
     let Ok(window) = window_query.single() else {
         return;
     };

@@ -1,11 +1,14 @@
 use bevy::prelude::*;
+use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::image::{Image, ImageSampler};
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::window::PrimaryWindow;
 
 use crate::resources::input::{Action, ActionState};
 use crate::resources::theme::Theme;
 use crate::resources::world::CurrentZone;
-use crate::worldgen::world_map::WorldMap;
+use crate::worldgen::world_map::{WorldMap, WorldPos};
 use crate::worldgen::zone::ZoneType;
 
 // ---------------------------------------------------------------------------
@@ -16,9 +19,29 @@ use crate::worldgen::zone::ZoneType;
 #[derive(Resource, Default)]
 pub struct WorldMapVisible(pub bool);
 
+/// View state for zoom and pan.
+#[derive(Resource)]
+pub struct WorldMapViewState {
+    pub zoom: f32,
+    pub offset: Vec2, // offset in map-pixel space (0..256)
+}
+
+impl Default for WorldMapViewState {
+    fn default() -> Self {
+        Self {
+            zoom: 1.0,
+            offset: Vec2::ZERO,
+        }
+    }
+}
+
 /// Marker for the root overlay node.
 #[derive(Component)]
 pub struct WorldMapOverlay;
+
+/// Marker for the map image container (clipping parent).
+#[derive(Component)]
+pub struct WorldMapContainer;
 
 /// Marker for the map image node.
 #[derive(Component)]
@@ -31,6 +54,10 @@ pub struct WorldMapPlayerMarker;
 /// Marker for zone info text.
 #[derive(Component)]
 pub struct WorldMapInfoText;
+
+/// Marker for settlement label text nodes.
+#[derive(Component)]
+pub struct WorldMapSettlementLabel;
 
 // ---------------------------------------------------------------------------
 // Colors (matching the gen_world_map example)
@@ -50,6 +77,23 @@ fn biome_color(zone_type: ZoneType) -> [u8; 4] {
     }
 }
 
+fn biome_label(zone_type: ZoneType) -> &'static str {
+    match zone_type {
+        ZoneType::Ocean => "Ocean",
+        ZoneType::Grassland => "Grassland",
+        ZoneType::Forest => "Forest",
+        ZoneType::Mountain => "Mountains",
+        ZoneType::Desert => "Desert",
+        ZoneType::Tundra => "Tundra",
+        ZoneType::Swamp => "Swamp",
+        ZoneType::Coast => "Coast",
+        ZoneType::Settlement => "Settlement",
+    }
+}
+
+const RIVER_COLOR: [u8; 4] = [40, 90, 170, 255];
+const MAP_DISPLAY_SIZE: f32 = 768.0;
+
 // ---------------------------------------------------------------------------
 // Setup — create the map texture and UI overlay (hidden by default)
 // ---------------------------------------------------------------------------
@@ -60,9 +104,28 @@ pub fn setup_world_map_ui(
     world_map: Res<WorldMap>,
     theme: Res<Theme>,
 ) {
-    // Generate the map texture
     let map_image = generate_map_image(&world_map);
     let map_handle = images.add(map_image);
+
+    // Collect settlement positions for labels
+    let settlements: Vec<(i32, i32, String)> = world_map
+        .cells
+        .iter()
+        .enumerate()
+        .filter_map(|(i, cell)| {
+            if cell.zone_type == ZoneType::Settlement {
+                let x = (i as u32 % world_map.width) as i32;
+                let y = (i as u32 / world_map.width) as i32;
+                let name = cell
+                    .settlement_name
+                    .clone()
+                    .unwrap_or_else(|| "Settlement".to_string());
+                Some((x, y, name))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // Root overlay — covers entire screen, hidden by default
     commands
@@ -76,80 +139,188 @@ pub fn setup_world_map_ui(
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                flex_direction: FlexDirection::Column,
+                flex_direction: FlexDirection::Row,
                 display: Display::None,
+                column_gap: Val::Px(16.0),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.85)),
             GlobalZIndex(20),
         ))
         .with_children(|root| {
-            // Title
-            root.spawn((
-                Text::new("World Map"),
-                TextFont {
-                    font_size: 24.0,
-                    ..default()
-                },
-                TextColor(theme.primary),
-                Node {
-                    margin: UiRect::bottom(Val::Px(8.0)),
-                    ..default()
-                },
-            ));
-
-            // Map image container (square, sized to fit screen)
+            // Left column: title + map + info
             root.spawn(Node {
-                width: Val::Px(768.0),
-                height: Val::Px(768.0),
-                position_type: PositionType::Relative,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
                 ..default()
             })
-            .with_children(|container| {
-                // The map image
-                container.spawn((
-                    WorldMapImage,
-                    ImageNode::new(map_handle),
+            .with_children(|col| {
+                // Title
+                col.spawn((
+                    Text::new("World Map"),
+                    TextFont {
+                        font_size: 24.0,
+                        ..default()
+                    },
+                    TextColor(theme.primary),
                     Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
+                        margin: UiRect::bottom(Val::Px(8.0)),
                         ..default()
                     },
                 ));
 
-                // Player position marker (small bright dot, positioned absolutely)
-                container.spawn((
-                    WorldMapPlayerMarker,
+                // Map image container with clipping for zoom/pan
+                col.spawn((
+                    WorldMapContainer,
                     Node {
-                        position_type: PositionType::Absolute,
-                        width: Val::Px(8.0),
-                        height: Val::Px(8.0),
-                        left: Val::Px(0.0),
-                        top: Val::Px(0.0),
+                        width: Val::Px(MAP_DISPLAY_SIZE),
+                        height: Val::Px(MAP_DISPLAY_SIZE),
+                        position_type: PositionType::Relative,
+                        overflow: Overflow::clip(),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(1.0, 0.2, 0.2)),
+                ))
+                .with_children(|container| {
+                    // The map image (sized dynamically by zoom)
+                    container.spawn((
+                        WorldMapImage,
+                        ImageNode::new(map_handle),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            width: Val::Px(MAP_DISPLAY_SIZE),
+                            height: Val::Px(MAP_DISPLAY_SIZE),
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            ..default()
+                        },
+                    ));
+
+                    // Player position marker
+                    container.spawn((
+                        WorldMapPlayerMarker,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            width: Val::Px(8.0),
+                            height: Val::Px(8.0),
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(1.0, 0.2, 0.2)),
+                    ));
+
+                    // Settlement labels
+                    for (wx, wy, name) in &settlements {
+                        let px = *wx as f32 / world_map.width as f32 * MAP_DISPLAY_SIZE;
+                        let py =
+                            (1.0 - *wy as f32 / world_map.height as f32) * MAP_DISPLAY_SIZE;
+                        container.spawn((
+                            WorldMapSettlementLabel,
+                            Text::new(name.clone()),
+                            TextFont {
+                                font_size: 10.0,
+                                ..default()
+                            },
+                            TextColor(theme.primary),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(px + 6.0),
+                                top: Val::Px(py - 5.0),
+                                ..default()
+                            },
+                        ));
+                    }
+                });
+
+                // Zone info text
+                col.spawn((
+                    WorldMapInfoText,
+                    Text::new(""),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(theme.text_parchment),
+                    Node {
+                        margin: UiRect::top(Val::Px(8.0)),
+                        ..default()
+                    },
                 ));
             });
 
-            // Zone info text
-            root.spawn((
-                WorldMapInfoText,
-                Text::new(""),
+            // Right column: legend
+            root.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(12.0)),
+                row_gap: Val::Px(4.0),
+                ..default()
+            })
+            .with_children(|legend| {
+                // Legend title
+                legend.spawn((
+                    Text::new("Legend"),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(theme.primary),
+                    Node {
+                        margin: UiRect::bottom(Val::Px(4.0)),
+                        ..default()
+                    },
+                ));
+
+                // Biome entries
+                let biome_entries = [
+                    ZoneType::Ocean,
+                    ZoneType::Coast,
+                    ZoneType::Grassland,
+                    ZoneType::Forest,
+                    ZoneType::Mountain,
+                    ZoneType::Desert,
+                    ZoneType::Tundra,
+                    ZoneType::Swamp,
+                    ZoneType::Settlement,
+                ];
+                for biome in biome_entries {
+                    let color = biome_color(biome);
+                    spawn_legend_row(legend, color, biome_label(biome), &theme);
+                }
+                // River entry
+                spawn_legend_row(legend, RIVER_COLOR, "River", &theme);
+            });
+        });
+}
+
+fn spawn_legend_row(parent: &mut ChildSpawnerCommands, color: [u8; 4], label: &str, theme: &Theme) {
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            ..default()
+        })
+        .with_children(|row| {
+            row.spawn((
+                Node {
+                    width: Val::Px(14.0),
+                    height: Val::Px(14.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba_u8(color[0], color[1], color[2], color[3])),
+            ));
+            row.spawn((
+                Text::new(label),
                 TextFont {
-                    font_size: 16.0,
+                    font_size: 13.0,
                     ..default()
                 },
                 TextColor(theme.text_parchment),
-                Node {
-                    margin: UiRect::top(Val::Px(8.0)),
-                    ..default()
-                },
             ));
         });
 }
 
-/// Generate an RGBA image from the world map data.
+/// Generate an RGBA image from the world map data, including settlement icons.
 fn generate_map_image(world_map: &WorldMap) -> Image {
     let w = world_map.width;
     let h = world_map.height;
@@ -164,7 +335,7 @@ fn generate_map_image(world_map: &WorldMap) -> Image {
 
             // River overlay
             if cell.river && cell.zone_type != ZoneType::Ocean {
-                color = [40, 90, 170, 255];
+                color = RIVER_COLOR;
             }
 
             // Image y=0 is top, world y=0 is bottom — flip
@@ -174,6 +345,44 @@ fn generate_map_image(world_map: &WorldMap) -> Image {
             data[pixel_idx + 1] = color[1];
             data[pixel_idx + 2] = color[2];
             data[pixel_idx + 3] = color[3];
+        }
+    }
+
+    // Draw settlement icons (outlined circles in gold)
+    let icon_color: [u8; 4] = [212, 175, 55, 255]; // #d4af37
+    let outline_color: [u8; 4] = [19, 19, 19, 255]; // #131313
+    let radius = 3i32;
+    for (i, cell) in world_map.cells.iter().enumerate() {
+        if cell.zone_type != ZoneType::Settlement {
+            continue;
+        }
+        let cx = (i as u32 % w) as i32;
+        let cy = (i as u32 / w) as i32;
+        let img_cy = (h as i32 - 1 - cy) as i32;
+
+        for dx in -(radius + 1)..=(radius + 1) {
+            for dy in -(radius + 1)..=(radius + 1) {
+                let dist_sq = dx * dx + dy * dy;
+                let px = cx + dx;
+                let py = img_cy + dy;
+                if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 {
+                    continue;
+                }
+                let pi = ((py as u32 * w + px as u32) * 4) as usize;
+                if dist_sq <= radius * radius {
+                    // Inner fill
+                    data[pi] = icon_color[0];
+                    data[pi + 1] = icon_color[1];
+                    data[pi + 2] = icon_color[2];
+                    data[pi + 3] = icon_color[3];
+                } else if dist_sq <= (radius + 1) * (radius + 1) {
+                    // Outline
+                    data[pi] = outline_color[0];
+                    data[pi + 1] = outline_color[1];
+                    data[pi + 2] = outline_color[2];
+                    data[pi + 3] = outline_color[3];
+                }
+            }
         }
     }
 
@@ -199,6 +408,7 @@ fn generate_map_image(world_map: &WorldMap) -> Image {
 pub fn toggle_world_map(
     actions: Res<ActionState>,
     mut visible: ResMut<WorldMapVisible>,
+    mut view_state: ResMut<WorldMapViewState>,
     mut overlay_query: Query<&mut Node, With<WorldMapOverlay>>,
 ) {
     if actions.just_pressed(Action::ToggleWorldMap) {
@@ -211,54 +421,233 @@ pub fn toggle_world_map(
         } else {
             Display::None
         };
+        // Reset zoom/pan when closing
+        if !visible.0 {
+            *view_state = WorldMapViewState::default();
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Update — move player marker to current zone position
+// Zoom — scroll wheel when map is open
+// ---------------------------------------------------------------------------
+
+pub fn world_map_zoom(
+    visible: Res<WorldMapVisible>,
+    mut scroll_events: MessageReader<MouseWheel>,
+    mut view_state: ResMut<WorldMapViewState>,
+    world_map: Res<WorldMap>,
+) {
+    if !visible.0 {
+        return;
+    }
+
+    for event in scroll_events.read() {
+        let delta = match event.unit {
+            MouseScrollUnit::Line => event.y * 0.25,
+            MouseScrollUnit::Pixel => event.y * 0.005,
+        };
+        let old_zoom = view_state.zoom;
+        view_state.zoom = (view_state.zoom + delta).clamp(1.0, 4.0);
+
+        // Adjust offset to keep center stable during zoom
+        if (view_state.zoom - old_zoom).abs() > 0.001 {
+            let map_w = world_map.width as f32;
+            let map_h = world_map.height as f32;
+            let visible_w = map_w / view_state.zoom;
+            let visible_h = map_h / view_state.zoom;
+            view_state.offset.x = view_state.offset.x.clamp(0.0, map_w - visible_w);
+            view_state.offset.y = view_state.offset.y.clamp(0.0, map_h - visible_h);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pan — arrow keys or camera pan keys when map is open
+// ---------------------------------------------------------------------------
+
+pub fn world_map_pan(
+    visible: Res<WorldMapVisible>,
+    actions: Res<ActionState>,
+    mut view_state: ResMut<WorldMapViewState>,
+    world_map: Res<WorldMap>,
+    time: Res<Time>,
+) {
+    if !visible.0 || view_state.zoom <= 1.0 {
+        return;
+    }
+
+    let pan_speed = 80.0 * time.delta_secs(); // map-pixels per second
+    let mut delta = Vec2::ZERO;
+
+    if actions.pressed(Action::CameraPanUp) {
+        delta.y -= pan_speed;
+    }
+    if actions.pressed(Action::CameraPanDown) {
+        delta.y += pan_speed;
+    }
+    if actions.pressed(Action::CameraPanLeft) {
+        delta.x -= pan_speed;
+    }
+    if actions.pressed(Action::CameraPanRight) {
+        delta.x += pan_speed;
+    }
+
+    if delta != Vec2::ZERO {
+        let map_w = world_map.width as f32;
+        let map_h = world_map.height as f32;
+        let visible_w = map_w / view_state.zoom;
+        let visible_h = map_h / view_state.zoom;
+        view_state.offset.x = (view_state.offset.x + delta.x).clamp(0.0, map_w - visible_w);
+        view_state.offset.y = (view_state.offset.y + delta.y).clamp(0.0, map_h - visible_h);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Click — click on map to inspect a zone
+// ---------------------------------------------------------------------------
+
+pub fn world_map_click(
+    visible: Res<WorldMapVisible>,
+    view_state: Res<WorldMapViewState>,
+    world_map: Res<WorldMap>,
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    container_query: Query<&GlobalTransform, With<WorldMapContainer>>,
+    mut info_query: Query<&mut Text, With<WorldMapInfoText>>,
+) {
+    if !visible.0 || !mouse_button.just_pressed(MouseButton::Left) {
+        return;
+    }
+
+    let Ok(window) = window_query.single() else {
+        return;
+    };
+    let cursor_pos = match window.cursor_position() {
+        Some(p) => p,
+        None => return,
+    };
+    let Ok(container_transform) = container_query.single() else {
+        return;
+    };
+
+    // Container is MAP_DISPLAY_SIZE x MAP_DISPLAY_SIZE, centered at transform position
+    let container_global = container_transform.translation().truncate();
+    let container_min = container_global - Vec2::splat(MAP_DISPLAY_SIZE / 2.0);
+
+    // Cursor relative to container
+    let rel_x = cursor_pos.x - container_min.x;
+    let rel_y = cursor_pos.y - container_min.y;
+    if rel_x < 0.0 || rel_y < 0.0 || rel_x >= MAP_DISPLAY_SIZE || rel_y >= MAP_DISPLAY_SIZE {
+        return;
+    }
+
+    // Convert to map cell coordinates accounting for zoom/pan
+    let map_w = world_map.width as f32;
+    let map_h = world_map.height as f32;
+    let cell_x = (view_state.offset.x + rel_x / MAP_DISPLAY_SIZE * map_w / view_state.zoom) as i32;
+    // Flip y: UI top = world north (high y)
+    let cell_y_flipped =
+        (view_state.offset.y + rel_y / MAP_DISPLAY_SIZE * map_h / view_state.zoom) as i32;
+    let cell_y = (map_h as i32 - 1) - cell_y_flipped;
+
+    let pos = WorldPos::new(cell_x, cell_y);
+    if let Some(cell) = world_map.get(pos) {
+        if let Ok(mut text) = info_query.single_mut() {
+            let label = biome_label(cell.zone_type);
+            let name_suffix = cell
+                .settlement_name
+                .as_ref()
+                .map(|n| format!(" — {n}"))
+                .unwrap_or_default();
+            **text = format!(
+                "{}{} ({}, {}) | Elev: {:.0}% | Moist: {:.0}% | Temp: {:.0}%{}",
+                label,
+                name_suffix,
+                pos.x,
+                pos.y,
+                cell.elevation * 100.0,
+                cell.moisture * 100.0,
+                cell.temperature * 100.0,
+                if cell.river { " | River" } else { "" },
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Update — move player marker, apply zoom/pan to image node and labels
 // ---------------------------------------------------------------------------
 
 pub fn update_world_map_marker(
     visible: Res<WorldMapVisible>,
+    view_state: Res<WorldMapViewState>,
     current_zone: Res<CurrentZone>,
     world_map: Res<WorldMap>,
-    mut marker_query: Query<&mut Node, With<WorldMapPlayerMarker>>,
+    mut image_query: Query<&mut Node, (With<WorldMapImage>, Without<WorldMapPlayerMarker>, Without<WorldMapSettlementLabel>)>,
+    mut marker_query: Query<&mut Node, (With<WorldMapPlayerMarker>, Without<WorldMapImage>, Without<WorldMapSettlementLabel>)>,
+    mut label_query: Query<&mut Node, (With<WorldMapSettlementLabel>, Without<WorldMapImage>, Without<WorldMapPlayerMarker>)>,
     mut info_query: Query<&mut Text, With<WorldMapInfoText>>,
 ) {
     if !visible.0 {
         return;
     }
 
-    let Ok(mut marker_node) = marker_query.single_mut() else {
-        return;
-    };
+    let zoom = view_state.zoom;
+    let offset = view_state.offset;
+    let map_w = world_map.width as f32;
+    let map_h = world_map.height as f32;
+    let scaled_size = MAP_DISPLAY_SIZE * zoom;
 
-    // Map world position to pixel position in the 768x768 display
-    let map_display_size = 768.0;
-    let px = current_zone.world_pos.x as f32 / world_map.width as f32 * map_display_size;
-    // Flip y: world y=0 is bottom, UI y=0 is top
-    let py = (1.0 - current_zone.world_pos.y as f32 / world_map.height as f32) * map_display_size;
+    // Update image node position/size for zoom and pan
+    if let Ok(mut img_node) = image_query.single_mut() {
+        img_node.width = Val::Px(scaled_size);
+        img_node.height = Val::Px(scaled_size);
+        img_node.left = Val::Px(-offset.x / map_w * scaled_size);
+        img_node.top = Val::Px(-offset.y / map_h * scaled_size);
+    }
 
-    marker_node.left = Val::Px(px - 4.0); // center the 8px marker
-    marker_node.top = Val::Px(py - 4.0);
+    // Update player marker position
+    if let Ok(mut marker_node) = marker_query.single_mut() {
+        let px = current_zone.world_pos.x as f32 / map_w * scaled_size
+            - offset.x / map_w * scaled_size;
+        let py = (1.0 - current_zone.world_pos.y as f32 / map_h) * scaled_size
+            - offset.y / map_h * scaled_size;
+        marker_node.left = Val::Px(px - 4.0);
+        marker_node.top = Val::Px(py - 4.0);
+    }
 
-    // Update info text
+    // Update settlement label positions for zoom/pan
+    let mut settlement_idx = 0;
+    for (i, cell) in world_map.cells.iter().enumerate() {
+        if cell.zone_type != ZoneType::Settlement {
+            continue;
+        }
+        let wx = (i as u32 % world_map.width) as f32;
+        let wy = (i as u32 / world_map.width) as f32;
+        let px = wx / map_w * scaled_size - offset.x / map_w * scaled_size;
+        let py = (1.0 - wy / map_h) * scaled_size - offset.y / map_h * scaled_size;
+
+        if let Some(mut label_node) = label_query.iter_mut().nth(settlement_idx) {
+            label_node.left = Val::Px(px + 6.0 * zoom);
+            label_node.top = Val::Px(py - 5.0 * zoom);
+        }
+        settlement_idx += 1;
+    }
+
+    // Update info text with current zone info
     if let Ok(mut text) = info_query.single_mut() {
         if let Some(cell) = world_map.get(current_zone.world_pos) {
-            let biome_name = match cell.zone_type {
-                ZoneType::Grassland => "Grassland",
-                ZoneType::Forest => "Forest",
-                ZoneType::Mountain => "Mountains",
-                ZoneType::Settlement => "Settlement",
-                ZoneType::Desert => "Desert",
-                ZoneType::Tundra => "Tundra",
-                ZoneType::Swamp => "Swamp",
-                ZoneType::Coast => "Coast",
-                ZoneType::Ocean => "Ocean",
-            };
+            let label = biome_label(cell.zone_type);
+            let name_suffix = cell
+                .settlement_name
+                .as_ref()
+                .map(|n| format!(" — {n}"))
+                .unwrap_or_default();
             **text = format!(
-                "{} ({}, {}) | Elev: {:.0}% | Moist: {:.0}% | Temp: {:.0}%{}",
-                biome_name,
+                "{}{} ({}, {}) | Elev: {:.0}% | Moist: {:.0}% | Temp: {:.0}%{}",
+                label,
+                name_suffix,
                 current_zone.world_pos.x,
                 current_zone.world_pos.y,
                 cell.elevation * 100.0,

@@ -53,9 +53,6 @@
       "Read(//c/Users/joeww/Downloads/Ground048_1K-PNG \\(1\\)/**)",
       "Read(//c/Users/joeww/Downloads/Grass001_1K-PNG/**)",
       "Read(//c/Users/joeww/Downloads/Grass003_1K-PNG \\(1\\)/**)",
-      "Bash(cp \"c:/Users/joeww/Downloads/Grass001_1K-PNG/Grass001_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Grass.png)",
-      "Bash(cp \"c:/Users/joeww/Downloads/Ground048_1K-PNG \\(1\\)/Ground048_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Dirt.png)",
-      "Bash(cp \"c:/Users/joeww/Downloads/Grass003_1K-PNG \\(1\\)/Grass003_1K-PNG_Color.png\" C:/ReposLocal/GoldAndGlory/assets/textures/Forest.png)",
       "Bash(rustup show:*)",
       "Bash(wc -l /c/ReposLocal/Trailsworn/tests/**/*.rs)",
       "Bash(sed 's/fn //')",
@@ -66,7 +63,8 @@
       "Bash(echo $INCLUDE)",
       "Bash(\"C:/Program Files \\(x86\\)/Microsoft Visual Studio/Installer/vswhere.exe\" -all -format json)",
       "Bash(cargo search:*)",
-      "Bash(cargo tree:*)"
+      "Bash(cargo tree:*)",
+      "Bash(use trailsworn::worldgen::gods::build_god_pool)"
     ]
   }
 }

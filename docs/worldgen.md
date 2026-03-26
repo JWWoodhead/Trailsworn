@@ -2,22 +2,27 @@
 
 ## World Map (`worldgen/world_map.rs`)
 - 256x256 grid of zones (65,536 cells), each zone 250x250 tiles
-- Noise-driven geography using three Fbm<Perlin> layers:
-  - **Elevation** (freq 0.012, 6 octaves): continent shapes, ocean < 0.35, mountain > 0.80
-  - **Moisture** (freq 0.015, 5 octaves): wet/dry regions, boosted near ocean via BFS falloff
+- Noise-driven geography using four Fbm<Perlin> layers:
+  - **Elevation** (freq 0.008, 6 octaves): continent shapes, ocean < 0.42, mountain > 0.78
+  - **Continent modulation** (freq 0.003, 2 octaves): large-scale elevation variation for ocean variety
+  - **Moisture** (freq 0.015, 5 octaves): wet/dry regions, boosted near ocean via BFS falloff (factor 0.20)
   - **Temperature** (latitude gradient + freq 0.02 noise): warm south, cold north, reduced by elevation
+- **Ridge noise** for mountain ranges: domain-warped (freq 0.025, 4 octaves) with seed-driven directional stretch, power curve for sharp narrow ridges
 - **Biome classification** from (elevation, moisture, temperature):
-  - Ocean, Mountain, Tundra, Desert, Swamp, Forest, Grassland, Coast
-- **Rivers**: 3-20 sources at high elevation, walk downhill to ocean. Rivers boost adjacent moisture.
+  - Ocean, Mountain, Tundra, Desert (temp>0.60, moist<0.35), Swamp (moist>0.70), Forest (moist>0.55), Grassland, Coast
+- **Mountain smoothing**: post-classification pass connects isolated mountain cells into ranges
+- **Ocean balance**: adaptive threshold ensures 15-60% ocean coverage across all seeds
+- **Rivers**: 5-40 sources at high elevation, walk downhill to ocean with momentum + meander. Track entry/exit edges and width per cell.
 - **Region identification**: flood-fill contiguous same-type zones → `region_id` (foundation for divine domains)
-- **Settlements**: 2-12 placed on Grassland/Forest, preferring river adjacency, minimum spacing
-- Multiple landmasses emerge naturally from elevation noise
+- **Settlements**: 2-12 placed on Grassland/Forest, preferring river adjacency, minimum spacing. Each gets a procedural name.
+- Multiple landmasses emerge naturally from elevation + continent noise
 
 ### WorldCell fields
 - `zone_type`, `has_cave`, `explored` (original)
 - `elevation`, `moisture`, `temperature` (0.0-1.0 noise values)
-- `river` (bool)
+- `river` (bool), `river_entry` ([N,E,S,W] edge flags), `river_width` (0.0-1.0 progress)
 - `region_id` (Option<u32>, contiguous biome region)
+- `settlement_name` (Option<String>, procedurally generated)
 
 ## Zone Generation (`worldgen/zone.rs`)
 - **Noise-based terrain**: 3 noise layers per zone (detail, wetness, rocky) drive per-tile terrain selection
@@ -31,8 +36,8 @@
   - Swamp: swamp base, water pools, grass/dirt islands
   - Coast: sand base, water/grass/dirt blending
 - **Edge blending**: within 30 tiles of zone borders, terrain blends toward neighbor's base terrain via noise threshold
-- **River carving**: meandering 3-wide water channel across zones marked as river
-- **Settlement**: hand-crafted (dirt square, stone buildings, roads)
+- **River carving**: uses world-level entry/exit edges and width. Noise-driven curved path with variable width (2-10 tiles) and dirt riverbanks.
+- **Settlement**: biome-aware theming (sand in desert, snow in tundra, raised stone paths in swamp, water edge on coast). Named settlements with procedural names.
 - POIs: cave entrances, enemy camps (1-3, 2-5 enemies), wildlife spawns
 - Deterministic from seed
 
@@ -56,9 +61,18 @@
 - Produces natural-looking cavern systems with corridors
 - Entrance area cleared, enemy groups placed in open chambers
 
+## World Map UI (`systems/world_map_ui.rs`)
+- Toggle with M key, full-screen overlay with semi-transparent background
+- 256x256 pixel texture with nearest-neighbor scaling, settlement icons (gold outlined circles)
+- **Legend**: color-coded biome key with river entry
+- **Settlement labels**: procedural names displayed near icons
+- **Zoom/Pan**: scroll wheel zoom (1x-4x), arrow key panning, clipping container
+- **Clickable zones**: left-click to inspect any zone's biome/elevation/moisture/temperature
+- Camera pan disabled while map overlay is open
+
 ## Zone Transitions (`systems/zone.rs`)
 - `detect_zone_edge`: fires event when player reaches map boundary, checks `is_passable()` (blocks ocean)
-- `handle_zone_transition`: builds `ZoneGenContext` from world map, generates zone via `generate_zone_with_context`, snapshots entities, repositions player
+- `handle_zone_transition`: builds `ZoneGenContext` from world map (includes river entry/width), generates zone via `generate_zone_with_context`, snapshots entities, repositions player
 - `rendering::update_terrain_map`: detects `TileWorld` change and rebuilds the terrain map GPU texture
 
 ## History Generation (`worldgen/history/`)
@@ -84,6 +98,16 @@
 - Settlement names (prefix+root: "Ironhold", "Deepcrossing")
 - Faction names (8 types x pattern templates)
 - Region names
+
+## God Pool (`worldgen/gods.rs`)
+- 8 god archetypes (Fire, Frost, Storm, Holy, Shadow, Nature, Necromancy, Arcane), growing to ~25
+- **Fixed per archetype:** domain (MagicSchool), terrain influence, gift to mortals, 5 spells (data only), Propp tendencies
+- **Randomized per run:** name (syllable generation), 2-4 personality traits (CharacterTrait, shared with mortal characters)
+- **GodPool** resource: holds all archetypes, `draw_pantheon(6, rng)` selects and randomizes
+- **DrawnPantheon** resource: drawn god IDs, names, traits, and emergent relationships
+- **Trait rolling:** domain-specific weight modifiers (e.g., Fire +Warlike+15, +Ruthless+12) with thematic blocklists (e.g., Holy blocks Treacherous/Corrupt/Cowardly)
+- **Relationships:** emergent from domain category overlap, trait axis alignment (aggression/peace/darkness/virtue/intellect/ambition/fear/zeal), and forbidden school dynamics
+- **Name generation:** 30 prefixes x 20 mid-syllables x 30 suffixes, 40% chance of mid-syllable for length variation
 
 ## Noise Utilities (`worldgen/noise_util.rs`)
 - `NoiseLayer`: wrapper around `Fbm<Perlin>` with configurable frequency/octaves

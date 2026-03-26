@@ -48,6 +48,10 @@ pub struct ZoneGenContext {
     pub moisture: f32,
     pub temperature: f32,
     pub river: bool,
+    /// Which edges the river enters/exits: [N, E, S, W].
+    pub river_entry: [bool; 4],
+    /// Normalized river width (0.0 = thin source, 1.0 = wide mouth).
+    pub river_width: f32,
     /// Neighbor zone types: [N, E, S, W]. None = ocean or map edge.
     pub neighbors: [Option<ZoneType>; 4],
 }
@@ -68,6 +72,8 @@ pub fn generate_zone(
             moisture: 0.5,
             temperature: 0.5,
             river: false,
+            river_entry: [false; 4],
+            river_width: 0.0,
             neighbors: [None; 4],
         },
         width,
@@ -86,7 +92,7 @@ pub fn generate_zone_with_context(
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
     let mut tile_world = match ctx.zone_type {
-        ZoneType::Settlement => generate_settlement(width, height, &mut rng),
+        ZoneType::Settlement => generate_settlement(ctx, width, height, &mut rng),
         ZoneType::Ocean => TileWorld::filled(width, height, TerrainType::Water),
         _ => generate_biome_terrain(ctx, width, height, seed, &mut rng),
     };
@@ -327,45 +333,116 @@ fn apply_edge_blending(
     }
 }
 
-/// Carve a river across the zone when ctx.river is true.
-fn carve_river(world: &mut TileWorld, _ctx: &ZoneGenContext, rng: &mut impl Rng) {
-    let w = world.width as i32;
-    let h = world.height as i32;
+/// Carve a river across the zone using world-level entry/exit metadata.
+///
+/// Uses `ctx.river_entry` to determine which edges the river enters/exits,
+/// connects them with a noise-driven curved path, and scales width by `ctx.river_width`.
+fn carve_river(world: &mut TileWorld, ctx: &ZoneGenContext, rng: &mut impl Rng) {
+    let w = world.width as f32;
+    let h = world.height as f32;
+    let meander = NoiseLayer::new(rng.random::<u32>(), 0.02, 3);
 
-    // Determine entry/exit edges based on which neighbors also have context
-    // (simplified: pick a random traversal direction)
-    let horizontal = rng.random::<bool>();
+    // Collect entry/exit points from the edge metadata [N, E, S, W]
+    let mut endpoints: Vec<(f32, f32)> = Vec::new();
+    let mid_offset = rng.random_range(-0.15f32..0.15); // slight offset from center
+    if ctx.river_entry[0] { // N edge
+        endpoints.push((w * (0.5 + mid_offset), h - 1.0));
+    }
+    if ctx.river_entry[1] { // E edge
+        endpoints.push((w - 1.0, h * (0.5 + mid_offset)));
+    }
+    if ctx.river_entry[2] { // S edge
+        endpoints.push((w * (0.5 + mid_offset), 0.0));
+    }
+    if ctx.river_entry[3] { // W edge
+        endpoints.push((0.0, h * (0.5 + mid_offset)));
+    }
 
-    let (mut x, mut y) = if horizontal {
-        (0i32, rng.random_range(h / 4..h * 3 / 4))
-    } else {
-        (rng.random_range(w / 4..w * 3 / 4), 0i32)
-    };
+    // Fallback: if no edge data, pick random horizontal/vertical traversal
+    if endpoints.len() < 2 {
+        endpoints.clear();
+        let horizontal = rng.random::<bool>();
+        if horizontal {
+            let y_pos = h * (0.3 + rng.random::<f32>() * 0.4);
+            endpoints.push((0.0, y_pos));
+            endpoints.push((w - 1.0, y_pos));
+        } else {
+            let x_pos = w * (0.3 + rng.random::<f32>() * 0.4);
+            endpoints.push((x_pos, 0.0));
+            endpoints.push((x_pos, h - 1.0));
+        }
+    }
 
-    let length = if horizontal { w } else { h };
+    // River width in tiles: thin (2-4) at source, wide (6-10) at mouth
+    let base_half_width = 1.0 + ctx.river_width * 4.0; // 1-5 half-width
 
-    for _ in 0..length {
-        // Place water in a 2-3 wide strip
-        let river_width = 1i32;
-        for dx in -river_width..=river_width {
-            for dy in -river_width..=river_width {
-                let rx = x + if horizontal { 0 } else { dx };
-                let ry = y + if horizontal { dy } else { 0 };
-                if rx >= 0 && ry >= 0 && rx < w && ry < h {
-                    world.set_terrain(rx as u32, ry as u32, TerrainType::Water);
+    // Connect each pair of consecutive endpoints with a curved path
+    let start = endpoints[0];
+    for target in endpoints.iter().skip(1) {
+        // Interpolate from start to target with noise-driven curvature
+        let steps = (((target.0 - start.0).abs() + (target.1 - start.1).abs()) * 1.5) as usize;
+        let steps = steps.max(50);
+
+        for s in 0..=steps {
+            let t = s as f32 / steps as f32;
+            // Linear interpolation + perpendicular noise offset for curvature
+            let base_x = start.0 + (target.0 - start.0) * t;
+            let base_y = start.1 + (target.1 - start.1) * t;
+
+            // Perpendicular direction for meander offset
+            let dx = target.0 - start.0;
+            let dy = target.1 - start.1;
+            let len = (dx * dx + dy * dy).sqrt().max(1.0);
+            let perp_x = -dy / len;
+            let perp_y = dx / len;
+
+            // Noise-driven curvature: stronger in the middle of the path
+            let curve_strength = (t * (1.0 - t) * 4.0) * 25.0; // max ~25 tiles offset at midpoint
+            let noise_val = meander.sample(base_x as f64 * 0.03, base_y as f64 * 0.03) as f32;
+            let px = base_x + perp_x * noise_val * curve_strength;
+            let py = base_y + perp_y * noise_val * curve_strength;
+
+            // Width varies slightly along the path
+            let width_here = base_half_width + meander.sample(s as f64 * 0.1, 0.0) as f32 * 0.5;
+            let hw = width_here as i32;
+
+            // Paint water
+            let cx = px as i32;
+            let cy = py as i32;
+            for ddx in -hw..=hw {
+                for ddy in -hw..=hw {
+                    if ddx * ddx + ddy * ddy > hw * hw + 1 {
+                        continue;
+                    }
+                    let rx = cx + ddx;
+                    let ry = cy + ddy;
+                    if rx >= 0 && ry >= 0 && rx < w as i32 && ry < h as i32 {
+                        world.set_terrain(rx as u32, ry as u32, TerrainType::Water);
+                    }
                 }
             }
-        }
 
-        // Advance with meander
-        if horizontal {
-            x += 1;
-            y += rng.random_range(-1..=1);
-            y = y.clamp(2, h - 3);
-        } else {
-            y += 1;
-            x += rng.random_range(-1..=1);
-            x = x.clamp(2, w - 3);
+            // Riverbank: dirt strip alongside water
+            let bank_hw = hw + 2;
+            for ddx in -bank_hw..=bank_hw {
+                for ddy in -bank_hw..=bank_hw {
+                    let dist_sq = ddx * ddx + ddy * ddy;
+                    if dist_sq <= hw * hw + 1 || dist_sq > bank_hw * bank_hw + 1 {
+                        continue;
+                    }
+                    let rx = cx + ddx;
+                    let ry = cy + ddy;
+                    if rx >= 0 && ry >= 0 && rx < w as i32 && ry < h as i32 {
+                        let ru = rx as u32;
+                        let rv = ry as u32;
+                        // Only place bank on non-water tiles
+                        let idx = world.idx(ru, rv);
+                        if world.terrain[idx] != TerrainType::Water {
+                            world.set_terrain(ru, rv, TerrainType::Dirt);
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -374,28 +451,47 @@ fn carve_river(world: &mut TileWorld, _ctx: &ZoneGenContext, rng: &mut impl Rng)
 // Settlement (mostly hand-crafted, not noise-based)
 // ---------------------------------------------------------------------------
 
-fn generate_settlement(width: u32, height: u32, rng: &mut impl Rng) -> TileWorld {
-    let mut world = TileWorld::filled(width, height, TerrainType::Grass);
+fn generate_settlement(ctx: &ZoneGenContext, width: u32, height: u32, rng: &mut impl Rng) -> TileWorld {
+    // Determine surrounding biome from neighbors (most common non-settlement type)
+    let surrounding = ctx.neighbors.iter()
+        .filter_map(|n| *n)
+        .filter(|n| *n != ZoneType::Settlement)
+        .next()
+        .unwrap_or(ZoneType::Grassland);
+
+    // Biome-specific materials
+    let (fill_terrain, building_terrain, road_terrain, building_count) = match surrounding {
+        ZoneType::Desert => (TerrainType::Sand, TerrainType::Sand, TerrainType::Dirt, 5),
+        ZoneType::Tundra => (TerrainType::Snow, TerrainType::Stone, TerrainType::Dirt, 4),
+        ZoneType::Swamp => (TerrainType::Dirt, TerrainType::Stone, TerrainType::Stone, 5),
+        ZoneType::Coast => (TerrainType::Sand, TerrainType::Stone, TerrainType::Dirt, 5),
+        ZoneType::Forest => (TerrainType::Grass, TerrainType::Stone, TerrainType::Dirt, 6),
+        _ => (TerrainType::Grass, TerrainType::Stone, TerrainType::Dirt, 6),
+    };
+
+    let mut world = TileWorld::filled(width, height, fill_terrain);
 
     let cx = width / 2;
     let cy = height / 2;
 
-    // Central area is dirt (the town square)
-    for x in (cx - 15)..(cx + 15) {
-        for y in (cy - 15)..(cy + 15) {
-            world.set_terrain(x, y, TerrainType::Dirt);
+    // Central area — the town square
+    let square_radius = if building_count <= 4 { 12 } else { 15 };
+    for x in (cx - square_radius)..(cx + square_radius) {
+        for y in (cy - square_radius)..(cy + square_radius) {
+            world.set_terrain(x, y, road_terrain);
         }
     }
 
-    // Stone buildings (impassable blocks)
-    for _ in 0..6 {
-        let bx = rng.random_range(cx - 12..cx + 12);
-        let by = rng.random_range(cy - 12..cy + 12);
+    // Buildings (impassable blocks)
+    for _ in 0..building_count {
+        let spread = square_radius - 3;
+        let bx = rng.random_range(cx - spread..cx + spread);
+        let by = rng.random_range(cy - spread..cy + spread);
         let bw = rng.random_range(3..6);
         let bh = rng.random_range(3..6);
         for x in bx..(bx + bw).min(width) {
             for y in by..(by + bh).min(height) {
-                world.set_terrain(x, y, TerrainType::Stone);
+                world.set_terrain(x, y, building_terrain);
                 if x == bx || x == bx + bw - 1 || y == by || y == by + bh - 1 {
                     let i = world.idx(x, y);
                     world.walk_cost[i] = 0.0;
@@ -409,10 +505,55 @@ fn generate_settlement(width: u32, height: u32, rng: &mut impl Rng) -> TileWorld
 
     // Roads leading out in cardinal directions
     for x in 0..width {
-        world.set_terrain(x, cy, TerrainType::Dirt);
+        world.set_terrain(x, cy, road_terrain);
     }
     for y in 0..height {
-        world.set_terrain(cx, y, TerrainType::Dirt);
+        world.set_terrain(cx, y, road_terrain);
+    }
+
+    // Biome-specific features
+    match surrounding {
+        ZoneType::Desert => {
+            // Small oasis near the center
+            let ox = cx + rng.random_range(5..10);
+            let oy = cy + rng.random_range(5..10);
+            for dx in -2i32..=2 {
+                for dy in -2i32..=2 {
+                    if dx * dx + dy * dy <= 4 {
+                        let wx = (ox as i32 + dx).clamp(0, width as i32 - 1) as u32;
+                        let wy = (oy as i32 + dy).clamp(0, height as i32 - 1) as u32;
+                        world.set_terrain(wx, wy, TerrainType::Water);
+                    }
+                }
+            }
+        }
+        ZoneType::Coast => {
+            // Water along the south edge (ocean-facing)
+            for x in 0..width {
+                for y in 0..8 {
+                    world.set_terrain(x, y, TerrainType::Water);
+                }
+            }
+        }
+        ZoneType::Swamp => {
+            // Scattered water puddles in the outskirts
+            for _ in 0..8 {
+                let px = rng.random_range(10..width - 10);
+                let py = rng.random_range(10..height - 10);
+                // Don't place in the town square
+                if px.abs_diff(cx) < square_radius && py.abs_diff(cy) < square_radius {
+                    continue;
+                }
+                for dx in -1i32..=1 {
+                    for dy in -1i32..=1 {
+                        let wx = (px as i32 + dx).clamp(0, width as i32 - 1) as u32;
+                        let wy = (py as i32 + dy).clamp(0, height as i32 - 1) as u32;
+                        world.set_terrain(wx, wy, TerrainType::Water);
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 
     world
@@ -554,6 +695,8 @@ mod tests {
             moisture: 0.5,
             temperature: 0.5,
             river: true,
+            river_entry: [false, true, false, true], // W to E
+            river_width: 0.5,
             neighbors: [None; 4],
         };
         let data = generate_zone_with_context(&ctx, 250, 250, 42);
@@ -575,6 +718,8 @@ mod tests {
             moisture: 0.5,
             temperature: 0.5,
             river: false,
+            river_entry: [false; 4],
+            river_width: 0.0,
             neighbors: [Some(ZoneType::Desert), None, None, None], // Desert to the north
         };
         let data = generate_zone_with_context(&ctx, 250, 250, 42);
@@ -601,5 +746,67 @@ mod tests {
         for biome in biomes {
             let _ = generate_zone(biome, false, 250, 250, 42);
         }
+    }
+
+    #[test]
+    fn terrain_composition_per_biome() {
+        let total = 250 * 250;
+        let min_base_pct = 0.30; // base terrain should be >= 30% of tiles
+
+        // (zone_type, expected_base_terrain, label, min_percentage)
+        let cases: Vec<(ZoneType, TerrainType, &str, f64)> = vec![
+            (ZoneType::Grassland, TerrainType::Grass, "grass", min_base_pct),
+            (ZoneType::Forest, TerrainType::Forest, "forest", min_base_pct),
+            (ZoneType::Mountain, TerrainType::Stone, "stone", min_base_pct),
+            (ZoneType::Desert, TerrainType::Sand, "sand", min_base_pct),
+            (ZoneType::Tundra, TerrainType::Snow, "snow", min_base_pct),
+            (ZoneType::Swamp, TerrainType::Swamp, "swamp", 0.20), // swamp has lots of water mixed in
+            (ZoneType::Coast, TerrainType::Sand, "sand", 0.20), // coast has water/grass/dirt mixed in
+        ];
+
+        for (zone_type, expected_base, label, threshold) in &cases {
+            // Test across a few seeds for robustness
+            for seed in [42u64, 123, 999] {
+                let data = generate_zone(*zone_type, false, 250, 250, seed);
+                let base_count = data
+                    .tile_world
+                    .terrain
+                    .iter()
+                    .filter(|t| *t == expected_base)
+                    .count();
+                let pct = base_count as f64 / total as f64;
+                assert!(
+                    pct >= *threshold,
+                    "{:?} (seed {seed}): {label} at {:.1}%, expected >= {:.0}%",
+                    zone_type,
+                    pct * 100.0,
+                    threshold * 100.0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn coast_has_water() {
+        let data = generate_zone(ZoneType::Coast, false, 250, 250, 42);
+        let water_count = data
+            .tile_world
+            .terrain
+            .iter()
+            .filter(|t| **t == TerrainType::Water)
+            .count();
+        assert!(water_count > 500, "Coast zone should have water tiles, got {water_count}");
+    }
+
+    #[test]
+    fn swamp_has_water() {
+        let data = generate_zone(ZoneType::Swamp, false, 250, 250, 42);
+        let water_count = data
+            .tile_world
+            .terrain
+            .iter()
+            .filter(|t| **t == TerrainType::Water)
+            .count();
+        assert!(water_count > 200, "Swamp zone should have water features, got {water_count}");
     }
 }
