@@ -735,6 +735,7 @@ fn assign_regions(cells: &mut [WorldCell], width: u32, height: u32) {
 
 /// Place settlements of varying sizes on suitable land cells.
 /// Distribution: ~40 hamlets, ~20 villages, ~8 towns, ~3 cities (scaled to map size).
+/// Cities occupy 2x2 zones, towns 2x1, villages and hamlets 1x1.
 /// Only towns and cities get ZoneType::Settlement; hamlets and villages keep natural terrain.
 fn place_settlements(cells: &mut [WorldCell], width: u32, height: u32, rng: &mut impl Rng) {
     let scale = (width as f32 * height as f32) / (256.0 * 256.0); // 1.0 for default map
@@ -757,14 +758,47 @@ fn place_settlements(cells: &mut [WorldCell], width: u32, height: u32, rng: &mut
         }
     }
 
-    // Candidates: habitable land (Grassland, Forest, Coast, Swamp, Desert, Tundra)
-    // Prefer river adjacency and grassland/forest
+    fn is_habitable(cell: &WorldCell) -> bool {
+        matches!(cell.zone_type,
+            ZoneType::Grassland | ZoneType::Forest | ZoneType::Coast
+            | ZoneType::Swamp | ZoneType::Desert | ZoneType::Tundra)
+    }
+
+    /// Cell offsets for each settlement size's footprint.
+    /// City = 2x2, Town = 2x1 (horizontal), Village/Hamlet = 1x1.
+    fn footprint(size: SettlementSize) -> &'static [(i32, i32)] {
+        match size {
+            SettlementSize::City   => &[(0, 0), (1, 0), (0, 1), (1, 1)],
+            SettlementSize::Town   => &[(0, 0), (1, 0)],
+            SettlementSize::Village | SettlementSize::Hamlet => &[(0, 0)],
+        }
+    }
+
+    /// Check that all cells in a footprint are in-bounds, habitable, and unclaimed.
+    fn footprint_valid(
+        x: u32, y: u32, size: SettlementSize,
+        cells: &[WorldCell], width: u32, height: u32,
+    ) -> bool {
+        for &(dx, dy) in footprint(size) {
+            let nx = x as i32 + dx;
+            let ny = y as i32 + dy;
+            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                return false;
+            }
+            let idx = ny as u32 * width + nx as u32;
+            let cell = &cells[idx as usize];
+            if !is_habitable(cell) || cell.settlement_name.is_some() {
+                return false;
+            }
+        }
+        true
+    }
+
+    // Candidates: habitable land, prefer river adjacency and grassland/forest
     let mut candidates: Vec<(usize, u32)> = cells
         .iter()
         .enumerate()
-        .filter(|(_, c)| matches!(c.zone_type,
-            ZoneType::Grassland | ZoneType::Forest | ZoneType::Coast
-            | ZoneType::Swamp | ZoneType::Desert | ZoneType::Tundra))
+        .filter(|(_, c)| is_habitable(c))
         .map(|(i, c)| {
             let mut weight = 1u32;
             if matches!(c.zone_type, ZoneType::Grassland | ZoneType::Forest) { weight += 2; }
@@ -792,7 +826,6 @@ fn place_settlements(cells: &mut [WorldCell], width: u32, height: u32, rng: &mut
 
     // Place each tier largest-first so cities get the best spots
     for &(size, target_count) in &targets {
-        let _dist_sq = min_dist_sq(size, map_side);
         let mut count = 0;
 
         for (i, _) in &candidates {
@@ -803,6 +836,9 @@ fn place_settlements(cells: &mut [WorldCell], width: u32, height: u32, rng: &mut
             // Already has a settlement?
             if cells[*i].settlement_name.is_some() { continue; }
 
+            // Check that the full footprint is valid
+            if !footprint_valid(x, y, size, cells, width, height) { continue; }
+
             // Distance check against same-or-larger settlements
             let too_close = placed.iter().any(|(sx, sy, existing_size)| {
                 let d = x.abs_diff(*sx).pow(2) + y.abs_diff(*sy).pow(2);
@@ -812,16 +848,23 @@ fn place_settlements(cells: &mut [WorldCell], width: u32, height: u32, rng: &mut
             });
             if too_close { continue; }
 
-            // Towns and cities change zone type; hamlets and villages keep natural terrain
-            match size {
-                SettlementSize::Town | SettlementSize::City => {
-                    cells[*i].zone_type = ZoneType::Settlement;
-                    cells[*i].has_cave = false;
+            // Claim all cells in the footprint
+            let name = names::settlement_name(rng);
+            for &(dx, dy) in footprint(size) {
+                let nx = (x as i32 + dx) as u32;
+                let ny = (y as i32 + dy) as u32;
+                let idx = (ny * width + nx) as usize;
+                cells[idx].settlement_name = Some(name.clone());
+                cells[idx].settlement_size = Some(size);
+                match size {
+                    SettlementSize::Town | SettlementSize::City => {
+                        cells[idx].zone_type = ZoneType::Settlement;
+                        cells[idx].has_cave = false;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-            cells[*i].settlement_name = Some(names::settlement_name(rng));
-            cells[*i].settlement_size = Some(size);
+
             placed.push((x, y, size));
             count += 1;
         }

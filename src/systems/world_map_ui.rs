@@ -8,7 +8,7 @@ use bevy::window::PrimaryWindow;
 use crate::resources::input::{Action, ActionState};
 use crate::resources::theme::Theme;
 use crate::resources::world::CurrentZone;
-use crate::worldgen::world_map::{WorldMap, WorldPos};
+use crate::worldgen::world_map::{SettlementSize, WorldMap, WorldPos};
 use crate::worldgen::zone::ZoneType;
 
 // ---------------------------------------------------------------------------
@@ -348,42 +348,27 @@ fn generate_map_image(world_map: &WorldMap) -> Image {
         }
     }
 
-    // Draw settlement icons (outlined circles in gold)
+    // Draw settlement markers — 1 gold pixel per settlement cell.
+    // Cities (2x2) and towns (2x1) already occupy multiple cells as ZoneType::Settlement,
+    // so their footprint is visible from the base biome coloring. Villages and hamlets
+    // keep their natural zone type, so we draw a gold pixel to mark them.
     let icon_color: [u8; 4] = [212, 175, 55, 255]; // #d4af37
-    let outline_color: [u8; 4] = [19, 19, 19, 255]; // #131313
-    let radius = 3i32;
+    let dim_icon: [u8; 4] = [160, 130, 40, 255]; // dimmer gold for hamlets
     for (i, cell) in world_map.cells.iter().enumerate() {
-        if cell.zone_type != ZoneType::Settlement {
-            continue;
-        }
-        let cx = (i as u32 % w) as i32;
-        let cy = (i as u32 / w) as i32;
-        let img_cy = (h as i32 - 1 - cy) as i32;
-
-        for dx in -(radius + 1)..=(radius + 1) {
-            for dy in -(radius + 1)..=(radius + 1) {
-                let dist_sq = dx * dx + dy * dy;
-                let px = cx + dx;
-                let py = img_cy + dy;
-                if px < 0 || py < 0 || px >= w as i32 || py >= h as i32 {
-                    continue;
-                }
-                let pi = ((py as u32 * w + px as u32) * 4) as usize;
-                if dist_sq <= radius * radius {
-                    // Inner fill
-                    data[pi] = icon_color[0];
-                    data[pi + 1] = icon_color[1];
-                    data[pi + 2] = icon_color[2];
-                    data[pi + 3] = icon_color[3];
-                } else if dist_sq <= (radius + 1) * (radius + 1) {
-                    // Outline
-                    data[pi] = outline_color[0];
-                    data[pi + 1] = outline_color[1];
-                    data[pi + 2] = outline_color[2];
-                    data[pi + 3] = outline_color[3];
-                }
-            }
-        }
+        let color = match cell.settlement_size {
+            Some(SettlementSize::Village) => icon_color,
+            Some(SettlementSize::Hamlet) => dim_icon,
+            _ => continue, // Cities/towns show via ZoneType::Settlement coloring
+        };
+        let x = (i as u32 % w) as i32;
+        let y = (i as u32 / w) as i32;
+        let img_y = (h as i32 - 1 - y) as i32;
+        if x < 0 || img_y < 0 || x >= w as i32 || img_y >= h as i32 { continue; }
+        let pi = ((img_y as u32 * w + x as u32) * 4) as usize;
+        data[pi] = color[0];
+        data[pi + 1] = color[1];
+        data[pi + 2] = color[2];
+        data[pi + 3] = color[3];
     }
 
     let mut image = Image::new(
