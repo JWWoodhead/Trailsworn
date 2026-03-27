@@ -4,6 +4,7 @@ pub mod gods;
 pub mod history;
 pub mod names;
 pub mod noise_util;
+pub mod population;
 pub mod population_table;
 pub mod world_map;
 pub mod zone;
