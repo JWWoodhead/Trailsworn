@@ -115,10 +115,10 @@ fn main() {
     let mut pantheon_rng = rand::rngs::StdRng::seed_from_u64(world_seed);
     let drawn_pantheon = god_pool.draw_pantheon(6, &mut pantheon_rng);
 
-    // Run divine era simulation (modifies world_map in place)
-    let divine_config = trailsworn::worldgen::divine_era::DivineEraConfig::default();
-    let divine_history = trailsworn::worldgen::divine_era::generate_divine_era(
-        &divine_config, &mut world_map, &god_pool, &drawn_pantheon,
+    // Generate unified history — gods and mortals intertwined
+    let history_config = trailsworn::worldgen::history::HistoryConfig::default();
+    let world_history = trailsworn::worldgen::history::generate_history(
+        &history_config, &mut world_map, &god_pool, &drawn_pantheon,
         world_seed.wrapping_add(1000),
     );
 
@@ -180,7 +180,7 @@ fn main() {
     .insert_resource(current_zone)
     .insert_resource(god_pool)
     .insert_resource(drawn_pantheon)
-    .insert_resource(divine_history)
+    .insert_resource(world_history)
     .insert_resource(trailsworn::resources::zone_persistence::ZoneStateCache::default())
     // Messages
     .add_message::<DamageDealtEvent>()

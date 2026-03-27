@@ -3,10 +3,21 @@ pub mod characters;
 pub mod culture;
 pub mod state;
 
+use std::collections::BTreeSet;
+
 use rand::{Rng, RngExt, SeedableRng};
 
+use super::divine_era::artifacts::DivineArtifact;
+use super::divine_era::behavior;
+use super::divine_era::personality;
+use super::divine_era::races::CreatedRace;
+use super::divine_era::sites::DivineSite;
+use super::divine_era::state::GodState;
+use super::divine_era::terrain_scars::TerrainScar;
+use super::gods::{DrawnPantheon, GodId, GodPool};
 use super::names::{FactionType, Race, faction_name, full_name, region_name, settlement_name};
 use super::population_table::PopTable;
+use super::world_map::{WorldMap, WorldPos};
 use artifacts::*;
 use characters::*;
 use culture::*;
@@ -18,11 +29,15 @@ pub struct HistoricEvent {
     pub year: i32,
     pub kind: EventKind,
     pub description: String,
+    /// Faction IDs involved in this event.
     pub participants: Vec<u32>,
+    /// God IDs involved in this event.
+    pub god_participants: Vec<GodId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EventKind {
+    // Mortal events
     FactionFounded,
     FactionDissolved,
     SettlementFounded,
@@ -40,10 +55,29 @@ pub enum EventKind {
     ArtifactDiscovered,
     Conquest,
     Betrayal,
+    // Divine events
+    TerritoryClaimed,
+    TerritoryContested,
+    TerrainShaped,
+    TempleEstablished,
+    ChampionChosen,
+    RaceCreated,
+    DivineWarDeclared,
+    DivineWarEnded,
+    DivineArtifactForged,
+    SacredSiteCreated,
+    PactFormed,
+    PactBroken,
+    NarrativeAdvanced,
+    GiftBestowed,
+    WorshipEstablished,
+    WorshipConverted,
+    HolyWar,
+    DivineIntervention,
 }
 
-/// The complete generated history.
-#[derive(Clone, Debug)]
+/// The complete generated history — mortal and divine intertwined.
+#[derive(Clone, Debug, bevy::prelude::Resource)]
 pub struct WorldHistory {
     pub regions: Vec<String>,
     pub factions: Vec<FactionState>,
@@ -54,6 +88,12 @@ pub struct WorldHistory {
     pub events: Vec<HistoricEvent>,
     pub world_state: WorldState,
     pub current_year: i32,
+    // Divine
+    pub gods: Vec<GodState>,
+    pub divine_sites: Vec<DivineSite>,
+    pub divine_artifacts: Vec<DivineArtifact>,
+    pub created_races: Vec<CreatedRace>,
+    pub terrain_scars: Vec<TerrainScar>,
 }
 
 impl WorldHistory {
@@ -71,6 +111,10 @@ pub struct HistoryConfig {
     pub start_year: i32,
     pub num_regions: u32,
     pub initial_factions: u32,
+    /// Base cells claimed per god per year.
+    pub territory_expansion_rate: u32,
+    /// Year range (absolute) during which gods can create races.
+    pub race_creation_window: (i32, i32),
 }
 
 impl Default for HistoryConfig {
@@ -80,12 +124,20 @@ impl Default for HistoryConfig {
             start_year: 0,
             num_regions: 8,
             initial_factions: 6,
+            territory_expansion_rate: 80,
+            race_creation_window: (10, 60),
         }
     }
 }
 
-/// Generate a world history with state-driven events.
-pub fn generate_history(config: &HistoryConfig, seed: u64) -> WorldHistory {
+/// Generate a unified world history — mortal factions and gods intertwined.
+pub fn generate_history(
+    config: &HistoryConfig,
+    world_map: &mut WorldMap,
+    god_pool: &GodPool,
+    pantheon: &DrawnPantheon,
+    seed: u64,
+) -> WorldHistory {
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     let mut next_id = 1u32;
 
@@ -99,6 +151,31 @@ pub fn generate_history(config: &HistoryConfig, seed: u64) -> WorldHistory {
     let mut events: Vec<HistoricEvent> = Vec::new();
     let mut world_state = WorldState::default();
 
+    // --- Initialize gods ---
+    let mut gods: Vec<GodState> = pantheon.god_ids.iter().map(|&id| {
+        let domain = god_pool.get(id).map(|d| d.domain).unwrap_or(crate::resources::magic::MagicSchool::Arcane);
+        let traits = pantheon.traits(id);
+        let p = personality::roll_personality(domain, traits, &mut rng);
+        GodState::new(id, p)
+    }).collect();
+
+    // Initialize territory map
+    world_state.territory_map = vec![None; world_map.cells.len()];
+    world_state.divine_relations = super::divine_era::state::DivineRelationMatrix::from_relationships(&pantheon.relationships);
+
+    // BFS frontiers for territory expansion
+    let mut frontiers: Vec<BTreeSet<WorldPos>> = vec![BTreeSet::new(); gods.len()];
+
+    // Assign starting seats of power
+    behavior::assign_seats_of_power(&mut gods, &mut frontiers, &mut world_state, world_map, god_pool, &mut rng);
+
+    // --- Initialize divine sites/artifacts/races/scars ---
+    let mut divine_sites: Vec<super::divine_era::sites::DivineSite> = Vec::new();
+    let mut divine_artifacts: Vec<super::divine_era::artifacts::DivineArtifact> = Vec::new();
+    let mut created_races: Vec<super::divine_era::races::CreatedRace> = Vec::new();
+    let mut terrain_scars: Vec<super::divine_era::terrain_scars::TerrainScar> = Vec::new();
+
+    // --- Initialize mortal factions ---
     let faction_type_table = PopTable::pick_one(vec![
         (FactionType::Kingdom, 30.0),
         (FactionType::MercenaryCompany, 15.0),
@@ -117,7 +194,6 @@ pub fn generate_history(config: &HistoryConfig, seed: u64) -> WorldHistory {
         (Race::Goblin, 10.0),
     ]);
 
-    // Seed initial factions
     for _ in 0..config.initial_factions {
         let ft = faction_type_table.roll_one(&mut rng).unwrap();
         let race = race_table.roll_one(&mut rng).unwrap();
@@ -128,16 +204,12 @@ pub fn generate_history(config: &HistoryConfig, seed: u64) -> WorldHistory {
         let founding_year = config.start_year + rng.random_range(0..10);
         let (mil, wealth, stab) = FactionState::initialize_gauges(ft);
 
-        // Create leader character
-        let leader_id = next_id;
-        next_id += 1;
+        let leader_id = next_id; next_id += 1;
         let leader_birth = founding_year - rng.random_range(20..40);
         let leader = generate_character(leader_id, race, CharacterRole::Leader, Some(faction_id), leader_birth, &mut rng);
         let leader_display = leader.full_display_name();
 
-        // Create a general
-        let general_id = next_id;
-        next_id += 1;
+        let general_id = next_id; next_id += 1;
         let general_birth = founding_year - rng.random_range(18..35);
         let general = generate_character(general_id, race, CharacterRole::General, Some(faction_id), general_birth, &mut rng);
 
@@ -150,40 +222,37 @@ pub fn generate_history(config: &HistoryConfig, seed: u64) -> WorldHistory {
             dissolved_year: None, leader_name: leader_display.clone(), leader_id: Some(leader_id),
             military_strength: mil, wealth, stability: stab,
             territory: vec![region.clone()], settlements: vec![],
+            patron_god: None, devotion: 0,
         });
 
         events.push(HistoricEvent {
-            year: founding_year,
-            kind: EventKind::FactionFounded,
+            year: founding_year, kind: EventKind::FactionFounded,
             description: format!("{} was founded in {} by {}", name, region, leader_display),
-            participants: vec![faction_id],
+            participants: vec![faction_id], god_participants: vec![],
         });
 
-        // Each faction founds a settlement
         let sname = settlement_name(&mut rng);
-        let sid = next_id;
-        next_id += 1;
+        let sid = next_id; next_id += 1;
         let pop = match ft {
-            FactionType::Kingdom => PopulationClass::Town,
-            FactionType::MerchantGuild => PopulationClass::Town,
+            FactionType::Kingdom | FactionType::MerchantGuild => PopulationClass::Town,
             _ => PopulationClass::Village,
         };
         settlements.push(SettlementState {
             id: sid, name: sname.clone(), founded_year: founding_year,
             owner_faction: faction_id, destroyed_year: None, region: region.clone(),
             population_class: pop, prosperity: 50, defenses: 30,
+            patron_god: None, devotion: 0, world_pos: None,
         });
         factions.last_mut().unwrap().settlements.push(sid);
 
         events.push(HistoricEvent {
-            year: founding_year,
-            kind: EventKind::SettlementFounded,
+            year: founding_year, kind: EventKind::SettlementFounded,
             description: format!("{} founded the settlement of {}", name, sname),
-            participants: vec![faction_id],
+            participants: vec![faction_id], god_participants: vec![],
         });
     }
 
-    // Initialize all pairwise relations
+    // Initialize pairwise faction relations
     for i in 0..factions.len() {
         for j in (i + 1)..factions.len() {
             let a = factions[i].clone();
@@ -192,17 +261,112 @@ pub fn generate_history(config: &HistoryConfig, seed: u64) -> WorldHistory {
         }
     }
 
-    // Year-by-year simulation
+    // Build settlement list for worship from world map settlements
+    // (These are the map's ~70 settlements that gods compete for worship over)
+    let mut map_settlements: Vec<SettlementState> = world_map.cells.iter().enumerate()
+        .filter(|(_, c)| c.settlement_name.is_some())
+        .map(|(i, c)| {
+            let x = (i as u32) % world_map.width;
+            let y = (i as u32) / world_map.width;
+            let sid = next_id; next_id += 1;
+            SettlementState {
+                id: sid,
+                name: c.settlement_name.clone().unwrap(),
+                founded_year: config.start_year,
+                owner_faction: 0, // unowned by any faction initially
+                destroyed_year: None,
+                region: String::new(),
+                population_class: match c.settlement_size {
+                    Some(crate::worldgen::world_map::SettlementSize::City) => PopulationClass::Capital,
+                    Some(crate::worldgen::world_map::SettlementSize::Town) => PopulationClass::Town,
+                    Some(crate::worldgen::world_map::SettlementSize::Village) => PopulationClass::Village,
+                    _ => PopulationClass::Hamlet,
+                },
+                prosperity: 50,
+                defenses: 20,
+                patron_god: None,
+                devotion: 0,
+                world_pos: Some(WorldPos::new(x as i32, y as i32)),
+            }
+        })
+        .collect();
+    settlements.append(&mut map_settlements);
+
+    // --- Unified year-by-year simulation ---
     for year in config.start_year..config.start_year + config.num_years {
+        let event_count_before = events.len();
+
+        // Phase 0: Character aging & death (mortal)
+        // Phase 1: God power update
+        behavior::update_god_power(&mut gods);
+
+        // Phase 2: Territory expansion & terrain shaping (gods)
+        behavior::evaluate_territory_expansion(
+            year, config.territory_expansion_rate, &mut gods, &mut frontiers,
+            &mut events, &mut world_state, world_map, god_pool, pantheon, &mut rng,
+        );
+        behavior::evaluate_terrain_shaping(
+            year, &gods, &mut events, &mut terrain_scars,
+            &world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
+        );
+
+        // Phase 3: Worship competition (gods vs settlements)
+        behavior::evaluate_worship(
+            year, &mut gods, &mut events, &mut settlements,
+            &mut world_state, world_map, pantheon, &mut rng,
+        );
+
+        // Phase 4: Drive-based divine actions
+        behavior::evaluate_drive_actions(
+            year, config.race_creation_window, &mut gods, &mut events,
+            &mut divine_sites, &mut divine_artifacts, &mut created_races,
+            &world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
+        );
+
+        // Phase 5-8: Mortal simulation (faction upkeep, settlement upkeep, characters, events)
         simulate_year(
             year, &mut factions, &mut settlements, &mut characters,
             &mut artifacts_list, &mut events,
             &mut world_state, &regions, &mut next_id,
             &faction_type_table, &race_table, &mut rng,
         );
+
+        // Phase 9: Divine conflict
+        let active_god_ids: Vec<u32> = gods.iter().filter(|g| g.is_active()).map(|g| g.god_id).collect();
+        behavior::evaluate_divine_war_declared(year, &gods, &mut events, &mut world_state, &active_god_ids, pantheon, &mut rng);
+        behavior::evaluate_divine_war_resolution(
+            year, &mut gods, &mut events, &mut terrain_scars,
+            &mut world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
+        );
+        behavior::evaluate_divine_pact(year, &gods, &mut events, &mut world_state, &active_god_ids, pantheon, &mut rng);
+        behavior::evaluate_pact_broken(year, &gods, &mut events, &mut world_state, pantheon, &mut rng);
+
+        // Phase 10: Flaw pressure & triggers
+        let new_events = &events[event_count_before..];
+        behavior::accumulate_flaw_pressure(&mut gods, new_events, &world_state);
+        behavior::evaluate_flaw_triggers(year, &mut gods, &mut events, &mut settlements, &mut world_state, pantheon, &mut rng);
+
+        // War drains god power
+        for war in &world_state.divine_wars {
+            if let Some(g) = gods.iter_mut().find(|g| g.god_id == war.aggressor) {
+                g.power = g.power.saturating_sub(5);
+            }
+            if let Some(g) = gods.iter_mut().find(|g| g.god_id == war.defender) {
+                g.power = g.power.saturating_sub(5);
+            }
+        }
+
+        world_state.divine_relations.drift_toward_neutral();
     }
 
-    // Build cultural profiles from accumulated history
+    // Write final divine_owner to world map cells
+    for (i, owner) in world_state.territory_map.iter().enumerate() {
+        if let Some(god_id) = owner {
+            world_map.cells[i].divine_owner = Some(*god_id);
+        }
+    }
+
+    // Build cultural profiles
     let cultures: Vec<(u32, CulturalProfile)> = factions.iter()
         .map(|f| (f.id, build_culture(f.id, &events)))
         .collect();
@@ -211,6 +375,11 @@ pub fn generate_history(config: &HistoryConfig, seed: u64) -> WorldHistory {
         regions, factions, settlements, characters,
         artifacts: artifacts_list, cultures, events, world_state,
         current_year: config.start_year + config.num_years,
+        gods,
+        divine_sites,
+        divine_artifacts,
+        created_races,
+        terrain_scars,
     }
 }
 
@@ -294,6 +463,7 @@ fn simulate_year(
             year, kind: EventKind::LeaderChanged,
             description: format!("After the death of {}, {} became leader of {}", dead_name, new_leader_name, fname),
             participants: vec![*faction_id],
+            god_participants: vec![],
         });
     }
 
@@ -466,6 +636,7 @@ fn evaluate_war_declared(
         year, kind: EventKind::WarDeclared,
         description: format!("{} declared war on {}", fa, fb),
         participants: vec![a, b],
+            god_participants: vec![],
     });
 }
 
@@ -540,6 +711,7 @@ fn evaluate_war_ended(
                     year, kind: EventKind::Conquest,
                     description: format!("{} conquered {} from {}", fw, old_name, fl),
                     participants: vec![winner, loser],
+            god_participants: vec![],
                 });
                 world_state.relations.modify(winner, loser, -15);
             }
@@ -549,6 +721,7 @@ fn evaluate_war_ended(
             year, kind: EventKind::WarEnded,
             description: format!("The war between {} and {} ended; {} emerged victorious", fw, fl, fw),
             participants: vec![winner, loser],
+            god_participants: vec![],
         });
     }
 }
@@ -611,6 +784,7 @@ fn evaluate_betrayal(
                 betrayer_name, fb, fv
             ),
             participants: vec![betrayer_faction, victim_faction],
+            god_participants: vec![],
         });
         return; // One betrayal per year max
     }
@@ -647,6 +821,7 @@ fn evaluate_alliance(
                 year, kind: EventKind::AllianceFormed,
                 description: format!("{} and {} formed an alliance", fa, fb),
                 participants: vec![a, b],
+            god_participants: vec![],
             });
             return; // One alliance per year max
         }
@@ -678,6 +853,7 @@ fn evaluate_alliance_broken(
             year, kind: EventKind::AllianceBroken,
             description: format!("The alliance between {} and {} collapsed", fa, fb),
             participants: vec![alliance.faction_a, alliance.faction_b],
+            god_participants: vec![],
         });
     }
 }
@@ -710,6 +886,7 @@ fn evaluate_trade_agreement(
                 year, kind: EventKind::TradeAgreement,
                 description: format!("{} and {} signed a trade agreement", fa, fb),
                 participants: vec![a, b],
+            god_participants: vec![],
             });
             return;
         }
@@ -806,6 +983,7 @@ fn evaluate_leader_changed(
             year, kind: EventKind::LeaderChanged,
             description: desc,
             participants: vec![fid],
+            god_participants: vec![],
         });
     }
 }
@@ -836,6 +1014,7 @@ fn evaluate_plague(
         year, kind: EventKind::PlagueStruck,
         description: format!("A plague swept through {}", region),
         participants: affected,
+        god_participants: vec![],
     });
 }
 
@@ -851,6 +1030,7 @@ fn evaluate_monster_attack(
         year, kind: EventKind::MonsterAttack,
         description: format!("A {} terrorized {}", creature, region),
         participants: vec![],
+            god_participants: vec![],
     });
 }
 
@@ -878,6 +1058,7 @@ fn evaluate_hero(
         year, kind: EventKind::HeroRose,
         description: format!("{} rose to fame within {}", hero_name, fname),
         participants: vec![fid],
+            god_participants: vec![],
     });
 }
 
@@ -930,6 +1111,7 @@ fn evaluate_artifact_discovered(
         year, kind: EventKind::ArtifactDiscovered,
         description: format!("{} discovered {}", discoverer_desc, artifact_name),
         participants: vec![fid],
+            god_participants: vec![],
     });
 }
 
@@ -956,6 +1138,7 @@ fn evaluate_settlement_founded(
         id: sid, name: sname.clone(), founded_year: year,
         owner_faction: fid, destroyed_year: None, region,
         population_class: PopulationClass::Hamlet, prosperity: 40, defenses: 20,
+        patron_god: None, devotion: 0, world_pos: None,
     });
 
     if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
@@ -967,6 +1150,7 @@ fn evaluate_settlement_founded(
         year, kind: EventKind::SettlementFounded,
         description: format!("{} established {}", fname, sname),
         participants: vec![fid],
+            god_participants: vec![],
     });
 }
 
@@ -992,6 +1176,7 @@ fn evaluate_new_faction(
         dissolved_year: None, leader_name: leader, leader_id: None,
         military_strength: mil, wealth, stability: stab,
         territory: vec![region.clone()], settlements: vec![],
+        patron_god: None, devotion: 0,
     };
 
     // Initialize relations with all existing living factions
@@ -1006,6 +1191,7 @@ fn evaluate_new_faction(
         year, kind: EventKind::FactionFounded,
         description: format!("{} was founded in {}", name, region),
         participants: vec![id],
+            god_participants: vec![],
     });
 }
 
@@ -1037,6 +1223,7 @@ fn evaluate_faction_dissolved(
                     year, kind: EventKind::FactionDissolved,
                     description: format!("{} dissolved, unable to sustain itself", fname),
                     participants: vec![fid],
+            god_participants: vec![],
                 });
             }
         }
@@ -1068,9 +1255,24 @@ fn faction_name_by_id(factions: &[FactionState], id: u32) -> String {
 mod tests {
     use super::*;
 
+    fn test_history(seed: u64) -> WorldHistory {
+        test_history_with_config(HistoryConfig::default(), seed)
+    }
+
+    fn test_history_with_config(config: HistoryConfig, seed: u64) -> WorldHistory {
+        use crate::worldgen::world_map::generate_world_map;
+        use crate::worldgen::gods::build_god_pool;
+        use rand::SeedableRng;
+        let mut world_map = generate_world_map(64, 64, seed);
+        let god_pool = build_god_pool();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let pantheon = god_pool.draw_pantheon(6, &mut rng);
+        generate_history(&config, &mut world_map, &god_pool, &pantheon, seed)
+    }
+
     #[test]
     fn generates_factions_with_gauges() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         for f in &history.factions {
             assert!(f.military_strength <= 100);
             assert!(f.wealth <= 100);
@@ -1080,7 +1282,7 @@ mod tests {
 
     #[test]
     fn wars_only_between_hostile_factions() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         for event in &history.events {
             if event.kind == EventKind::WarDeclared && event.participants.len() == 2 {
                 // The war was declared, which means at the time sentiment was < -30
@@ -1092,7 +1294,7 @@ mod tests {
 
     #[test]
     fn wars_affect_military_strength() {
-        let h1 = generate_history(&HistoryConfig { num_years: 50, ..Default::default() }, 42);
+        let h1 = test_history_with_config(HistoryConfig { num_years: 50, ..Default::default() }, 42);
         // Factions at war should be weaker than starting values
         let at_war: Vec<&FactionState> = h1.factions.iter()
             .filter(|f| h1.world_state.war_count(f.id) > 0)
@@ -1107,7 +1309,7 @@ mod tests {
 
     #[test]
     fn settlements_can_change_hands() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         let conquests: Vec<_> = history.events.iter()
             .filter(|e| e.kind == EventKind::Conquest)
             .collect();
@@ -1117,7 +1319,7 @@ mod tests {
 
     #[test]
     fn relations_initialized() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         let living = history.living_factions();
         if living.len() >= 2 {
             // At least some non-zero relations should exist
@@ -1130,22 +1332,22 @@ mod tests {
 
     #[test]
     fn event_variety() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         let kinds: std::collections::HashSet<_> = history.events.iter().map(|e| &e.kind).collect();
         assert!(kinds.len() >= 5);
     }
 
     #[test]
     fn deterministic() {
-        let h1 = generate_history(&HistoryConfig::default(), 42);
-        let h2 = generate_history(&HistoryConfig::default(), 42);
+        let h1 = test_history(42);
+        let h2 = test_history(42);
         assert_eq!(h1.events.len(), h2.events.len());
         assert_eq!(h1.factions[0].name, h2.factions[0].name);
     }
 
     #[test]
     fn dissolved_factions_cleaned_up() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         for f in &history.factions {
             if let Some(_dy) = f.dissolved_year {
                 assert!(!history.world_state.at_war(f.id, 0));
@@ -1156,7 +1358,7 @@ mod tests {
 
     #[test]
     fn has_characters() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         assert!(history.characters.len() > 10, "only {} characters", history.characters.len());
         let alive = history.characters.iter().filter(|c| c.is_alive(history.current_year)).count();
         assert!(alive > 0, "no living characters");
@@ -1164,7 +1366,7 @@ mod tests {
 
     #[test]
     fn has_artifacts() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         // Artifacts are probabilistic but very likely over 100 years
         // Just verify no crash
         let _ = history.artifacts.len();
@@ -1172,7 +1374,7 @@ mod tests {
 
     #[test]
     fn has_cultures() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
         assert!(!history.cultures.is_empty());
         // At least some factions should have cultural values
         let with_values = history.cultures.iter().filter(|(_, c)| !c.values.is_empty()).count();
@@ -1181,7 +1383,7 @@ mod tests {
 
     #[test]
     fn dump_history_summary() {
-        let history = generate_history(&HistoryConfig::default(), 42);
+        let history = test_history(42);
 
         println!("\n=== WORLD HISTORY (100 years) ===");
         println!("Factions: {} ({} alive)", history.factions.len(),

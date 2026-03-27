@@ -20,6 +20,8 @@ const SIZE: u32 = TILES * PX_PER_TILE; // 512x512 total
 
 const EDGE_WIDTH: f64 = 0.38;  // how far blend extends from edge (0-0.5)
 const NOISE_STRENGTH: f64 = 0.5; // how much noise distorts the blend boundary
+const EDGE_PCT: f64 = 0.50;    // max blend % at tile edge (50% self + 50% neighbor)
+const CORNER_PCT: f64 = 0.25;  // max blend % at tile corner (25% each of 4 tiles)
 const NOISE_FREQ: f64 = 0.04;  // noise frequency in pixels
 
 fn smoothstep(edge0: f64, edge1: f64, x: f64) -> f64 {
@@ -54,29 +56,20 @@ fn main() {
             let ew_v = (EDGE_WIDTH + NOISE_STRENGTH * n_v * EDGE_WIDTH).clamp(0.05, 0.48);
             let ew_c = (EDGE_WIDTH * 0.8 + NOISE_STRENGTH * n_c * EDGE_WIDTH * 0.6).clamp(0.05, 0.40);
 
-            // Raw weights: 1.0 at edge, falling to 0.0 at edge_width distance
+            // Raw gradients: 1.0 at edge, falling to 0.0 at edge_width distance
             let raw_h = 1.0 - smoothstep(0.0, ew_h, dist_h);
             let raw_v = 1.0 - smoothstep(0.0, ew_v, dist_v);
-
-            // Corner weight: high when BOTH edges are close
             let dist_corner = (dist_h * dist_h + dist_v * dist_v).sqrt();
             let raw_c = 1.0 - smoothstep(0.0, ew_c, dist_corner);
 
-            // Subtract corner contribution from edges to avoid double-counting
-            let w_h = (raw_h - raw_c * 0.5).max(0.0);
-            let w_v = (raw_v - raw_c * 0.5).max(0.0);
-            let w_c = raw_c;
+            // Scale to max percentages (tutorial: edge=50%, corner=25%)
+            let w_c = raw_c * CORNER_PCT;
+            // Subtract corner from edges to avoid over-blending at corners
+            let w_h = (raw_h * EDGE_PCT - w_c).max(0.0);
+            let w_v = (raw_v * EDGE_PCT - w_c).max(0.0);
 
-            // Self weight fills the remainder
+            // Self fills the remainder — always sums to 100%
             let w_self = (1.0 - w_h - w_v - w_c).max(0.0);
-
-            // Normalize to ensure sum = 1.0
-            let total = w_h + w_v + w_c + w_self;
-            let (w_h, w_v, w_c, w_self) = if total > 0.0 {
-                (w_h / total, w_v / total, w_c / total, w_self / total)
-            } else {
-                (0.0, 0.0, 0.0, 1.0)
-            };
 
             // Scale weights so that (channel * 255 / 100) in the shader produces ~1.0 total.
             // channel_value = weight * (100/255) * 255 = weight * 100

@@ -4,13 +4,7 @@ use crate::worldgen::gods::{GodId, GodRelationship};
 use crate::worldgen::names::Race;
 use crate::worldgen::world_map::WorldPos;
 
-use super::artifacts::DivineArtifact;
-use super::events::DivineEvent;
 use super::personality::{DivineDrive, DivineFlaw, DivinePersonality};
-use super::races::CreatedRace;
-use super::sites::DivineSite;
-use super::terrain_scars::TerrainScar;
-use super::the_fall::TheFall;
 
 /// Per-god mutable state during the divine era simulation.
 #[derive(Clone, Debug)]
@@ -36,9 +30,10 @@ pub struct GodState {
     pub narrative_phase: usize,
 
     // State
-    /// False after being vanquished in divine war.
-    pub active: bool,
-    pub vanquished_year: Option<i32>,
+    /// True if the god has faded (zero worshippers for too long). Faded gods cannot act.
+    pub faded: bool,
+    /// How many consecutive years this god has had zero worshippers.
+    pub years_without_worship: u32,
     /// ID of the race this god created, if any.
     pub created_race_id: Option<u32>,
     /// Mortal champion chosen by this god.
@@ -67,8 +62,8 @@ impl GodState {
             seat_of_power: None,
             power: 80,
             narrative_phase: 0,
-            active: true,
-            vanquished_year: None,
+            faded: false,
+            years_without_worship: 0,
             created_race_id: None,
             champion_name: None,
             champion_race: None,
@@ -90,7 +85,7 @@ impl GodState {
     }
 
     pub fn is_active(&self) -> bool {
-        self.active
+        !self.faded
     }
 }
 
@@ -192,124 +187,6 @@ pub enum PactKind {
     MutualDefense,
 }
 
-/// A mortal settlement during the divine era.
-#[derive(Clone, Debug)]
-pub struct DivineSettlement {
-    pub pos: WorldPos,
-    pub name: String,
-    /// Which god this settlement worships, if any.
-    pub patron_god: Option<GodId>,
-    /// How devoted the settlement is to their patron (0-100).
-    /// High devotion = hard to convert, low = vulnerable.
-    pub devotion: u32,
-    /// Year worship was established.
-    pub patron_since: Option<i32>,
-}
-
-/// The mutable world state during the divine era simulation.
-#[derive(Clone, Debug)]
-pub struct DivineWorldState {
-    pub relations: DivineRelationMatrix,
-    pub active_wars: Vec<DivineWar>,
-    pub active_pacts: Vec<DivinePact>,
-    /// Which god owns each cell, indexed parallel to WorldMap.cells.
-    pub territory_map: Vec<Option<GodId>>,
-    /// Mortal settlements and their worship status.
-    pub settlements: Vec<DivineSettlement>,
-}
-
-impl DivineWorldState {
-    /// Check if two gods are currently at war.
-    pub fn at_war(&self, a: GodId, b: GodId) -> bool {
-        self.active_wars.iter().any(|w| {
-            (w.aggressor == a && w.defender == b)
-                || (w.aggressor == b && w.defender == a)
-        })
-    }
-
-    /// Check if two gods have an active pact.
-    pub fn have_pact(&self, a: GodId, b: GodId) -> bool {
-        self.active_pacts.iter().any(|p| {
-            (p.god_a == a && p.god_b == b) || (p.god_a == b && p.god_b == a)
-        })
-    }
-
-    /// Count how many wars a god is currently in.
-    pub fn war_count(&self, god_id: GodId) -> usize {
-        self.active_wars
-            .iter()
-            .filter(|w| w.aggressor == god_id || w.defender == god_id)
-            .count()
-    }
-
-    /// Count how many settlements worship a given god.
-    pub fn worshipper_count(&self, god_id: GodId) -> usize {
-        self.settlements
-            .iter()
-            .filter(|s| s.patron_god == Some(god_id))
-            .count()
-    }
-
-    /// Get settlements that currently have no patron god.
-    pub fn unpatronized_settlements(&self) -> Vec<usize> {
-        self.settlements
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.patron_god.is_none())
-            .map(|(i, _)| i)
-            .collect()
-    }
-
-    /// Get settlements within a god's territory that worship a different god (or none).
-    pub fn convertible_settlements(&self, god_id: GodId, territory_map: &[Option<GodId>], world_map: &crate::worldgen::world_map::WorldMap) -> Vec<usize> {
-        self.settlements
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| {
-                s.patron_god != Some(god_id)
-                    && world_map.idx(s.pos)
-                        .is_some_and(|idx| territory_map[idx] == Some(god_id))
-            })
-            .map(|(i, _)| i)
-            .collect()
-    }
-}
-
-/// The complete output of the divine era simulation.
-#[derive(Clone, Debug, bevy::prelude::Resource)]
-pub struct DivineHistory {
-    pub gods: Vec<GodState>,
-    pub events: Vec<DivineEvent>,
-    pub sites: Vec<DivineSite>,
-    pub artifacts: Vec<DivineArtifact>,
-    pub created_races: Vec<CreatedRace>,
-    pub terrain_scars: Vec<TerrainScar>,
-    pub current_year: i32,
-    pub the_fall: Option<TheFall>,
-}
-
-impl DivineHistory {
-    /// Get all divine sites at a specific world position that persist into the mortal era.
-    pub fn sites_at(&self, pos: WorldPos) -> Vec<&DivineSite> {
-        self.sites
-            .iter()
-            .filter(|s| s.world_pos == pos && s.persists)
-            .collect()
-    }
-
-    /// Get all events for a specific god.
-    pub fn events_for_god(&self, god_id: GodId) -> Vec<&DivineEvent> {
-        self.events
-            .iter()
-            .filter(|e| e.participants.contains(&god_id))
-            .collect()
-    }
-
-    /// Count how many events of a given kind occurred.
-    pub fn event_count(&self, kind: &super::events::DivineEventKind) -> usize {
-        self.events.iter().filter(|e| &e.kind == kind).count()
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -320,7 +197,8 @@ mod tests {
         let p = DivinePersonality { drive: DivineDrive::Supremacy, flaw: DivineFlaw::Hubris };
         let gs = GodState::new(1, p);
         assert_eq!(gs.power, 80);
-        assert!(gs.active);
+        assert!(gs.is_active());
+        assert!(!gs.faded);
         assert!(gs.territory.is_empty());
         assert!(gs.seat_of_power.is_none());
         assert_eq!(gs.drive(), DivineDrive::Supremacy);
@@ -402,47 +280,4 @@ mod tests {
         assert_eq!(rm.get(2, 3), 0); // not set
     }
 
-    #[test]
-    fn world_state_war_tracking() {
-        let mut ws = DivineWorldState {
-            relations: DivineRelationMatrix::default(),
-            active_wars: Vec::new(),
-            active_pacts: Vec::new(),
-            territory_map: Vec::new(),
-            settlements: Vec::new(),
-        };
-        assert!(!ws.at_war(1, 2));
-        ws.active_wars.push(DivineWar {
-            aggressor: 1,
-            defender: 2,
-            start_year: -90,
-            contested_cells: vec![],
-        });
-        assert!(ws.at_war(1, 2));
-        assert!(ws.at_war(2, 1));
-        assert!(!ws.at_war(1, 3));
-        assert_eq!(ws.war_count(1), 1);
-        assert_eq!(ws.war_count(3), 0);
-    }
-
-    #[test]
-    fn world_state_pact_tracking() {
-        let mut ws = DivineWorldState {
-            relations: DivineRelationMatrix::default(),
-            active_wars: Vec::new(),
-            active_pacts: Vec::new(),
-            territory_map: Vec::new(),
-            settlements: Vec::new(),
-        };
-        assert!(!ws.have_pact(1, 2));
-        ws.active_pacts.push(DivinePact {
-            god_a: 1,
-            god_b: 2,
-            formed_year: -80,
-            kind: PactKind::NonAggression,
-        });
-        assert!(ws.have_pact(1, 2));
-        assert!(ws.have_pact(2, 1));
-        assert!(!ws.have_pact(1, 3));
-    }
 }

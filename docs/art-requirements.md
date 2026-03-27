@@ -15,12 +15,12 @@ These are layers in the terrain texture array (`assets/terrain_array.png`). Each
 | 2     | Sand     | FLAT COLOR | `[210,190,130]` | Needs: warm sandy texture, fine grain |
 | 3     | Snow     | FLAT COLOR | `[230,235,240]` | Needs: packed snow with subtle drift patterns |
 | 4     | Swamp    | FLAT COLOR | `[60,80,50]` | Needs: muddy waterlogged ground, dark greens/browns |
-| 5     | Stone    | FLAT COLOR | `[140,140,135]` | Needs: rough natural stone, cracked/weathered |
+| 5     | Stone    | **HAS TEXTURE** | `[140,140,135]` | Real texture in place |
 | 6     | Forest   | **HAS TEXTURE** | `[40,85,30]` | Real texture in place (forest floor/undergrowth) |
 | 7     | Water    | FLAT COLOR | `[40,80,140]` | Needs: dark water surface. Consider animated later. |
 | 8     | Mountain | FLAT COLOR | `[90,85,80]` | Needs: dark craggy rock, rougher than Stone |
 
-**6 terrain textures needed:** Sand, Snow, Swamp, Stone, Water, Mountain
+**5 terrain textures needed:** Sand, Snow, Swamp, Water, Mountain
 
 ## Terrain Feature Sprites (y-sorted entities)
 
