@@ -1,0 +1,655 @@
+Intro
+0:00
+[Music] uh all right so I'm Kate Compton and without further Ado I'm going to talk a
+0:06
+lot about procedural content Generation Um I'm sorry this is going to be a total speedrun today uh there were just way
+0:12
+more things I wanted to put in here about procedural content generation than I had time for and so there's Zen floating around I printed out 80 of them
+0:18
+which was clearly not enough um so I'll put those up online too um yeah so a
+Schedule
+0:23
+little bit of uh oh so today's schedule um I'm going to give you I'm calling it the Ikea catalog of PCG techniques
+0:30
+um what all of them are why you might want them how much they cost and whether they look good next to your sofa um and
+0:37
+just the catalog of that and then I'm also going to give you some PCG MSG uh easy cheap additives to improve all your
+0:42
+PCG whatever it is um oh and the slides are up there uh so this talk is kind of for
+0:48
+anybody who has heard or is thinking hey we should have some PCGS in our game um
+0:53
+I hear they're really cool we should definitely PCG our game uh so a little bit about me I've been doing procedural
+About Me
+0:59
+contest for 15 years or so uh it's hard to tell at this point I did five years on Spore
+1:05
+I did the planets uh in Sim City Sim City I've done five plus years of a PhD and show no signs of actually graduating
+1:11
+in generative games and creativity tools um and I also made tracery which I talked about last year uh which now has
+1:17
+close to 4,000 active Bots generating weird stuff online uh I make a lot of generative art
+1:23
+Bots uh games art tools and more and I write and teach I really like to write
+1:29
+about and teach other people how to make PCG without losing their heads it can be a really difficult thing uh so I've done
+1:35
+a ton of like procedural content generation work um wait are my oh good my the the the the gifs aren't running
+1:43
+on my computer so I'm glad that they're running up there uh so yeah these are a couple of the things that I've made various procedural content foxs of
+1:49
+butterflies and VR uh and then just recently I made a train Jam game that's a generative train so about a year ago I
+Blog Post
+1:56
+made this uh interesting blog post so a lot of people tend to ask me especially people just starting off in games like
+2:02
+um how do I do procedural content um what are some good like resources you would suggest for me just starting out
+2:08
+like I know nothing about PCG where do I start uh so I started writing up a blog post um and four hours later it was
+2:14
+4,000 words and I published that about a year ago uh and people have found it really useful so if you get lost in this
+2:19
+talk you can go back to that blog post um and it says everything I'm saying here but much
+2:25
+slower so yeah okay I imagine people in this room want to generate something or have been told to generate something or
+2:31
+are generating something for their game um and you know there's games like Minecraft which generate their terrain
+2:37
+uh famous games like no man's Sky which generate all sorts of different things um even Dwarf Fortress which generates
+2:43
+you know drunken cats uh falling down in a pub and other such things um but
+Examples
+2:49
+there's also so those are kind of some famous examples but there's also a lot of not famous Indie examples that use PCG in all sorts of ways it's not just
+2:56
+terrain um so there's uh pip and bars it's as if you were playing chess which gives you different ways to stroke your
+3:02
+beard while you think of chess moves uh dietr sinkers Mr Darcy dance simulator where Mr Darcy insults you in generative
+3:08
+ways um uh Ultima ratio regnum which generates everything um strange things Works which
+3:16
+are strange generated museums and whatnot uh even things like panoramical which you know these these games often
+3:22
+walk the line of is it a game isn't it a game there are generative spaces that you can explore in different ways um and
+3:29
+even sometimes games generate game rules themselves so this is yavo um this is somebody's uh this is Cameron Brown's
+3:37
+project um he made a system that could generate game rules and then he made uh
+3:43
+a player that could play arbitrary games and he had those play like virtual players play thousands upon thousands of
+3:48
+games until he found one that was pretty well balanced and then he shipped that and you can now buy this in game stores the title is also
+3:56
+generated uh but despite the fact that this is the um this is the uh where are we now uh g
+4:03
+game developer conference yeah it's been a day you can also generate all sorts of things that are not games
+4:17
+um yeah so there's uh places that generate Fabric and fashion uh art
+4:23
+projects here's a bot generated skirt that I made um I'm much better at Bots
+4:28
+than I am at sewing but this is still a a pretty good skirt um there are games from museums
+4:35
+like the Victorian Albert made a wig generator um things that are half creat
+4:40
+or half game like toab Po's hair salon um and people are generating all sorts
+4:46
+of stuff from poetry to uh poetry to music to cocktail generation a lot of
+4:51
+that goes on at the International Conference on computational creativity to give a shout out to one of my other communities uh so you can generate darn
+4:57
+near anything so and there's also all sorts of reasons to want to generate stuff Big Stuff small stuff little stuff
+Reasons to Generate
+5:03
+complex stuff for all sorts of reasons it increases twitch ability it looks cool it's funny um and so yeah there's
+5:10
+no wrong way to do PCG uh and often like little tiny small stuff is the best way to
+Best Way to Start
+5:16
+start uh there are lots of oh so lots of generative content uses
+5:22
+like extremely sophisticated and Brilliant AI uh and you'll there's plenty of talks about that here um a lot
+5:28
+of that fails anyway uh some of the best generative content is really simple stuff and this is why
+Simple Content
+5:34
+uh kind of the the goal of this talk is to say PCG for anything or for any for anybody uh for everybody don't
+5:42
+caffeinate before your talk um so up on the right hand side is one of the famous most famous examples that's been made
+5:48
+with software that I made this is a tiny care bot by Johnny son which has 50,000 followers maybe 60,000 by this point and
+5:53
+it just tweets out little generative things about how it loves you and you should drink more water so you don't
+5:59
+have to get complex uh sometimes emotional design is the most important complex part of of
+6:06
+generativity so anyway let's get started uh so yeah so you want to generate something uh these are kind of
+Getting Started
+6:13
+the rough steps that you're going to go through uh you're going to understand the design space numerate your constraints understand the process pick
+6:19
+a generative method and iterate and be flexible this last one is actually kind of hard uh and where the biggest groups
+6:25
+will fall down the most so on Spore we worked really hard um we spent years making these incredible
+6:31
+generators and then there was no time to iterate on them uh even in 5 years you
+6:36
+get all your technology working it's doing well enough and at that point you have to put it in a box and ship um but
+6:42
+if you're willing to be flexible and a lot of Indies are uh or if you're making a game Jam game you can often kind of
+6:48
+Follow Your generator where it leads um a lot of the silliest generators that were made with Tracer my tool um are
+6:55
+things that people just tried out once because it seemed like a stupid funny idea uh up uh endless screaming which is
+7:01
+a bot that just endlessly screams on Twitter so a lot of the things that are
+7:06
+really great about this are the things where you try it out because it's a stupid idea and then you just follow the stupid idea when it seems to really be
+7:12
+working um if you have the flexibility to do that uh but so imagine you do want
+7:17
+to design something um so these are kind of the first three things we'll go into uh first this is a silly question but
+What are you making
+7:24
+what are you making there's a lot of different things you can make with this um so once you figured out what it is you're making uh and be really specific
+7:30
+with this the more specific a thing you're generating the better you can make a generator I cannot write a novel generator um I can write a trashy Urban
+7:38
+romance fantasy generator uh because that's got more constraints and I can actually start describing what that is
+7:44
+but I can't describe a novel um then you're going to well so in sport we called this making an artist in a box uh
+What do you do
+7:50
+because you're teaching an algorithm how to make art like an artist and then back in the day when we used to sell games on
+7:56
+these shiny plastic discs uh you actually had to put your artist your your virtual artist on a disc put it
+8:01
+into a box and then mail it to bus buy uh and so on sport we had this guy named John Simo who is a Disney animator um
+8:08
+and we hired him and the designers of Sport the sport creature creators sat down with him and over the course of
+8:14
+many many many hours carefully talked to him about so if you're designing a creature what do you do um and they you
+8:21
+know they didn't take any answer at face value they asked him to dig further and further into it where he ended up talking about like how he draws a bean
+8:26
+shape uh and that kind of sets the character of the the creature and then he hangs a mouth on it and that sets
+8:33
+kind of the the way that the creature is looking we ended up implementing all this in Spore and the Spore creature Creator was notoriously really really
+8:39
+good and I think that was because they asked an expert about how he does
+8:44
+things um so I'm going to talk to you a lot about additive and subtractive methods today uh so you're going to build up a space of good stuff remove
+8:50
+bad stuff um there's going to be some possibility space which is how many things are in your space and expressive
+8:55
+range which is how interesting the things are um there'll be link dumps throughout this talk uh here's some more
+9:01
+information on constraints if you want them this is in your Zen uh and Mike cook is giving a talk on this constraint
+9:06
+stuff tomorrow at the tech toolbox so ask him about that so part one the Ikea catalog of generativity um why you might
+9:13
+choose each one uh so here are a number I think this is six I'm good at counting
+9:18
+six different kind of categories of methods um and the thing you'll notice about all of these when I go into them
+9:25
+is PCG is often presented as like this magical thing uh we thought really super hard we have this algorithm with a
+9:31
+capital A uh and we're going to show you a lot of really shiny screenshots of what that outputed but you could never build it yourself a lot of these are
+9:38
+really simple um especially in their base case uh you can build very simple things with them you can build them very simply you don't have to get complex uh
+Tiles
+9:45
+so the first one is tiles many of you have probably played Diablo I I lost a lot of years to that uh things like Spelunky um even other tile based
+9:52
+generative games like Civ we forget often that tile based maps are are pretty
+9:57
+common uh what ti work well for so tiles are you have a chunk of like you have a number of chunks of things and you can
+10:04
+then like socket them together uh to form a map so you can imagine kind of like the settlers of a Katon board they
+10:10
+work well for things you can break up into equal-sized regions um and where the tile to tile placement doesn't need
+10:15
+to be constrained um You can have anything next to anything else and it's pretty much going to work so you don't have to write more complex code for that
+10:22
+uh but they also work one well when you can get kind of some emergence from the placement of the tiles uh if I have
+10:27
+mountains next to a good research and civilization ation there's some interesting gameplay that emerges from that uh but this is actually one of the
+Tarot Cards
+10:33
+oldest forms of procedural content generation there's tarot cards on the right which are a tile like you can think of cards and uh tarot cards as
+10:40
+tile based procedural content for games if you look if you shuffle your deck of soliter and you put it down you've now
+10:47
+procedurally generated the game board that you're going to play a game of soliter on um and then on the left is
+10:52
+one that I really like which is also one of the first cases of Ip infringement uh Mozart's publisher made this uh
+10:59
+interesting piece it's called dice music and you have a number of bars of music and then you have a lookup table and you
+11:05
+roll dice and you reassemble a nice little paa that's never been played before so this is p this is PCG that
+11:11
+goes all the way back to like 1740 so you know it's not just games uh
+Grammars
+11:17
+so grammars grammars are one of my personal favorites um because I have this language called tracery I have Zen for tracery if anybody wasn't in my talk
+11:23
+last year um self-promo uh but these are for when you want to recursively make things with
+11:29
+other things um so there's there's some SVG artwork and
+11:35
+some uh little story descriptions that I made recursively with tracery uh so tracery and other templating systems you
+11:42
+have a recipe uh and you know maybe uh this is a Sci-Fi story generator I made
+11:47
+where it's what are the different pieces of a Sci-Fi story all the way down to okay now I need an alien name what are the different parts of an alien name
+11:54
+there's a you know a syllable another syllable and another syllable uh so you are recurring cursively defining
+12:00
+something uh and you end up usually getting a bunch of modular parts that you can reuse so I use the alien planet name or like the alien name generator
+12:07
+and uh a bunch of other things in a lot of my work um Tracer .io is where you
+12:12
+can get more information about that uh there's also things like L systems which you may have heard of um the one on the
+12:18
+bottom right isn't a procedural L system generator that I made but there's also things like context free art um this is
+12:24
+a subsection of grammars where it's uh draw a line um pick out an angle
+12:30
+separate draw new lines for each of those pick out an angle and kind of recurse that way uh so grammars are all
+12:37
+about sort of this top down structure there's also some neat stuff that's been done with uh what are called
+Replacement Grammar
+12:42
+replacement grammars so this is if you have a dungeon that's a straight line and you would like it to not be a straight line um this is yuris Dorman's
+12:49
+work uh where he made Zelda dungeons by taking a straight line and then perturbing it in different ways so you
+12:56
+know put a door and a key all right now if you've got a section that has a key you can hide that key behind another
+13:01
+door uh and you can recursively apply these uh he recently just published his indie game which is called uh unexplored
+13:07
+which uses the this technique um you can definitely learn more about this from him he's really good at this he actually
+13:13
+used to be in Academia and then went Indie so he's got like both the the academic like heavy research Focus but
+13:18
+also a really great Indie sensibility so distribution um distribution is put down a bunch of
+Distribution
+13:25
+stuff this is maybe some PCG technique that we've all used uh you have a level and you dump a bunch of stuff on it
+13:30
+until there's stuff in your level it's really complex uh you can do that just by having random numbers um but the
+13:36
+trouble with random distribution is that it looks crappy uh actual random like
+13:41
+very few things are actually random it clumps strangely uh and so often real distributions are hierarchical and
+13:47
+clustered and they maintain spacing um even when we make fake Gardens uh we
+13:53
+often preserve this technique so here's a Japanese garden where you can see that there's hierarchy and clustering there's certain kinds of trees in the sand and
+14:00
+other kinds of trees in the Rocks um and so when I was on Spore uh kind of we built up some folk knowledge about what
+14:06
+makes that look good because we did a lot of procedural Distribution on Spore um and here are three terms that I like
+Barnacle
+14:12
+uh you can confuse the heck out of your art director um one is called Barling this is when you have a large object in
+14:18
+your world there should be mediumsized objects around that and very small objects around those and you can kind of
+14:24
+go as fractally deep as you want and sometimes they're the same kind of object uh sometimes they're different objects you can see the the monument on
+14:30
+the right has all sorts of like Whittle rocks around it and this this makes things look natural it makes them look
+14:35
+like they're supposed to be there um and no man's sky does this as well and sported it too uh there's
+Where
+14:42
+footing where when two things intersect uh there should be an awareness of them intersecting um if you stick a tree into
+14:49
+the ground look the next time you see a tree it'll have dirt piled up around it it might have some Twigs poking out uh
+14:55
+even when you stick a wall into a floor there's like a little rubber gasky thing even on this really minimalist
+15:02
+architecture um if you don't have that things don't look like they belong and then gribling is um this is a a Star
+Griefing
+15:09
+Wars term um the reason that Star Wars looks different from Star Trek is because it has so much texture and so
+15:15
+when George Lucas was going to tenisia to film uh one of the Star Wars he had a box full of things that he would glue
+15:21
+onto other things and Customs made him label it and he labeled it grebles and so gluing things to other things is
+15:26
+called gribling um there are lots of like mathematical ways to do distribution
+15:31
+properly uh you can look these up um I usually just use a grid and offset it a bit because I'm lazy uh but there's an
+15:37
+official Spore way to do it uh parametric um this one is also really fun because you can do a lot with it so
+Parametric
+15:45
+um a lot of so a lot of these can be combined into different hybrid methods um but parametric is oh are you going to
+15:51
+play yeah now it's playing okay uh so here's a little demo that I made of a parametric generator where I have this
+15:57
+flower and this is an system that I mentioned on the previous slide but the parameters of the L system like how much
+16:02
+the flower is going to spread and how much the color changes Are all uh defined by 32 different parameters so I
+16:08
+have 32 different parameters and put those through an algorithm and out pops a little flower this is handy because
+16:14
+there's you can actually model this as an n-dimensional Cube so if all my sliders go from zero to one I have this
+16:21
+if I had like a two-dimensional flower of like height and width each point on that square would be a different flower
+16:27
+if I have a 32 dimensional Cube each point in that 32 dimensional cube is also a flower uh but you can do all
+16:32
+sorts of fun things like actually do random walks through your content and animate things that way um and this is
+16:39
+something that I did with that uh wait uh oh yeah so often things that use this
+16:44
+are like the Spore morph handles um and I believe somebody who's in uh the no
+16:50
+man sky sky team can call me out on this I think no man's Sky did this with their creatures as well where they were largely parametric that there were just
+16:55
+a bunch of Sliders and a space of creatures a space of space creatures um oh yeah so
+Genetic Algorithms
+17:02
+here's the slide where I talk about that like yeah you can model this as an n-dimensional Cube um you can actually do procedural uh um uh what is it called
+17:11
+uh genetic algorithms um and there's a bunch of cool stuff that you can learn about that uh you can also do really
+Dimensional Cube
+17:18
+bizarre things like you can have you you can take your possibility space your end dimensional Cube and actually run computer science algorithms to
+17:24
+regionalize it in certain ways uh find particular items in that space that are
+17:31
+interesting and then make those as Collectibles uh and so there's a project called pedals from UCSF that does some
+17:37
+really awesome things with that um interpretive this is a really cool one this says you start with some input you
+Interpretive
+17:42
+run it algorithm to process it data into some other data um and you're basically complexifying stuff Spore did this
+17:48
+that's our the official spor Skeleton on the right which is what the creat which is what the user was actually making uh
+17:54
+and that in we interpreted it into the thing on the left um so there's a lot of
+17:59
+information about the Spore pipeline there um so this is a pretty common issue to have uh and often like you know
+18:07
+as a body is moving through space or as you're doing hand tracking you'll end up getting lines of motion uh what do you
+18:13
+do with those lines of motion um you can interpret them in different ways so here's the sporer pipeline and how that
+18:20
+interpreted things I think I hope okay there we go and yeah so we took the
+18:25
+skeleton we made metaballs around that we took the the Met balls we sliced that into UV Maps um we did animation over
+18:33
+right and then we did painting on the left uh so this entire pipeline basically starts from this fixed
+18:39
+skeleton of of points and edges um and then eventually get a creature out of it there are all sorts
+18:45
+of things you might want to decorate in this way you know obviously hand tracking would be really cool body tracking um there's nothing you can do
+18:51
+to have like a human artist draw stuff for each body but maybe you can have a digital artist draw stuff for each position of a body uh and then of course
+18:58
+things like maps in the real world like Pokémon go or maps of your living room uh in augmented reality how are you
+19:04
+going to decorate these things well parametric or sorry not parametric but interpretive stuff is there for you so
+19:10
+there's a lot of examples of this and I'm kind of running already behind so I won't go really deep into them uh but there's things like uh pearlin noise and
+19:18
+you can change pearlin noise in different ways uh so this is um uh taking the absolute Valu to get that
+19:24
+nice crease um here's taking a polar offset of pein noise you get the nice
+19:30
+winess um there's a lot of geometry uh algorithms so uh voro and Deon um are
+Geometry
+19:37
+different ways to triangulate stuff and you can make cool regions out of just having a bunch of points and then triangulating them in different ways um
+19:44
+I've used this to do a couple of maps for Space games that uh I was working on and never shipped um and then there's
+19:50
+also an island game that I made uh using these techniques as well so uh Delan and voro they figure out the closest Regions
+19:58
+to each different point and then they figure out the connections between those regions so it's a really cheap fast way to make maps and there's good there's
+20:04
+good algorithms for this there's things like constructive solid geometry Extrusion Revolution um these are
+Solid Geometry
+20:11
+different ways of adding and subtracting stuff um and you can use that to draw
+20:16
+curves along things here's a pendant generator that I made for 3D printing um but you can also use it in
+Pennant Generator
+20:22
+games so I need to make some geometry that fits this curve uh these are often very difficult uh these are
+20:27
+mathematically heavy um but even in things like Photoshop and tiltbrush this is how they take a curve
+20:33
+and they extrude interesting stuff along that curve whether it's texture or geometry um yeah and then metaballs are
+20:40
+making blobs out of stuff and then you can do stuff with that uh and I believe but I'm not sure that this is how Oculus
+20:45
+medium works there's also a whole weird category of like fractals and Mathematics stuff this way um these are
+Fractals
+20:52
+low control hide weirdness and not suable for for most games but uh there's a group that does a couple of people who
+20:58
+do things like Mur and hybern that do interesting things with impossible spaces with generative
+21:04
+methods um one of my favorites just because I super love particles uh you going to play there we go um I really
+Particles
+21:11
+like particles and particle simulations uh so remember how I told you you can decorate a curve well you can use
+21:16
+particles to generate those curves and then decorate them in interesting ways so here I'm drawing some flowers uh with
+21:21
+just a particle simulation and they look pretty and they're kind of fun to watch uh this is also how Spore worked um
+21:27
+Spore we did a lot of texturing with particle simulations uh that would then drag textures or kind of dredge Out
+21:34
+Rivers behind them as they move to the planet um these also really go go great
+21:40
+with uh wow that's such a slide um they go really great with user input so um
+21:46
+you know I've got my hands and uh the one on the bottom left is I'm not sure where I was going with this game but you wave your hands and there's birds that
+21:52
+flock around it and the birds leave behind watercolor Trails you're kind of like painting with a giant swarm of birds um I don't think anybody else has
+21:58
+done that with Elite motion yet uh but there's also things like cellular aoma agent based simulations
+22:04
+physics simulations so things like Dwarf Fortress and the indie game bad news have just massive simulations of little
+22:10
+people living their lives and they use that to build to procedurally generate towns with massive
+22:16
+history um yeah and oh okay there's animation never mind
+22:22
+uh yep so some animation for you all right subtractive methods on to the next thing uh so you've made a lot of stuff
+Seeding
+22:30
+some of it's good some of it's not um again we had this problem on Spore where some of our planets were good and some
+22:35
+of them weren't because we didn't have time to iterate and so the way we hacked that uh was we uh well I uh went through
+22:42
+a bunch of the planets we generated and saved the seeds of the ones that were good and if you have seeded random number generation you can then input the
+22:48
+name of the algorithm the seed that you're going to do and uh get the same content so you can actually kind of
+22:54
+whitelist a certain number of content it's often faster to do that than to make a proper algorithm
+22:59
+um never worry about doing it the right way just do whatever way works uh this kind of leads to something
+Generating Test
+23:04
+called generating test where if you can write an algorithm to judge quality you can then throw like generate stuff and
+23:10
+throw it away uh you have to be careful with this because if your algorithm is too loose and your constraint is too
+23:16
+high you can generate forever and never actually accept anything so you can hang so it's always better to do throwaway versus or like ranking prioritization
+23:22
+versus throwaway um and never use a fun equation ask me later what that means um
+Search
+23:28
+you can also computationally explore the possibility space uh this is Loosely called search um you can brute for Brute
+23:34
+Force search like you know find find me the tallest creature that my stuff can make or find me a level that has these
+23:41
+properties uh and you can just like grind through a bunch of levels and search for the one that's good but you can do it like in a slightly more
+23:47
+sophisticated way with things called hill climbing um genetic algorithms are a version of that those in particular
+23:53
+work best with parametric uh with parametric models there's also a little thing called constraint solving
+Constraint Solving
+23:59
+um so you probably know of this from ik solving of I have a limb here and a here figure out like where the limb should be
+24:05
+in the middle um there are ways to describe other problems so the one on the right is a little murder mystery
+24:11
+generator that I had whereas things like um you know somebody is jealous if there's a love triangle um if somebody's
+24:19
+jealous they have the mo a motive for murder give me a house full of 15 people five of which have the motive for murder
+24:24
+one of which committed a murder and which was not in the line of sight of anybody else um and there's solvers for
+24:30
+this don't ever write your own solver uh if you find yourself writing a solver this is often the way that really cool
+24:36
+Indie projects never get shipped um it it's the Northwest Passage of
+24:43
+Indie uh so be careful when you see that so yeah congratulations you've made a generator with a possibility space of
+Congratulations
+24:49
+really cool artifacts and good expressive range you win right uh no so
+24:54
+making use of generativity so you have a really great generator um maybe you can generate many things
+The 10000 Bowls of Oatmeal Problem
+25:00
+but they're all math and they're all mathematically unique and you loudly argue to your players that they're all
+25:05
+mathematically unique and know they're not actually all the same thing but they aren't perceived as being unique and is this a problem I call this the 10,000
+25:11
+bowls of oatmeal problem um and Michael Cook's got a really great article on on
+25:16
+what that meant for No Man's Sky Spore but also for us as Indies um but I think that sometimes
+Different Kinds of generative Content
+25:22
+it's a problem and sometimes it's not uh so there's different kinds of generative content some of it's in the background
+25:27
+uh if you have a buch of trees it's okay if they're not all unique um sometimes you just want procedure like perceptual
+25:33
+differentiation that I can tell that those aren't all the same identical tree they don't look like clone stamps of
+25:39
+each other but they're not like super unique uh sometimes you need things like that are a little bit more unique that
+25:44
+there is perceptual uniqueness so I can tell that the trees in this region are different than the trees in that region and then there's also character full uh
+25:50
+the test for that is would you write fanfic for this object uh if you would write fanfic for the generated object
+25:55
+which I would for some of the stuff that's coming out of my generators uh the best one I ever got was an angry nun in a wedding dress from one of my Patron
+26:01
+generators and I've written I I I've written fanfic for her in my mind um I really like this uh I'm going to there
+Procedurally Generated Scenes
+26:09
+we go uh I really like this scene in The Matrix because it's technically in in Canon it's a procedurally generated
+26:14
+scene that somebody has made in The Matrix um and the whole point of the scene is you're looking at the the woman in the red and you don't notice the
+26:20
+threat around you the funny thing that the wowski did with this scene I don't know if y all know this is everyone in the scene aside from the one in the red
+26:26
+dress is Twins and triplets uh so they managed to get procedural perceptual differentiation without
+26:32
+perceptual uniqueness so even even there they're uh understanding that you have the character full woman in the red
+26:38
+dress but you can have some kind of repeated stuff in the infill so knowing kind of how how interesting your PCG has
+26:44
+to be all right I'm coming almost to the end uh this is one of my favorite ones ownership is so important oh my God
+Ownership
+26:52
+ownership is a huge deal um I call this the the Victorian explorers phenomena uh
+26:58
+which is if you have a big wide open expansive space um allowing people to
+27:04
+find interesting bits of this space bring it back to their friends label it with their name and then hold it up in
+27:09
+front of their friends and say look how cool I am for finding like smart blat squirrel um you see this a lot in
+27:17
+European museums uh so wet players take credit for your generativity um sport
+generativity
+27:22
+did a really great job of this like we promoted the heck out of players who had made content that was technically in the
+27:27
+possibility space of our our thing and we could have found it if we'd looked hard enough but instead we promoted the heck out of the players and gave them
+27:33
+little Awards and let them even make rewards for each other um and there's games that are doing really great jobs
+27:39
+of this so like Dwarf Fortress um uh does a really great job of letting
+27:45
+people find the interesting content so go digging for the interesting content and then half of Dwarf Fortress Is
+27:51
+played on these storytelling boards where people then present their content that they found tell the story curate
+27:57
+other people's content so let your players become creators curators and retailers uh it should go
+28:02
+without saying that this is amazing for twitch let people self-promote using your generated content um and yeah
+data structures
+28:09
+finally uh data structures um these make your life easier uh Tracer is entirely
+28:15
+like the tracery generators are a Json format um you wouldn't think that this matters except that Json is a really
+28:21
+safe format so when I released tracery somebody was George Buckingham was able to make cheap bosson quick which takes
+28:27
+arbitrary Json that yahoos on the internet have posted runs that on his node server somehow it doesn't break
+28:33
+anything and then posts that to Twitter uh you can't do this with arbitrary JavaScript although I invite you to try
+28:39
+and invite me I'll have Pip I'll have popcorn um but with Json this is actually possible uh this also allows
+28:46
+you to do things like AB test generators release new generative content safely uh and then also visualize your generators
+28:51
+uh a couple years I think last year maybe there was a talk at the narrative Summit um by a group of guys who had
+28:57
+done a game called ice bound which is a big generative narrative project and during their project um they had made a
+visualization
+29:03
+whole bunch of really fascinating visualization for have we written enough content to cover this particular
+29:10
+situation um what are the different places where we could get to from this content and so they made themselves like
+29:15
+visualizations of how Troublesome certain things were and how much left they had to write so that's a really
+29:20
+cool thing you can do there um so yeah in review here's this uh allow users to
+in review
+29:26
+claim ownership where that Etc um but this should be in your Zen
+29:31
+and if you're still interested in PCG uh there's a ton of PCG going on here I even forgot to put one up on this slide
+PCG Sampler
+29:37
+that's the tech toolbox tomorrow so here's the PCG sampler menu of various G like GDC talks on PCG in various areas
+29:45
+um and yeah that puts me at exactly almost exactly time so I'm going to leave this here and I think we have 19
+29:51
+seconds for questions [Music] [Applause]
+30:00
+yeah we have time for for one question if you have a question come up through a mic in one of the aisles and then I have more Zen for tracery and uh all the
+Questions
+30:08
+stuff if I just throw them at you that'll you go so I guess I get the one question um how often do you create
+30:14
+something that's awesome but not performant that doesn't run fast enough generally how do you deal with premature
+30:21
+optimization is the root of all evil but oh yes so the question what do I do
+30:28
+if I get something that's awesome but not performant um I find another use for it so the thing that uh made that
+30:34
+generated skirt it's actually pretty slow but how often do I have to run a thing that I'm going to then send out to
+30:39
+print a generative skirt that can actually run quite slowly um the
+30:45
+performance uh stuff be aware of it um yeah that's a tough question I don't
+30:50
+actually have a good answer for that um honestly like the the Simplicity versus good design uh a lot of the stuff that
+30:57
+really makes p CG pop like this ownership stuff uh that doesn't take frame rate uh so do really clever design
+31:04
+around simpler stuff and you will people don't notice the depth of the generator off often but they do they do notice the
+31:11
+design around it than you Kate uh and I'll be in the
+31:16
+I'll be outside in the hallway and then go to the speaker wrap-up room if anybody wants ask

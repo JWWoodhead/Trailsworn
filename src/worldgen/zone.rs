@@ -2,6 +2,7 @@ use rand::{Rng, RngExt, SeedableRng};
 
 use super::noise_util::NoiseLayer;
 use crate::resources::map::TileWorld;
+use crate::resources::feature_defs::{FeatureId, FeatureRegistry};
 use crate::terrain::TerrainType;
 
 /// What kind of zone this world map cell is.
@@ -33,10 +34,19 @@ pub enum PoiKind {
     WildlifeSpawn { creature_count: u32 },
 }
 
+/// A terrain feature to be spawned as a y-sorted sprite entity.
+#[derive(Clone, Debug)]
+pub struct TerrainFeature {
+    pub x: u32,
+    pub y: u32,
+    pub kind: FeatureId,
+}
+
 /// The generated output for a zone.
 pub struct ZoneData {
     pub tile_world: TileWorld,
     pub pois: Vec<PointOfInterest>,
+    pub features: Vec<TerrainFeature>,
 }
 
 /// World-level context passed to zone generation for coherent terrain.
@@ -54,6 +64,8 @@ pub struct ZoneGenContext {
     pub river_width: f32,
     /// Neighbor zone types: [N, E, S, W]. None = ocean or map edge.
     pub neighbors: [Option<ZoneType>; 4],
+    /// Which edges border ocean: [N, E, S, W]. True = neighbor is Ocean.
+    pub ocean_edges: [bool; 4],
 }
 
 /// Generate a zone's tile map and points of interest (legacy API, no world context).
@@ -64,6 +76,7 @@ pub fn generate_zone(
     height: u32,
     seed: u64,
 ) -> ZoneData {
+    let registry = crate::resources::feature_defs::default_feature_registry();
     generate_zone_with_context(
         &ZoneGenContext {
             zone_type,
@@ -75,10 +88,12 @@ pub fn generate_zone(
             river_entry: [false; 4],
             river_width: 0.0,
             neighbors: [None; 4],
+            ocean_edges: [false; 4],
         },
         width,
         height,
         seed,
+        &registry,
     )
 }
 
@@ -88,6 +103,7 @@ pub fn generate_zone_with_context(
     width: u32,
     height: u32,
     seed: u64,
+    feature_registry: &FeatureRegistry,
 ) -> ZoneData {
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
@@ -97,10 +113,24 @@ pub fn generate_zone_with_context(
         _ => generate_biome_terrain(ctx, width, height, seed, &mut rng),
     };
 
+    // Apply directional coast water if this zone borders ocean
+    if ctx.zone_type == ZoneType::Coast && ctx.ocean_edges.iter().any(|e| *e) {
+        let coast_seed = (seed & 0xFFFFFFFF) as u32 ^ 0xC0A57;
+        let coast_noise = NoiseLayer::new(coast_seed, 0.04, 4);
+        apply_coast_water(&mut tile_world, ctx, &coast_noise);
+    }
+
     // Carve river if this zone has one
     if ctx.river {
         carve_river(&mut tile_world, ctx, &mut rng);
     }
+
+    // Scatter terrain features (modifies walk_cost/blocks_los, must happen before POI placement)
+    let features = if matches!(ctx.zone_type, ZoneType::Settlement | ZoneType::Ocean) {
+        Vec::new()
+    } else {
+        scatter_features(&mut tile_world, ctx, seed, feature_registry)
+    };
 
     let mut pois = Vec::new();
 
@@ -154,7 +184,38 @@ pub fn generate_zone_with_context(
         }
     }
 
-    ZoneData { tile_world, pois }
+    // Clear terrain around enemy camps and cull nearby features
+    let camp_radius = 4i32;
+    let feature_cull_dist = 6u32;
+    for poi in &pois {
+        if let PoiKind::EnemyCamp { .. } = &poi.kind {
+            // Clear a dirt patch around the camp
+            for dx in -camp_radius..=camp_radius {
+                for dy in -camp_radius..=camp_radius {
+                    if dx * dx + dy * dy > camp_radius * camp_radius {
+                        continue;
+                    }
+                    let tx = poi.x as i32 + dx;
+                    let ty = poi.y as i32 + dy;
+                    if tx >= 0 && ty >= 0 && tx < width as i32 && ty < height as i32 {
+                        tile_world.set_terrain(tx as u32, ty as u32, TerrainType::Dirt);
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove features that overlap with camp areas
+    let mut features = features;
+    features.retain(|f| {
+        !pois.iter().any(|poi| {
+            matches!(poi.kind, PoiKind::EnemyCamp { .. })
+                && f.x.abs_diff(poi.x) < feature_cull_dist
+                && f.y.abs_diff(poi.y) < feature_cull_dist
+        })
+    });
+
+    ZoneData { tile_world, pois, features }
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +304,7 @@ fn pick_biome_terrain(
             else { TerrainType::Grass }
         }
         ZoneType::Forest => {
-            if wetness > wt + 0.1 { TerrainType::Swamp }
+            if wetness > wt + 0.3 { TerrainType::Dirt } // wet areas become muddy, not swampy
             else if rocky > rt + 0.15 { TerrainType::Stone }
             else if detail > 0.7 { TerrainType::Grass }
             else if detail < 0.2 { TerrainType::Dirt }
@@ -331,6 +392,170 @@ fn apply_edge_blending(
             }
         }
     }
+}
+
+/// Apply directional water for coast zones based on which edges face ocean.
+///
+/// Creates a noise-modulated shoreline: water near the ocean edge, sand transition,
+/// then the biome interior. Replaces the generic wetness-based water placement.
+fn apply_coast_water(world: &mut TileWorld, ctx: &ZoneGenContext, noise: &NoiseLayer) {
+    let w = world.width;
+    let h = world.height;
+    let water_depth = 35.0f32; // tiles of water from ocean edge
+    let sand_depth = 50.0f32;  // tiles of sand/transition band
+
+    for y in 0..h {
+        for x in 0..w {
+            // Find minimum distance to any ocean edge
+            let distances = [
+                if ctx.ocean_edges[0] { Some((h - 1 - y) as f32) } else { None }, // N
+                if ctx.ocean_edges[1] { Some((w - 1 - x) as f32) } else { None }, // E
+                if ctx.ocean_edges[2] { Some(y as f32) } else { None },             // S
+                if ctx.ocean_edges[3] { Some(x as f32) } else { None },             // W
+            ];
+            let min_dist = distances.iter().filter_map(|d| *d).reduce(f32::min);
+
+            let Some(dist) = min_dist else { continue };
+
+            // Noise modulation: vary the shoreline
+            let n = noise.sample_normalized(x as f64, y as f64) as f32;
+            let noise_offset = (n - 0.5) * 15.0; // +/- 7.5 tiles of shoreline variation
+
+            let effective_dist = dist - noise_offset;
+
+            if effective_dist < water_depth {
+                world.set_terrain(x, y, TerrainType::Water);
+            } else if effective_dist < sand_depth {
+                world.set_terrain(x, y, TerrainType::Sand);
+            }
+            // Beyond sand_depth: keep existing biome terrain
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Terrain feature scattering
+// ---------------------------------------------------------------------------
+
+/// Scatter terrain features across the zone using noise-driven placement.
+///
+/// Reads feature definitions and biome tables from the registry.
+/// Modifies `tile_world.walk_cost` and `blocks_los` for blocking features.
+/// Must be called before POI placement so `find_open_spot` respects blocked tiles.
+fn scatter_features(
+    tile_world: &mut TileWorld,
+    ctx: &ZoneGenContext,
+    seed: u64,
+    registry: &FeatureRegistry,
+) -> Vec<TerrainFeature> {
+    let table = registry.biome_table(ctx.zone_type);
+    let target_density = registry.biome_density(ctx.zone_type);
+    if table.is_empty() || target_density == 0 {
+        return Vec::new();
+    }
+
+    let total_weight: u32 = table.iter().map(|(_, w)| w).sum();
+    if total_weight == 0 {
+        return Vec::new();
+    }
+
+    let feature_seed = seed ^ 0xFEA7;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(feature_seed);
+    let noise = NoiseLayer::new((feature_seed & 0xFFFFFFFF) as u32, 0.06, 3);
+
+    let w = tile_world.width;
+    let h = tile_world.height;
+    let margin = 5u32;
+    let stride = 4u32;
+
+    // Calculate placement probability to hit target density
+    let candidates = ((w - 2 * margin) / stride) * ((h - 2 * margin) / stride);
+    let place_prob = (target_density as f64 / candidates as f64).min(1.0);
+
+    let mut features = Vec::with_capacity(target_density as usize);
+    let mut blocking_count = 0u32;
+    let max_blocking = target_density / 10; // Cap blocking features at ~10%
+
+    for gy in (margin..(h - margin)).step_by(stride as usize) {
+        for gx in (margin..(w - margin)).step_by(stride as usize) {
+            // RNG-driven placement with noise modulation for spatial clustering
+            let n = noise.sample_normalized(gx as f64, gy as f64);
+            let adjusted_prob = place_prob * (0.5 + n);
+            if rng.random::<f64>() > adjusted_prob {
+                continue;
+            }
+
+            // Small random offset within the stride cell to avoid grid patterns
+            let x = gx + rng.random_range(0..stride.min(w - margin - gx));
+            let y = gy + rng.random_range(0..stride.min(h - margin - gy));
+
+            let idx = tile_world.idx(x, y);
+
+            // Only place on walkable, non-water, non-mountain terrain
+            if tile_world.walk_cost[idx] <= 0.0 {
+                continue;
+            }
+            if tile_world.terrain[idx] == TerrainType::Water
+                || tile_world.terrain[idx] == TerrainType::Mountain
+            {
+                continue;
+            }
+
+            // Weighted random selection from the biome table
+            let roll = rng.random_range(0..total_weight);
+            let mut accum = 0u32;
+            let mut selected_id = table[0].0;
+            for &(id, weight) in table {
+                accum += weight;
+                if roll < accum {
+                    selected_id = id;
+                    break;
+                }
+            }
+
+            let Some(def) = registry.get(selected_id) else { continue };
+
+            // Cap blocking features
+            if def.blocks_movement && blocking_count >= max_blocking {
+                continue;
+            }
+
+            // Don't block a tile if it would isolate neighbors
+            if def.blocks_movement {
+                let mut walkable_neighbors = 0u32;
+                for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+                    if nx >= 0 && ny >= 0 && nx < w as i32 && ny < h as i32 {
+                        let ni = tile_world.idx(nx as u32, ny as u32);
+                        if tile_world.walk_cost[ni] > 0.0 {
+                            walkable_neighbors += 1;
+                        }
+                    }
+                }
+                if walkable_neighbors < 3 {
+                    continue;
+                }
+                blocking_count += 1;
+            }
+
+            // Apply blocking effects to tile_world
+            if def.blocks_movement {
+                tile_world.walk_cost[idx] = 0.0;
+            }
+            if def.blocks_los {
+                tile_world.blocks_los[idx] = true;
+            }
+
+            features.push(TerrainFeature {
+                x,
+                y,
+                kind: selected_id,
+            });
+        }
+    }
+
+    features
 }
 
 /// Carve a river across the zone using world-level entry/exit metadata.
@@ -528,11 +753,23 @@ fn generate_settlement(ctx: &ZoneGenContext, width: u32, height: u32, rng: &mut 
             }
         }
         ZoneType::Coast => {
-            // Water along the south edge (ocean-facing)
-            for x in 0..width {
-                for y in 0..8 {
-                    world.set_terrain(x, y, TerrainType::Water);
-                }
+            // Water along ocean-facing edges
+            let depth = 8;
+            if ctx.ocean_edges[0] { // N
+                for x in 0..width { for y in (height - depth)..height { world.set_terrain(x, y, TerrainType::Water); } }
+            }
+            if ctx.ocean_edges[1] { // E
+                for x in (width - depth)..width { for y in 0..height { world.set_terrain(x, y, TerrainType::Water); } }
+            }
+            if ctx.ocean_edges[2] { // S
+                for x in 0..width { for y in 0..depth { world.set_terrain(x, y, TerrainType::Water); } }
+            }
+            if ctx.ocean_edges[3] { // W
+                for x in 0..depth { for y in 0..height { world.set_terrain(x, y, TerrainType::Water); } }
+            }
+            // Fallback: no ocean edges known, default south
+            if !ctx.ocean_edges.iter().any(|e| *e) {
+                for x in 0..width { for y in 0..depth { world.set_terrain(x, y, TerrainType::Water); } }
             }
         }
         ZoneType::Swamp => {
@@ -698,8 +935,10 @@ mod tests {
             river_entry: [false, true, false, true], // W to E
             river_width: 0.5,
             neighbors: [None; 4],
+            ocean_edges: [false; 4],
         };
-        let data = generate_zone_with_context(&ctx, 250, 250, 42);
+        let registry = crate::resources::feature_defs::default_feature_registry();
+        let data = generate_zone_with_context(&ctx, 250, 250, 42, &registry);
         let water_count = data
             .tile_world
             .terrain
@@ -721,8 +960,10 @@ mod tests {
             river_entry: [false; 4],
             river_width: 0.0,
             neighbors: [Some(ZoneType::Desert), None, None, None], // Desert to the north
+            ocean_edges: [false; 4],
         };
-        let data = generate_zone_with_context(&ctx, 250, 250, 42);
+        let registry = crate::resources::feature_defs::default_feature_registry();
+        let data = generate_zone_with_context(&ctx, 250, 250, 42, &registry);
         // Check that the north edge (high y) has some sand tiles
         let north_sand = (220..250)
             .flat_map(|y| (0..250).map(move |x| (x, y)))
@@ -808,5 +1049,139 @@ mod tests {
             .filter(|t| **t == TerrainType::Water)
             .count();
         assert!(water_count > 200, "Swamp zone should have water features, got {water_count}");
+    }
+
+    #[test]
+    fn coast_south_ocean_has_water_at_bottom() {
+        let ctx = ZoneGenContext {
+            zone_type: ZoneType::Coast,
+            has_cave: false,
+            elevation: 0.5,
+            moisture: 0.5,
+            temperature: 0.5,
+            river: false,
+            river_entry: [false; 4],
+            river_width: 0.0,
+            neighbors: [Some(ZoneType::Grassland), None, None, None],
+            ocean_edges: [false, false, true, false], // S ocean
+        };
+        let registry = crate::resources::feature_defs::default_feature_registry();
+        let data = generate_zone_with_context(&ctx, 250, 250, 42, &registry);
+        // Bottom 20 rows should have mostly water
+        let bottom_water = (0..250)
+            .flat_map(|x| (0..20).map(move |y| (x, y)))
+            .filter(|&(x, y)| data.tile_world.terrain[data.tile_world.idx(x, y)] == TerrainType::Water)
+            .count();
+        // Top 20 rows should have very little water
+        let top_water = (0..250)
+            .flat_map(|x| (230..250).map(move |y| (x, y)))
+            .filter(|&(x, y)| data.tile_world.terrain[data.tile_world.idx(x, y)] == TerrainType::Water)
+            .count();
+        assert!(bottom_water > 3000, "South coast should have water at bottom, got {bottom_water}");
+        assert!(top_water < 500, "South coast should NOT have water at top, got {top_water}");
+    }
+
+    #[test]
+    fn coast_north_ocean_has_water_at_top() {
+        let ctx = ZoneGenContext {
+            zone_type: ZoneType::Coast,
+            has_cave: false,
+            elevation: 0.5,
+            moisture: 0.5,
+            temperature: 0.5,
+            river: false,
+            river_entry: [false; 4],
+            river_width: 0.0,
+            neighbors: [None, None, Some(ZoneType::Grassland), None],
+            ocean_edges: [true, false, false, false], // N ocean
+        };
+        let registry = crate::resources::feature_defs::default_feature_registry();
+        let data = generate_zone_with_context(&ctx, 250, 250, 42, &registry);
+        // Top 20 rows should have mostly water
+        let top_water = (0..250)
+            .flat_map(|x| (230..250).map(move |y| (x, y)))
+            .filter(|&(x, y)| data.tile_world.terrain[data.tile_world.idx(x, y)] == TerrainType::Water)
+            .count();
+        // Bottom 20 rows should have very little water
+        let bottom_water = (0..250)
+            .flat_map(|x| (0..20).map(move |y| (x, y)))
+            .filter(|&(x, y)| data.tile_world.terrain[data.tile_world.idx(x, y)] == TerrainType::Water)
+            .count();
+        assert!(top_water > 3000, "North coast should have water at top, got {top_water}");
+        assert!(bottom_water < 500, "North coast should NOT have water at bottom, got {bottom_water}");
+    }
+
+    #[test]
+    fn features_scattered_per_biome() {
+        let biomes = [
+            (ZoneType::Grassland, 150, 800),
+            (ZoneType::Forest, 200, 1000),
+            (ZoneType::Mountain, 100, 700),
+            (ZoneType::Desert, 80, 500),
+            (ZoneType::Tundra, 100, 600),
+            (ZoneType::Swamp, 150, 800),
+            (ZoneType::Coast, 100, 600),
+        ];
+        for (zone_type, min, max) in biomes {
+            let data = generate_zone(zone_type, false, 250, 250, 42);
+            let count = data.features.len();
+            assert!(
+                count >= min && count <= max,
+                "{zone_type:?}: expected {min}-{max} features, got {count}"
+            );
+        }
+    }
+
+    #[test]
+    fn features_on_walkable_terrain() {
+        let data = generate_zone(ZoneType::Forest, false, 250, 250, 42);
+        for feature in &data.features {
+            assert!(feature.x < 250 && feature.y < 250, "Feature out of bounds");
+            let idx = data.tile_world.idx(feature.x, feature.y);
+            let terrain = data.tile_world.terrain[idx];
+            assert!(
+                terrain != TerrainType::Water && terrain != TerrainType::Mountain,
+                "Feature at ({},{}) on {:?}", feature.x, feature.y, terrain
+            );
+        }
+    }
+
+    #[test]
+    fn settlement_has_no_features() {
+        let data = generate_zone(ZoneType::Settlement, false, 250, 250, 42);
+        assert!(data.features.is_empty(), "Settlement should have no features");
+    }
+
+    #[test]
+    fn forest_terrain_breakdown() {
+        let data = generate_zone(ZoneType::Forest, false, 250, 250, 42);
+        let total = data.tile_world.terrain.len();
+        let mut counts = std::collections::HashMap::new();
+        for t in &data.tile_world.terrain {
+            *counts.entry(format!("{:?}", t)).or_insert(0usize) += 1;
+        }
+        let mut sorted: Vec<_> = counts.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(a.1));
+        for (name, count) in &sorted {
+            let pct = **count as f64 / total as f64 * 100.0;
+            eprintln!("  {name}: {count} ({pct:.1}%)");
+        }
+    }
+
+    #[test]
+    fn blocking_features_update_walk_cost() {
+        let registry = crate::resources::feature_defs::default_feature_registry();
+        let data = generate_zone(ZoneType::Mountain, false, 250, 250, 42);
+        for feature in &data.features {
+            let def = registry.get(feature.kind).unwrap();
+            if def.blocks_movement {
+                let idx = data.tile_world.idx(feature.x, feature.y);
+                assert_eq!(
+                    data.tile_world.walk_cost[idx], 0.0,
+                    "Blocking feature at ({},{}) should set walk_cost to 0",
+                    feature.x, feature.y
+                );
+            }
+        }
     }
 }

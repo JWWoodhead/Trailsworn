@@ -82,7 +82,7 @@ pub fn generate_cave(width: u32, height: u32, seed: u64) -> ZoneData {
         }
     }
 
-    ZoneData { tile_world, pois }
+    ZoneData { tile_world, pois, features: Vec::new() }
 }
 
 fn count_wall_neighbors(is_wall: &[bool], x: u32, y: u32, width: u32, height: u32) -> u32 {

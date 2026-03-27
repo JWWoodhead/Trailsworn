@@ -1,11 +1,13 @@
 use rand::{Rng, RngExt, SeedableRng};
 
+use super::divine_era::DivineTerrainType;
+use super::gods::GodId;
 use super::names;
 use super::noise_util::NoiseLayer;
 use super::zone::{ZoneGenContext, ZoneType};
 
 /// Position on the world grid.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WorldPos {
     pub x: i32,
     pub y: i32,
@@ -26,6 +28,19 @@ impl WorldPos {
     }
 }
 
+/// Size of a settlement on the world map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SettlementSize {
+    /// Tiny community (10-50 people). Keeps natural zone type.
+    Hamlet,
+    /// Small community (50-200). Keeps natural zone type.
+    Village,
+    /// Medium settlement (200-1000). Gets ZoneType::Settlement.
+    Town,
+    /// Large settlement (1000+). Gets ZoneType::Settlement.
+    City,
+}
+
 /// A cell on the world map grid.
 #[derive(Clone, Debug)]
 pub struct WorldCell {
@@ -42,6 +57,12 @@ pub struct WorldCell {
     pub river_width: f32,
     pub region_id: Option<u32>,
     pub settlement_name: Option<String>,
+    /// Size of settlement at this cell, if any.
+    pub settlement_size: Option<SettlementSize>,
+    /// Divine terrain overlay — what kind of divine scar exists here, if any.
+    pub divine_terrain: Option<DivineTerrainType>,
+    /// Which god last owned this cell during the divine era.
+    pub divine_owner: Option<GodId>,
 }
 
 impl WorldCell {
@@ -58,6 +79,9 @@ impl WorldCell {
             river_width: 0.0,
             region_id: None,
             settlement_name: None,
+            settlement_size: None,
+            divine_terrain: None,
+            divine_owner: None,
         }
     }
 }
@@ -101,6 +125,12 @@ impl WorldMap {
     pub fn zone_context(&self, pos: WorldPos) -> Option<ZoneGenContext> {
         let cell = self.get(pos)?;
         let neighbors_pos = pos.neighbors(); // [N, E, S, W]
+        let ocean_edges = [
+            self.get(neighbors_pos[0]).is_some_and(|c| c.zone_type == ZoneType::Ocean),
+            self.get(neighbors_pos[1]).is_some_and(|c| c.zone_type == ZoneType::Ocean),
+            self.get(neighbors_pos[2]).is_some_and(|c| c.zone_type == ZoneType::Ocean),
+            self.get(neighbors_pos[3]).is_some_and(|c| c.zone_type == ZoneType::Ocean),
+        ];
         let neighbors = [
             self.get(neighbors_pos[0]).map(|c| c.zone_type).filter(|z| *z != ZoneType::Ocean),
             self.get(neighbors_pos[1]).map(|c| c.zone_type).filter(|z| *z != ZoneType::Ocean),
@@ -117,6 +147,7 @@ impl WorldMap {
             river_entry: cell.river_entry,
             river_width: cell.river_width,
             neighbors,
+            ocean_edges,
         })
     }
 }
@@ -702,54 +733,98 @@ fn assign_regions(cells: &mut [WorldCell], width: u32, height: u32) {
     }
 }
 
-/// Place settlements on suitable land cells, spaced apart.
+/// Place settlements of varying sizes on suitable land cells.
+/// Distribution: ~40 hamlets, ~20 villages, ~8 towns, ~3 cities (scaled to map size).
+/// Only towns and cities get ZoneType::Settlement; hamlets and villages keep natural terrain.
 fn place_settlements(cells: &mut [WorldCell], width: u32, height: u32, rng: &mut impl Rng) {
-    let target_count = (width as usize * height as usize / 10000).clamp(2, 12);
-    let min_dist_sq = (width.min(height) / 8).pow(2) as u32;
+    let scale = (width as f32 * height as f32) / (256.0 * 256.0); // 1.0 for default map
+    let targets = [
+        (SettlementSize::City,   (3.0 * scale) as usize),
+        (SettlementSize::Town,   (8.0 * scale) as usize),
+        (SettlementSize::Village, (20.0 * scale) as usize),
+        (SettlementSize::Hamlet, (40.0 * scale) as usize),
+    ];
 
-    // Candidates: Grassland or Forest, prefer river adjacency
-    let mut candidates: Vec<(usize, bool)> = cells
+    // Minimum distance between settlements (squared), by size.
+    // Cities are spaced far apart, hamlets can be close together.
+    fn min_dist_sq(size: SettlementSize, map_side: u32) -> u32 {
+        let base = map_side / 4;
+        match size {
+            SettlementSize::City   => (base).pow(2),
+            SettlementSize::Town   => (base * 2 / 3).pow(2),
+            SettlementSize::Village => (base / 3).pow(2),
+            SettlementSize::Hamlet => (base / 5).pow(2),
+        }
+    }
+
+    // Candidates: habitable land (Grassland, Forest, Coast, Swamp, Desert, Tundra)
+    // Prefer river adjacency and grassland/forest
+    let mut candidates: Vec<(usize, u32)> = cells
         .iter()
         .enumerate()
-        .filter(|(_, c)| matches!(c.zone_type, ZoneType::Grassland | ZoneType::Forest))
-        .map(|(i, c)| (i, c.river))
+        .filter(|(_, c)| matches!(c.zone_type,
+            ZoneType::Grassland | ZoneType::Forest | ZoneType::Coast
+            | ZoneType::Swamp | ZoneType::Desert | ZoneType::Tundra))
+        .map(|(i, c)| {
+            let mut weight = 1u32;
+            if matches!(c.zone_type, ZoneType::Grassland | ZoneType::Forest) { weight += 2; }
+            if c.river { weight += 3; }
+            (i, weight)
+        })
         .collect();
 
-    // Sort river-adjacent first, then shuffle within each group
-    candidates.sort_by_key(|(_, has_river)| if *has_river { 0 } else { 1 });
-    // Shuffle within river group
-    let river_end = candidates.iter().position(|(_, r)| !r).unwrap_or(candidates.len());
-    for i in (1..river_end).rev() {
-        let j = rng.random_range(0..=i);
-        candidates.swap(i, j);
-    }
-    // Shuffle non-river group
-    for i in (river_end + 1..candidates.len()).rev() {
-        let j = rng.random_range(river_end..=i);
-        candidates.swap(i, j);
-    }
-
-    let mut placed: Vec<(u32, u32)> = Vec::new();
-
-    for (i, _) in &candidates {
-        if placed.len() >= target_count {
-            break;
+    // Sort by weight descending, shuffle within weight groups
+    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    let mut start = 0;
+    while start < candidates.len() {
+        let w = candidates[start].1;
+        let end = candidates[start..].iter().position(|(_, cw)| *cw != w)
+            .map(|p| start + p).unwrap_or(candidates.len());
+        for i in (start + 1..end).rev() {
+            let j = rng.random_range(start..=i);
+            candidates.swap(i, j);
         }
-        let x = (*i as u32) % width;
-        let y = (*i as u32) / width;
+        start = end;
+    }
 
-        // Check minimum distance from existing settlements
-        let too_close = placed
-            .iter()
-            .any(|(sx, sy)| x.abs_diff(*sx).pow(2) + y.abs_diff(*sy).pow(2) < min_dist_sq);
-        if too_close {
-            continue;
+    let map_side = width.min(height);
+    let mut placed: Vec<(u32, u32, SettlementSize)> = Vec::new();
+
+    // Place each tier largest-first so cities get the best spots
+    for &(size, target_count) in &targets {
+        let _dist_sq = min_dist_sq(size, map_side);
+        let mut count = 0;
+
+        for (i, _) in &candidates {
+            if count >= target_count { break; }
+            let x = (*i as u32) % width;
+            let y = (*i as u32) / width;
+
+            // Already has a settlement?
+            if cells[*i].settlement_name.is_some() { continue; }
+
+            // Distance check against same-or-larger settlements
+            let too_close = placed.iter().any(|(sx, sy, existing_size)| {
+                let d = x.abs_diff(*sx).pow(2) + y.abs_diff(*sy).pow(2);
+                // Use the stricter (larger) distance of the two
+                let required = min_dist_sq(size.max(*existing_size), map_side);
+                d < required
+            });
+            if too_close { continue; }
+
+            // Towns and cities change zone type; hamlets and villages keep natural terrain
+            match size {
+                SettlementSize::Town | SettlementSize::City => {
+                    cells[*i].zone_type = ZoneType::Settlement;
+                    cells[*i].has_cave = false;
+                }
+                _ => {}
+            }
+            cells[*i].settlement_name = Some(names::settlement_name(rng));
+            cells[*i].settlement_size = Some(size);
+            placed.push((x, y, size));
+            count += 1;
         }
-
-        cells[*i].zone_type = ZoneType::Settlement;
-        cells[*i].has_cave = false;
-        cells[*i].settlement_name = Some(names::settlement_name(rng));
-        placed.push((x, y));
     }
 }
 
@@ -808,8 +883,24 @@ mod tests {
     #[test]
     fn world_map_has_settlement() {
         let map = generate_world_map(64, 64, 42);
-        let has_settlement = map.cells.iter().any(|c| c.zone_type == ZoneType::Settlement);
+        let has_settlement = map.cells.iter().any(|c| c.settlement_name.is_some());
         assert!(has_settlement);
+    }
+
+    #[test]
+    fn large_map_has_settlement_variety() {
+        let map = generate_world_map(256, 256, 42);
+        let hamlets = map.cells.iter().filter(|c| c.settlement_size == Some(SettlementSize::Hamlet)).count();
+        let villages = map.cells.iter().filter(|c| c.settlement_size == Some(SettlementSize::Village)).count();
+        let towns = map.cells.iter().filter(|c| c.settlement_size == Some(SettlementSize::Town)).count();
+        let cities = map.cells.iter().filter(|c| c.settlement_size == Some(SettlementSize::City)).count();
+        assert!(hamlets > 10, "Expected >10 hamlets, got {}", hamlets);
+        assert!(villages > 5, "Expected >5 villages, got {}", villages);
+        assert!(towns > 2, "Expected >2 towns, got {}", towns);
+        assert!(cities >= 1, "Expected >=1 city, got {}", cities);
+        // Towns and cities should have ZoneType::Settlement
+        let zone_settlements = map.cells.iter().filter(|c| c.zone_type == ZoneType::Settlement).count();
+        assert_eq!(zone_settlements, towns + cities);
     }
 
     #[test]

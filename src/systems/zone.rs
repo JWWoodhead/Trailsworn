@@ -8,6 +8,7 @@ use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::combat::InCombat;
 use crate::resources::damage::{EquippedArmor, EquippedWeapon};
 use crate::resources::faction::Faction;
+use crate::resources::feature_defs::FeatureRegistry;
 use crate::resources::game_state::GameState;
 use crate::resources::game_time::GameTime;
 use crate::resources::identity::StableId;
@@ -16,7 +17,7 @@ use crate::resources::item_defs::{
 };
 use crate::resources::pack::PackId;
 use crate::resources::items::{Equipment, EquipSlot, ItemInstanceRegistry, ItemRegistry};
-use crate::resources::map::{GridPosition, MapSettings, render_layers};
+use crate::resources::map::{GridPosition, MapSettings, TerrainFeatureEntity, render_layers};
 use crate::resources::movement::{FacingDirection, MovementSpeed, PathOffset};
 use crate::resources::stats::{Attributes, CharacterLevel};
 use crate::resources::status_effects::ActiveStatusEffects;
@@ -25,12 +26,111 @@ use crate::resources::world::{CurrentZone, EntryEdge, ZoneTransitionEvent};
 use crate::resources::abilities::{Mana, Stamina};
 use crate::resources::zone_persistence::ZoneSpawnIndex;
 use crate::systems::spawning::{create_item_instance, EntityName, PlayerControlled, placeholder_weapon};
-use crate::worldgen::zone::PoiKind;
+use crate::worldgen::zone::{PoiKind, ZoneType};
 use crate::worldgen::{WorldMap, WorldPos};
 
 /// Marker for entities that belong to the current zone and should be despawned on transition.
 #[derive(Component)]
 pub struct ZoneEntity;
+
+/// Holds the starting zone's generated data so the startup system can spawn features + POIs.
+#[derive(Resource)]
+pub struct StartingZoneData {
+    pub pois: Vec<crate::worldgen::zone::PointOfInterest>,
+    pub features: Vec<crate::worldgen::zone::TerrainFeature>,
+    pub zone_type: ZoneType,
+}
+
+/// Spawn features and POI entities for the starting zone (runs once on startup).
+pub fn spawn_starting_zone(
+    mut commands: Commands,
+    starting_data: Option<Res<StartingZoneData>>,
+    map_settings: Res<MapSettings>,
+    body_templates: Res<BodyTemplates>,
+    item_registry: Res<ItemRegistry>,
+    mut instance_registry: ResMut<ItemInstanceRegistry>,
+    _zone_cache: Res<crate::resources::zone_persistence::ZoneStateCache>,
+    asset_server: Res<AssetServer>,
+    feature_registry: Res<FeatureRegistry>,
+) {
+    let Some(data) = starting_data else { return };
+
+    let pawn_texture: Handle<Image> = asset_server.load("pawn.png");
+    let map_height_px = map_settings.height as f32 * map_settings.tile_size;
+
+    // Spawn features
+    for feature in &data.features {
+        let Some(def) = feature_registry.get(feature.kind) else { continue };
+        let world_x = feature.x as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+        let world_y = feature.y as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+        let z = render_layers::y_sorted_z(world_y, map_height_px, render_layers::TERRAIN_FEATURES);
+
+        let (image, color, custom_size, y_offset) = if let Some(sprite_path) = def.sprite {
+            let size = map_settings.tile_size * def.scale;
+            (asset_server.load(sprite_path), Color::WHITE, Some(Vec2::new(size, size)), size * 0.5)
+        } else {
+            let c = def.placeholder_color;
+            (pawn_texture.clone(), Color::srgba(c[0], c[1], c[2], c[3]), None, 0.0)
+        };
+
+        commands.spawn((
+            ZoneEntity,
+            TerrainFeatureEntity,
+            DespawnOnExit(GameState::Playing),
+            Sprite { image, color, custom_size, ..default() },
+            Transform::from_translation(Vec3::new(world_x, world_y + y_offset, z)),
+        ));
+    }
+
+    // Spawn POIs
+    let template = match body_templates.get("humanoid") {
+        Some(t) => t,
+        None => {
+            commands.remove_resource::<StartingZoneData>();
+            return;
+        }
+    };
+
+    let mut spawn_index = 0u32;
+    let snapshot = None; // No snapshot for fresh starting zone
+    for poi in &data.pois {
+        match &poi.kind {
+            PoiKind::EnemyCamp { enemy_count } => {
+                spawn_enemy_camp(
+                    &mut commands, &pawn_texture, &map_settings, template,
+                    &item_registry, &mut instance_registry,
+                    poi.x, poi.y, *enemy_count, spawn_index, snapshot,
+                );
+                spawn_index += enemy_count;
+            }
+            PoiKind::WildlifeSpawn { creature_count } => {
+                spawn_wildlife_group(
+                    &mut commands, &pawn_texture, &map_settings, template,
+                    &item_registry, &mut instance_registry,
+                    poi.x, poi.y, *creature_count, spawn_index, snapshot,
+                    data.zone_type,
+                );
+                spawn_index += creature_count;
+            }
+            PoiKind::CaveEntrance => {
+                let world_x = poi.x as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+                let world_y = poi.y as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+                commands.spawn((
+                    Name::new("Cave Entrance"), ZoneEntity, DespawnOnExit(GameState::Playing),
+                    Sprite {
+                        image: pawn_texture.clone(), color: Color::srgb(0.3, 0.3, 0.3),
+                        custom_size: Some(Vec2::new(map_settings.tile_size * 2.0, map_settings.tile_size * 2.0)),
+                        ..default()
+                    },
+                    Transform::from_translation(Vec3::new(world_x, world_y, render_layers::TERRAIN_FEATURES)),
+                    GridPosition::new(poi.x, poi.y),
+                ));
+            }
+        }
+    }
+
+    commands.remove_resource::<StartingZoneData>();
+}
 
 /// Detect when player walks to the edge of the map and fire a transition event.
 pub fn detect_zone_edge(
@@ -87,6 +187,7 @@ pub fn handle_zone_transition(
         With<ZoneEntity>,
     >,
     mut player_query: Query<&mut GridPosition, (With<PlayerControlled>, Without<ZoneEntity>)>,
+    feature_registry: Res<FeatureRegistry>,
 ) {
     let Some(event) = transition_events.read().last() else {
         return;
@@ -143,6 +244,7 @@ pub fn handle_zone_transition(
         map_settings.width,
         map_settings.height,
         current_zone.zone_seed,
+        &feature_registry,
     );
 
     // Replace tile world
@@ -162,8 +264,39 @@ pub fn handle_zone_transition(
         grid_pos.y = spawn_y;
     }
 
+    // Spawn terrain features (lightweight entities, no persistence)
+    let pawn_texture: Handle<Image> = asset_server.load("pawn.png");
+    let map_height_px = map_settings.height as f32 * map_settings.tile_size;
+    for feature in &zone_data.features {
+        let Some(def) = feature_registry.get(feature.kind) else { continue };
+        let world_x = feature.x as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+        let world_y = feature.y as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+        let z = render_layers::y_sorted_z(world_y, map_height_px, render_layers::TERRAIN_FEATURES);
+
+        let (image, color, custom_size, y_offset) = if let Some(sprite_path) = def.sprite {
+            let size = map_settings.tile_size * def.scale;
+            // Offset Y up by half sprite height so the bottom sits on the tile
+            (asset_server.load(sprite_path), Color::WHITE, Some(Vec2::new(size, size)), size * 0.5)
+        } else {
+            let c = def.placeholder_color;
+            (pawn_texture.clone(), Color::srgba(c[0], c[1], c[2], c[3]), None, 0.0)
+        };
+
+        commands.spawn((
+            ZoneEntity,
+            TerrainFeatureEntity,
+            DespawnOnExit(GameState::Playing),
+            Sprite {
+                image,
+                color,
+                custom_size,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(world_x, world_y + y_offset, z)),
+        ));
+    }
+
     // Spawn POI entities
-    let pawn_texture = asset_server.load("pawn.png");
     let template = match body_templates.get("humanoid") {
         Some(t) => t,
         None => return,
@@ -190,8 +323,7 @@ pub fn handle_zone_transition(
                 spawn_index += enemy_count;
             }
             PoiKind::WildlifeSpawn { creature_count } => {
-                // TODO: wildlife entities — use enemy camp for now
-                spawn_enemy_camp(
+                spawn_wildlife_group(
                     &mut commands,
                     &pawn_texture,
                     &map_settings,
@@ -203,11 +335,33 @@ pub fn handle_zone_transition(
                     *creature_count,
                     spawn_index,
                     new_zone_snapshot,
+                    ctx.zone_type,
                 );
                 spawn_index += creature_count;
             }
             PoiKind::CaveEntrance => {
-                // TODO: cave entrance interactable
+                let world_x = poi.x as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+                let world_y = poi.y as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+                commands.spawn((
+                    Name::new("Cave Entrance"),
+                    ZoneEntity,
+                    DespawnOnExit(GameState::Playing),
+                    Sprite {
+                        image: pawn_texture.clone(),
+                        color: Color::srgb(0.3, 0.3, 0.3),
+                        custom_size: Some(Vec2::new(
+                            map_settings.tile_size * 2.0,
+                            map_settings.tile_size * 2.0,
+                        )),
+                        ..default()
+                    },
+                    Transform::from_translation(Vec3::new(
+                        world_x,
+                        world_y,
+                        render_layers::TERRAIN_FEATURES,
+                    )),
+                    GridPosition::new(poi.x, poi.y),
+                ));
             }
         }
     }
@@ -471,6 +625,166 @@ pub fn spawn_enemy_camp(
             ActiveStatusEffects::default(),
             ThreatTable::default(),
             crate::resources::abilities::AbilitySlots::new(abilities),
+        ));
+        entity_commands.insert((
+            behavior,
+            RepathTimer::default(),
+            AiBrain::enemy(),
+            InCombat,
+            equipment,
+            ZoneSpawnIndex(spawn_idx),
+            pack_id,
+        ));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wildlife spawning
+// ---------------------------------------------------------------------------
+
+const FACTION_WILDLIFE: u32 = 3;
+
+/// Pick a wildlife name appropriate for the biome.
+fn wildlife_name(zone_type: ZoneType, index: u32, rng: &mut impl rand::RngExt) -> String {
+    let pool: &[&str] = match zone_type {
+        ZoneType::Forest => &["Wolf", "Boar", "Stag", "Bear"],
+        ZoneType::Grassland => &["Boar", "Stag", "Hare", "Bison"],
+        ZoneType::Swamp => &["Croc", "Serpent", "Toad", "Leech"],
+        ZoneType::Coast => &["Crab", "Gull", "Seal"],
+        ZoneType::Mountain => &["Goat", "Eagle", "Bear"],
+        ZoneType::Desert => &["Hyena", "Scorpion", "Vulture"],
+        ZoneType::Tundra => &["Wolf", "Bear", "Elk"],
+        _ => &["Beast"],
+    };
+    let name = pool[rng.random_range(0..pool.len())];
+    format!("{} {}", name, index + 1)
+}
+
+/// Spawn a group of wildlife entities. Similar to enemy camps but with neutral
+/// faction, brown tint, simpler combat, and biome-appropriate names.
+fn spawn_wildlife_group(
+    commands: &mut Commands,
+    texture: &Handle<Image>,
+    map_settings: &MapSettings,
+    body_template: &crate::resources::body::BodyTemplate,
+    item_registry: &ItemRegistry,
+    instance_registry: &mut ItemInstanceRegistry,
+    cx: u32,
+    cy: u32,
+    count: u32,
+    spawn_index_start: u32,
+    snapshot: Option<&crate::resources::zone_persistence::ZoneSnapshot>,
+    zone_type: ZoneType,
+) {
+    let mut rng = rand::rng();
+
+    for i in 0..count {
+        let spawn_idx = spawn_index_start + i;
+
+        // Skip dead entities from snapshot
+        if let Some(snap) = snapshot
+            && snap.dead_indices.contains(&spawn_idx)
+        {
+            continue;
+        }
+
+        let alive_override = snapshot.and_then(|s| s.alive_overrides.get(&spawn_idx));
+
+        let name = wildlife_name(zone_type, i, &mut rng);
+        let sprite_color = Color::srgb(0.7, 0.5, 0.3); // Brown/tan
+
+        // Wildlife: basic melee, no special abilities, high flee threshold
+        let weapon_item_id = ITEM_KNOBWOOD_CLUB; // placeholder "claws/bite"
+        let attributes = Attributes { strength: 5, agility: 5, toughness: 4, ..Default::default() };
+        let mut behavior = CombatBehavior::melee_enemy(vec![]);
+        behavior.flee_hp_threshold = 0.40; // Wildlife flees sooner
+
+        // Weapon instance
+        let weapon_instance_id = if let Some(entity_snap) = alive_override {
+            entity_snap.equipment_instance_ids
+                .iter()
+                .find(|(slot, _)| *slot == EquipSlot::MainHand)
+                .map(|(_, id)| *id)
+                .unwrap_or_else(|| create_item_instance(weapon_item_id, instance_registry))
+        } else {
+            create_item_instance(weapon_item_id, instance_registry)
+        };
+
+        let placeholder = placeholder_weapon(weapon_item_id, item_registry);
+
+        let mut equipment = Equipment::default();
+        equipment.equip(EquipSlot::MainHand, weapon_instance_id);
+
+        // Position: snapshot or offset from center
+        let (ex, ey) = if let Some(entity_snap) = alive_override {
+            entity_snap.position
+        } else {
+            let offset_x = (i % 3) as i32 - 1;
+            let offset_y = (i / 3) as i32 - 1;
+            (
+                (cx as i32 + offset_x * 2).max(0) as u32,
+                (cy as i32 + offset_y * 2).max(0) as u32,
+            )
+        };
+        let grid_pos = GridPosition::new(ex, ey);
+        let world_pos = grid_pos.to_world(map_settings.tile_size);
+
+        // Body
+        let mut body = Body::from_template(body_template);
+        if let Some(entity_snap) = alive_override {
+            for (j, part) in body.parts.iter_mut().enumerate() {
+                if j < entity_snap.body_part_hp.len() {
+                    part.current_hp = entity_snap.body_part_hp[j];
+                    part.destroyed = entity_snap.body_part_destroyed[j];
+                }
+            }
+        }
+
+        // Resources
+        let mut mana = Mana::new(0.0); // Wildlife has no mana
+        let mut stamina = Stamina::new(40.0);
+        if let Some(entity_snap) = alive_override {
+            mana.current = entity_snap.mana_current;
+            stamina.current = entity_snap.stamina_current;
+        }
+
+        let pack_id = PackId(spawn_index_start);
+
+        let mut entity_commands = commands.spawn((
+            Name::new(name.clone()),
+            StableId::next(),
+            DespawnOnExit(GameState::Playing),
+            ZoneEntity,
+            Sprite {
+                image: texture.clone(),
+                color: sprite_color,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(
+                world_pos.x,
+                world_pos.y,
+                render_layers::ENTITIES,
+            )),
+            grid_pos,
+            MovementSpeed::default(),
+            FacingDirection::default(),
+            PathOffset::random(&mut rng),
+            Faction(FACTION_WILDLIFE),
+            EntityName(name),
+        ));
+
+        entity_commands.insert((
+            body,
+            attributes,
+            CharacterLevel::default(),
+            EquippedWeapon::new(placeholder),
+            EquippedArmor::default(),
+            EquipmentBonuses::default(),
+            mana,
+            stamina,
+            ActiveStatusEffects::default(),
+            ThreatTable::default(),
+            crate::resources::abilities::AbilitySlots::new(vec![]),
         ));
         entity_commands.insert((
             behavior,

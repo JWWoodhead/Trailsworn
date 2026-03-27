@@ -64,7 +64,8 @@
       "Bash(\"C:/Program Files \\(x86\\)/Microsoft Visual Studio/Installer/vswhere.exe\" -all -format json)",
       "Bash(cargo search:*)",
       "Bash(cargo tree:*)",
-      "Bash(use trailsworn::worldgen::gods::build_god_pool)"
+      "Bash(use trailsworn::worldgen::gods::build_god_pool)",
+      "Bash(python3:*)"
     ]
   }
 }

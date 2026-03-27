@@ -96,6 +96,11 @@ impl GridPosition {
     }
 }
 
+/// Marker for terrain feature entities (trees, rocks, etc.).
+/// These are deterministic from seed and don't participate in persistence.
+#[derive(Component)]
+pub struct TerrainFeatureEntity;
+
 /// Render layer z-values for consistent ordering.
 pub mod render_layers {
     pub const TERRAIN: f32 = 0.0;

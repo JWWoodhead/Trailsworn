@@ -8,6 +8,8 @@ pub type FactionId = u32;
 pub const FACTION_NONE: FactionId = 0;
 /// The player's party faction.
 pub const FACTION_PLAYER: FactionId = 1;
+/// Wildlife faction — neutral until attacked.
+pub const FACTION_WILDLIFE: FactionId = 3;
 
 /// Which faction an entity belongs to.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]

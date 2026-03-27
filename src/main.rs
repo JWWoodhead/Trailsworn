@@ -4,6 +4,7 @@ use trailsworn::resources::terrain_material::TerrainMaterial;
 use trailsworn::resources::abilities::AbilityRegistry;
 use trailsworn::resources::ability_defs::register_starter_abilities;
 use trailsworn::resources::affix_defs::register_starter_affixes;
+use trailsworn::resources::feature_defs::{register_features, FeatureRegistry};
 use trailsworn::resources::affixes::AffixRegistry;
 use trailsworn::resources::item_defs::register_starter_items;
 use trailsworn::resources::items::{ItemInstanceRegistry, ItemRegistry};
@@ -27,8 +28,31 @@ use trailsworn::systems::{
 use rand::SeedableRng;
 use trailsworn::worldgen::world_map::generate_world_map;
 
+/// Parse `--biome <type>` from CLI args.
+fn biome_override_from_args() -> Option<trailsworn::worldgen::zone::ZoneType> {
+    use trailsworn::worldgen::zone::ZoneType;
+    let args: Vec<String> = std::env::args().collect();
+    let idx = args.iter().position(|a| a == "--biome")?;
+    let name = args.get(idx + 1)?.to_lowercase();
+    match name.as_str() {
+        "grassland" | "grass" => Some(ZoneType::Grassland),
+        "forest" => Some(ZoneType::Forest),
+        "mountain" => Some(ZoneType::Mountain),
+        "desert" => Some(ZoneType::Desert),
+        "tundra" | "snow" => Some(ZoneType::Tundra),
+        "swamp" => Some(ZoneType::Swamp),
+        "coast" | "beach" => Some(ZoneType::Coast),
+        "settlement" | "town" => Some(ZoneType::Settlement),
+        _ => {
+            eprintln!("Unknown biome: {name}. Options: grassland, forest, mountain, desert, tundra, swamp, coast, settlement");
+            None
+        }
+    }
+}
+
 fn main() {
     let debug_flags = debug::DebugFlags::from_args();
+    let biome_override = biome_override_from_args();
     let world_seed = 42u64; // TODO: randomize or accept from CLI
 
     let settings = MapSettings::default();
@@ -37,7 +61,8 @@ fn main() {
     body_templates.register(humanoid_template());
 
     let mut faction_relations = FactionRelations::default();
-    faction_relations.set(1, 2, Disposition::Hostile);
+    faction_relations.set(1, 2, Disposition::Hostile); // Player vs Bandits
+    // Wildlife (faction 3) is Neutral by default (FactionRelations returns Neutral for unknown pairs)
 
     // Populate ability and status effect registries
     let mut ability_registry = AbilityRegistry::default();
@@ -50,15 +75,52 @@ fn main() {
     let mut affix_registry = AffixRegistry::default();
     register_starter_affixes(&mut affix_registry);
 
+    let mut feature_registry = FeatureRegistry::default();
+    register_features(&mut feature_registry);
+
     // Generate world map
-    let world_map = generate_world_map(256, 256, world_seed);
-    let spawn_pos = world_map.spawn_pos;
+    let mut world_map = generate_world_map(256, 256, world_seed);
+    let spawn_pos = if let Some(target_biome) = biome_override {
+        // Search for the nearest zone of the requested biome type
+        let default_pos = world_map.spawn_pos;
+        let mut best = None;
+        let mut best_dist = i32::MAX;
+        for y in 0..world_map.height as i32 {
+            for x in 0..world_map.width as i32 {
+                let pos = trailsworn::worldgen::WorldPos { x, y };
+                if let Some(cell) = world_map.get(pos) {
+                    if cell.zone_type == target_biome {
+                        let dx = x - default_pos.x;
+                        let dy = y - default_pos.y;
+                        let dist = dx * dx + dy * dy;
+                        if dist < best_dist {
+                            best_dist = dist;
+                            best = Some(pos);
+                        }
+                    }
+                }
+            }
+        }
+        match best {
+            Some(pos) => { eprintln!("Spawning in {:?} at ({},{})", target_biome, pos.x, pos.y); pos }
+            None => { eprintln!("No {:?} zone found, using default spawn", target_biome); default_pos }
+        }
+    } else {
+        world_map.spawn_pos
+    };
     let current_zone = CurrentZone::new(world_seed, spawn_pos);
 
     // Build god pool and draw this run's pantheon
     let god_pool = trailsworn::worldgen::gods::build_god_pool();
     let mut pantheon_rng = rand::rngs::StdRng::seed_from_u64(world_seed);
     let drawn_pantheon = god_pool.draw_pantheon(6, &mut pantheon_rng);
+
+    // Run divine era simulation (modifies world_map in place)
+    let divine_config = trailsworn::worldgen::divine_era::DivineEraConfig::default();
+    let divine_history = trailsworn::worldgen::divine_era::generate_divine_era(
+        &divine_config, &mut world_map, &god_pool, &drawn_pantheon,
+        world_seed.wrapping_add(1000),
+    );
 
     // Generate the starting zone's tile world
     let start_ctx = world_map.zone_context(spawn_pos).unwrap();
@@ -67,6 +129,7 @@ fn main() {
         settings.width,
         settings.height,
         current_zone.zone_seed,
+        &feature_registry,
     );
 
     let mut app = App::new();
@@ -88,6 +151,11 @@ fn main() {
     // Resources
     .insert_resource(settings)
     .insert_resource(start_zone.tile_world)
+    .insert_resource(zone::StartingZoneData {
+        pois: start_zone.pois,
+        features: start_zone.features,
+        zone_type: start_ctx.zone_type,
+    })
     .insert_resource(GameTime::default())
     .insert_resource(faction_relations)
     .insert_resource(body_templates)
@@ -95,6 +163,7 @@ fn main() {
     .insert_resource(status_registry)
     .insert_resource(item_registry)
     .insert_resource(affix_registry)
+    .insert_resource(feature_registry)
     .insert_resource(ItemInstanceRegistry::default())
     .insert_resource(Theme::default())
     .insert_resource(StableIdRegistry::default())
@@ -111,6 +180,7 @@ fn main() {
     .insert_resource(current_zone)
     .insert_resource(god_pool)
     .insert_resource(drawn_pantheon)
+    .insert_resource(divine_history)
     .insert_resource(trailsworn::resources::zone_persistence::ZoneStateCache::default())
     // Messages
     .add_message::<DamageDealtEvent>()
@@ -145,7 +215,7 @@ fn main() {
             ability_bar::setup_ability_bar,
             ui_panel::setup_ui_panel,
             world_map_ui::setup_world_map_ui,
-            spawn_initial_zone_entities,
+            zone::spawn_starting_zone,
             transition_to_playing,
         )
             .chain(),
@@ -275,62 +345,6 @@ fn main() {
     app.run();
 }
 
-/// Spawn enemies from the starting zone's POIs.
-fn spawn_initial_zone_entities(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    map_settings: Res<MapSettings>,
-    body_templates: Res<BodyTemplates>,
-    item_registry: Res<ItemRegistry>,
-    mut instance_registry: ResMut<ItemInstanceRegistry>,
-    current_zone: Res<CurrentZone>,
-    world_map: Res<trailsworn::worldgen::WorldMap>,
-) {
-    let cell = match world_map.get(current_zone.world_pos) {
-        Some(c) => c.clone(),
-        None => return,
-    };
-
-    let zone_data = trailsworn::worldgen::zone::generate_zone(
-        cell.zone_type,
-        cell.has_cave,
-        map_settings.width,
-        map_settings.height,
-        current_zone.zone_seed,
-    );
-
-    let pawn_texture = asset_server.load("pawn.png");
-    let template = match body_templates.get("humanoid") {
-        Some(t) => t,
-        None => return,
-    };
-
-    let mut spawn_index = 0u32;
-    for poi in &zone_data.pois {
-        match &poi.kind {
-            trailsworn::worldgen::zone::PoiKind::EnemyCamp { enemy_count }
-            | trailsworn::worldgen::zone::PoiKind::WildlifeSpawn { creature_count: enemy_count } => {
-                zone::spawn_enemy_camp(
-                    &mut commands,
-                    &pawn_texture,
-                    &map_settings,
-                    template,
-                    &item_registry,
-                    &mut instance_registry,
-                    poi.x,
-                    poi.y,
-                    *enemy_count,
-                    spawn_index,
-                    None, // No snapshot for initial spawn
-                );
-                spawn_index += enemy_count;
-            }
-            trailsworn::worldgen::zone::PoiKind::CaveEntrance => {
-                // TODO: cave entrance interactable
-            }
-        }
-    }
-}
 
 fn transition_to_playing(mut next_state: ResMut<NextState<GameState>>) {
     next_state.set(GameState::Playing);

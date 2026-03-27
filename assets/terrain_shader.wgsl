@@ -1,174 +1,105 @@
 #import bevy_ecs_tilemap::common::{tilemap_data, sprite_texture, sprite_sampler}
 #import bevy_ecs_tilemap::vertex_output::MeshVertexOutput
 
-// Our custom material bindings (group 3)
+// Custom material bindings (group 3)
 @group(3) @binding(0) var terrain_textures: texture_2d_array<f32>;
 @group(3) @binding(1) var terrain_sampler: sampler;
 @group(3) @binding(2) var terrain_map: texture_2d<u32>;
 
 struct TerrainParams {
     texture_scale: f32,
-    blend_depth: f32,
-    corner_radius: f32,
+    blend_texture_tiles: f32,
     map_width: f32,
+    _padding: f32,
 };
 @group(3) @binding(3) var<uniform> params: TerrainParams;
 
-// Terrain blend priorities (must match TerrainType::blend_priority in Rust)
-// tex_index == blend_priority for all types (both follow enum order)
-fn priority(terrain_type: u32) -> u32 {
-    switch terrain_type {
-        case 0u: { return 0u; } // Grass
-        case 1u: { return 1u; } // Dirt
-        case 2u: { return 2u; } // Sand
-        case 3u: { return 3u; } // Snow
-        case 4u: { return 4u; } // Swamp
-        case 5u: { return 5u; } // Stone
-        case 6u: { return 6u; } // Forest
-        case 7u: { return 7u; } // Water
-        case 8u: { return 8u; } // Mountain
-        default: { return 0u; }
-    }
-}
+@group(3) @binding(4) var blend_texture: texture_2d<f32>;
+@group(3) @binding(5) var blend_sampler: sampler;
 
-// Smooth edge gradient: 1.0 at t=0, fading to 0.0 at blend_depth
-fn edge_gradient(t: f32, depth: f32) -> f32 {
-    let border = 0.03; // ~2px solid border at 64px tiles
-    if t <= border {
-        return 1.0;
-    }
-    let adjusted = (t - border) / (depth - border);
-    if adjusted >= 1.0 {
-        return 0.0;
-    }
-    return 0.5 * (1.0 + cos(adjusted * 3.14159265));
-}
-
-// Smooth corner gradient: radial from corner
-fn corner_gradient(dx: f32, dy: f32, radius: f32) -> f32 {
-    let border = 0.03;
-    let dist = sqrt(dx * dx + dy * dy);
-    if dist <= border {
-        return 1.0;
-    }
-    let adjusted = (dist - border) / (radius - border);
-    if adjusted >= 1.0 {
-        return 0.0;
-    }
-    return 0.5 * (1.0 + cos(adjusted * 3.14159265));
-}
-
-// Read terrain data at a tile coordinate, with bounds checking.
-// Returns vec4<u32>: r=terrain_type, g=random_offset_x (0-255), b=random_offset_y (0-255), a=255
-fn read_terrain_data(coord: vec2<i32>) -> vec4<u32> {
-    let map_w = i32(params.map_width);
-    let map_h = i32(params.map_width); // square map
-    if coord.x < 0 || coord.y < 0 || coord.x >= map_w || coord.y >= map_h {
-        return vec4<u32>(0u, 0u, 0u, 255u);
-    }
-    return textureLoad(terrain_map, coord, 0);
-}
-
+// Read terrain type at a tile coordinate, with bounds checking.
 fn read_terrain(coord: vec2<i32>) -> u32 {
-    return read_terrain_data(coord).r;
+    let map_w = i32(params.map_width);
+    let map_h = i32(params.map_width);
+    if coord.x < 0 || coord.y < 0 || coord.x >= map_w || coord.y >= map_h {
+        return 0u;
+    }
+    return textureLoad(terrain_map, coord, 0).r;
 }
 
-// Compute blend alpha from a specific neighbor direction
-fn compute_neighbor_blend(local_uv: vec2<f32>, dir_idx: u32) -> f32 {
-    let depth = params.blend_depth;
-    let radius = params.corner_radius;
-
-    // UV convention: local_uv.x = 0 at left, 1 at right
-    //                local_uv.y (w) = 0 at NORTH/top, 1 at SOUTH/bottom
-    // (confirmed from tilemap_vertex.wgsl: bot_left vertex gets w=1, top_left gets w=0)
-    switch dir_idx {
-        // Cardinals
-        case 0u: { return edge_gradient(local_uv.y, depth); }              // North: max at y=0 (top)
-        case 1u: { return edge_gradient(1.0 - local_uv.x, depth); }        // East: max at x=1 (right)
-        case 2u: { return edge_gradient(1.0 - local_uv.y, depth); }        // South: max at y=1 (bottom)
-        case 3u: { return edge_gradient(local_uv.x, depth); }              // West: max at x=0 (left)
-        // Corners
-        case 4u: { return corner_gradient(1.0 - local_uv.x, local_uv.y, radius); }        // NE: top-right
-        case 5u: { return corner_gradient(1.0 - local_uv.x, 1.0 - local_uv.y, radius); }  // SE: bottom-right
-        case 6u: { return corner_gradient(local_uv.x, 1.0 - local_uv.y, radius); }        // SW: bottom-left
-        case 7u: { return corner_gradient(local_uv.x, local_uv.y, radius); }               // NW: top-left
-        default: { return 0.0; }
-    }
+// Get the color for a terrain type at the current pixel.
+// Uses world_tile position for megatexture-style tiling (texture repeats every texture_scale tiles).
+fn get_terrain_color(world_tile: vec2<f32>, local_uv: vec2<f32>, terrain_type: u32) -> vec4<f32> {
+    let world_uv = (world_tile + local_uv) / params.texture_scale;
+    return textureSample(terrain_textures, terrain_sampler, world_uv, i32(terrain_type));
 }
 
 @fragment
 fn fragment(in: MeshVertexOutput) -> @location(0) vec4<f32> {
-    // World tile coordinate
+    // World tile coordinate and local position within tile
     let world_tile = tilemap_data.chunk_pos + vec2<f32>(in.storage_position);
     let local_uv = in.uv.zw; // 0..1 within tile
-
-    // Read this tile's terrain data (type + random UV offset)
     let tile_coord = vec2<i32>(world_tile);
-    let tile_data = read_terrain_data(tile_coord);
-    let my_type = tile_data.r;
-    let my_pri = priority(my_type);
 
-    // Per-tile random UV offset breaks visible repetition pattern
-    let rand_offset = vec2<f32>(f32(tile_data.g), f32(tile_data.b)) / 255.0;
+    // Current tile's terrain type
+    let my_type = read_terrain(tile_coord);
 
-    // World-space UV with per-tile random offset for texture variation
-    let world_uv = (world_tile + local_uv + rand_offset) / params.texture_scale;
-
-    // Sample base terrain texture at world-space UV
-    var color = textureSample(terrain_textures, terrain_sampler, world_uv, i32(my_type));
-
-    // Neighbor offsets: N, E, S, W, NE, SE, SW, NW
-    let offsets = array<vec2<i32>, 8>(
-        vec2<i32>(0, 1), vec2<i32>(1, 0), vec2<i32>(0, -1), vec2<i32>(-1, 0),
-        vec2<i32>(1, 1), vec2<i32>(1, -1), vec2<i32>(-1, -1), vec2<i32>(-1, 1)
+    // Pixel position within tile (0 to tile_px-1), matching Godot's getPixelPosInTile
+    let tile_px = params.blend_texture_tiles; // blend texture pixels per tile = tex_size / tile_count
+    // Actually: px_per_tile = blend_tex_width / blend_texture_tiles
+    let blend_tex_size = textureDimensions(blend_texture, 0);
+    let px_per_tile_f = f32(blend_tex_size.x) / params.blend_texture_tiles;
+    let pixel_in_tile = vec2<f32>(
+        floor(local_uv.x * px_per_tile_f),
+        floor(local_uv.y * px_per_tile_f),
     );
 
-    // For each neighbor, blend higher-priority terrains on top
-    // Process in priority order: first find the highest-priority neighbor,
-    // then blend all directions that have that terrain
-    var best_pri = 0u;
-    var best_type = 0u;
-    var blend_mask = 0u; // bitmask of directions with the best terrain
+    // Quadrant detection: which edges/corner are we closest to?
+    // Matches Godot: horizontal = clamp((-halfTile) + pixelPos.x, -1, 1)
+    let half_tile = px_per_tile_f * 0.5;
+    let horizontal = clamp(-half_tile + pixel_in_tile.x, -1.0, 1.0);
+    let vertical = clamp(-half_tile + pixel_in_tile.y, -1.0, 1.0);
 
-    for (var i = 0u; i < 8u; i++) {
-        let n_type = read_terrain(tile_coord + offsets[i]);
-        let n_pri = priority(n_type);
+    // Neighbor tile offsets (sign gives direction: -1=left/up, +1=right/down, 0=center)
+    let h_dir = i32(sign(horizontal));
+    let v_dir = i32(sign(vertical));
 
-        if n_pri > my_pri {
-            if n_pri > best_pri {
-                best_pri = n_pri;
-                best_type = n_type;
-                blend_mask = 1u << i;
-            } else if n_pri == best_pri {
-                blend_mask |= 1u << i;
-            }
-        }
-    }
+    // In our coordinate system, tile Y increases northward but local_uv.y=0 is north.
+    // So vertical > 0 means pixel is in south half → sample south neighbor = (0, -1)
+    let h_offset = vec2<i32>(h_dir, 0);
+    let v_offset = vec2<i32>(0, -v_dir); // flip Y: south in UV = -1 in tile coords
+    let c_offset = vec2<i32>(h_dir, -v_dir);
 
-    if best_pri > my_pri {
-        // Suppress corners where adjacent cardinal already covers
-        let has_n = (blend_mask & 1u) != 0u;
-        let has_e = (blend_mask & 2u) != 0u;
-        let has_s = (blend_mask & 4u) != 0u;
-        let has_w = (blend_mask & 8u) != 0u;
+    // Get terrain types for neighbors
+    let h_type = read_terrain(tile_coord + h_offset);
+    let v_type = read_terrain(tile_coord + v_offset);
+    let c_type = read_terrain(tile_coord + c_offset);
 
-        if has_n || has_e { blend_mask &= ~16u; } // suppress NE corner
-        if has_e || has_s { blend_mask &= ~32u; } // suppress SE corner
-        if has_s || has_w { blend_mask &= ~64u; } // suppress SW corner
-        if has_w || has_n { blend_mask &= ~128u; } // suppress NW corner
+    // Sample terrain colors (all use current tile's world position for coherent UVs)
+    let color_self = get_terrain_color(world_tile, local_uv, my_type);
+    let color_h = get_terrain_color(world_tile, local_uv, h_type);
+    let color_v = get_terrain_color(world_tile, local_uv, v_type);
+    let color_c = get_terrain_color(world_tile, local_uv, c_type);
 
-        // Compute max alpha from all active directions
-        var alpha = 0.0;
-        for (var i = 0u; i < 8u; i++) {
-            if (blend_mask & (1u << i)) != 0u {
-                alpha = max(alpha, compute_neighbor_blend(local_uv, i));
-            }
-        }
+    // Sample blend texture using integer pixel coordinates (texelFetch equivalent)
+    // Matches Godot: modX = (mod(tile.x, blendTextureTiles) * tileSizeInPixels) + pixelPosInTile.x
+    let blend_tile_x = i32(world_tile.x) % i32(params.blend_texture_tiles);
+    let blend_tile_y = i32(world_tile.y) % i32(params.blend_texture_tiles);
+    let blend_px = vec2<i32>(
+        blend_tile_x * i32(px_per_tile_f) + i32(pixel_in_tile.x),
+        blend_tile_y * i32(px_per_tile_f) + i32(pixel_in_tile.y),
+    );
+    // Use textureLoad (integer lookup, no filtering) — matches Godot's texelFetch
+    let blend_raw = textureLoad(blend_texture, blend_px, 0);
 
-        // Sample the higher-priority terrain at world-space UV and blend
-        let blend_color = textureSample(terrain_textures, terrain_sampler, world_uv, i32(best_type));
-        color = mix(color, blend_color, alpha);
-    }
+    // Extract blend strengths: channel * 255 / 100 (matching Godot)
+    let str_h = blend_raw.r * 255.0 / 100.0;
+    let str_v = blend_raw.g * 255.0 / 100.0;
+    let str_c = blend_raw.b * 255.0 / 100.0;
+    let str_self = blend_raw.a * 255.0 / 100.0;
+
+    // Weighted blend (additive, same as Godot)
+    let color = color_self * str_self + color_h * str_h + color_v * str_v + color_c * str_c;
 
     return color * in.color;
 }

@@ -7,16 +7,15 @@ use bevy_ecs_tilemap::prelude::*;
 pub struct TerrainParams {
     /// World tiles per texture repeat (e.g., 4.0 = texture repeats every 4 tiles).
     pub texture_scale: f32,
-    /// Edge blend depth as fraction of tile (0.0-1.0).
-    pub blend_depth: f32,
-    /// Corner blend radius as fraction of tile (0.0-1.0).
-    pub corner_radius: f32,
+    /// How many tiles the blend texture covers before repeating.
+    pub blend_texture_tiles: f32,
     /// Map width in tiles (for bounds checking in shader).
     pub map_width: f32,
+    pub _padding: f32,
 }
 
 /// Custom terrain material that renders terrain with world-space UV tiling
-/// and dynamic per-pixel blending between terrain types.
+/// and Rimworld-style weighted-average blending between terrain types.
 #[derive(AsBindGroup, TypePath, Debug, Clone, Default, Asset)]
 pub struct TerrainMaterial {
     /// 2D array texture with one layer per terrain type (512×512 each).
@@ -31,6 +30,11 @@ pub struct TerrainMaterial {
     /// Shader parameters.
     #[uniform(3)]
     pub params: TerrainParams,
+
+    /// Blend weight texture (RGBA: R=horizontal, G=vertical, B=corner, A=self).
+    #[texture(4, dimension = "2d")]
+    #[sampler(5)]
+    pub blend_texture: Handle<Image>,
 }
 
 impl MaterialTilemap for TerrainMaterial {

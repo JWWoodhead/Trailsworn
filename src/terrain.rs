@@ -49,9 +49,9 @@ impl TerrainType {
     /// Render priority for terrain blending. Higher priority bleeds onto lower.
     pub fn blend_priority(self) -> u8 {
         match self {
-            Self::Grass => 0,
-            Self::Dirt => 1,
-            Self::Sand => 2,
+            Self::Dirt => 0,
+            Self::Sand => 1,
+            Self::Grass => 2,
             Self::Snow => 3,
             Self::Swamp => 4,
             Self::Stone => 5,

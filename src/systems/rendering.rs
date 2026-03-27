@@ -39,16 +39,30 @@ pub fn spawn_tilemap(
     let terrain_map_image = create_terrain_map_image(&tile_world);
     let terrain_map_handle = images.add(terrain_map_image);
 
+    // Load blend weight texture (RGBA channels control edge blending)
+    let blend_tex_handle: Handle<Image> = asset_server.load_with_settings(
+        "blend_texture.png",
+        |settings: &mut bevy::image::ImageLoaderSettings| {
+            settings.is_srgb = false; // data texture, not color
+            settings.sampler = ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
+                address_mode_u: bevy::image::ImageAddressMode::Repeat,
+                address_mode_v: bevy::image::ImageAddressMode::Repeat,
+                ..bevy::image::ImageSamplerDescriptor::linear()
+            });
+        },
+    );
+
     // Create the material
     let material = TerrainMaterial {
         terrain_textures: terrain_tex_handle,
         terrain_map: terrain_map_handle.clone(),
         params: TerrainParams {
             texture_scale: 4.0,
-            blend_depth: 0.5,
-            corner_radius: 0.5,
+            blend_texture_tiles: 8.0,
             map_width: tile_world.width as f32,
+            _padding: 0.0,
         },
+        blend_texture: blend_tex_handle,
     };
     let material_handle = materials.add(material);
 

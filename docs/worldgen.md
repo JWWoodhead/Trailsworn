@@ -26,7 +26,7 @@
 
 ## Zone Generation (`worldgen/zone.rs`)
 - **Noise-based terrain**: 3 noise layers per zone (detail, wetness, rocky) drive per-tile terrain selection
-- **Context-aware**: `ZoneGenContext` carries world-level elevation/moisture/temperature + neighbor zone types
+- **Context-aware**: `ZoneGenContext` carries world-level elevation/moisture/temperature + neighbor zone types + ocean edge directions
 - **Biome recipes**: each `ZoneType` has a terrain selection function mapping noise values to terrain types:
   - Grassland: grass base, dirt/forest/stone/water from noise
   - Forest: forest base, grass clearings, dirt paths, swamp patches
@@ -34,11 +34,15 @@
   - Desert: sand base, rare oasis water, stone outcrops
   - Tundra: snow base, stone/dirt/mountain from noise
   - Swamp: swamp base, water pools, grass/dirt islands
-  - Coast: sand base, water/grass/dirt blending
+  - Coast: sand base, **directional water toward ocean** (noise-modulated shoreline), sand transition band
 - **Edge blending**: within 30 tiles of zone borders, terrain blends toward neighbor's base terrain via noise threshold
+- **Coast direction**: `ocean_edges: [bool; 4]` on `ZoneGenContext` tracks which edges face ocean. Coast zones place water on the correct side(s).
 - **River carving**: uses world-level entry/exit edges and width. Noise-driven curved path with variable width (2-10 tiles) and dirt riverbanks.
-- **Settlement**: biome-aware theming (sand in desert, snow in tundra, raised stone paths in swamp, water edge on coast). Named settlements with procedural names.
-- POIs: cave entrances, enemy camps (1-3, 2-5 enemies), wildlife spawns
+- **Terrain features**: 200-800 per zone, noise-driven scatter with per-biome feature tables. 28 feature kinds (trees, rocks, bushes, etc.). Blocking features update walk_cost/blocks_los. Spawned as y-sorted sprite entities on `TERRAIN_FEATURES` layer.
+- **Settlement**: biome-aware theming (sand in desert, snow in tundra, raised stone paths in swamp, directional water on coast). Named settlements with procedural names.
+- **Enemy camps**: 1-3 per zone, 2-5 enemies. Clear a dirt patch around camp center. Features culled within 6 tiles.
+- **Wildlife**: 1-2 spawns per zone (grassland/forest/swamp/coast). Neutral faction (fights back if attacked). Biome-appropriate names.
+- **Cave entrances**: visible dark placeholder sprite (2x tile size)
 - Deterministic from seed
 
 ## Terrain Types (`terrain.rs`)
@@ -55,6 +59,19 @@
 | Forest   | 1.5       | true       | 0.8          | 6              |
 | Water    | 0.0       | false      | 0.0          | 7              |
 | Mountain | 0.0       | true       | 0.0          | 8              |
+
+## Terrain Features (`terrain.rs`)
+28 feature kinds across 7 biomes + universal. Each has `blocks_movement()`, `blocks_los()`, and `placeholder_color()`.
+- **Universal**: BoulderSmall, BoulderLarge, Bush
+- **Grassland**: LoneTree, TallGrass, Wildflowers
+- **Forest**: DeciduousTree, ConiferTree, FallenLog, TreeStump, MushroomCluster
+- **Mountain**: RockSpire, RubblePile, DeadTreeAlpine
+- **Desert**: Cactus, DesertScrub, BleachedBones, SandWornRock
+- **Tundra**: SnowPine, IceChunk, FrozenDeadTree
+- **Swamp**: SwampTree, ReedCluster, HangingMoss
+- **Coast**: Driftwood, BeachGrass, TidalRock
+
+Spawned as `TerrainFeatureEntity` + `ZoneEntity` on `TERRAIN_FEATURES` layer (z=1.0) with y-sorting. No persistence — deterministic from seed.
 
 ## Cave Generation (`worldgen/cave.rs`)
 - Cellular automata: 45% random fill -> 5 iterations of 4-5 smoothing rule

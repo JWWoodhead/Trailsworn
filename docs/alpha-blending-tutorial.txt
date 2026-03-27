@@ -1,0 +1,1420 @@
+Introduction
+0:02
+hello everyone
+0:04
+in this tutorial i will explain how to
+0:06
+make a rimroll style tile map shader in
+0:08
+google
+0:10
+this tutorial assumes that you have
+0:11
+basic shader knowledge such as
+0:13
+understanding how uv coordinates work
+0:15
+and basic shader mathematics
+0:18
+if you do not then i highly advise that
+0:20
+you watch some basic shader tutorials
+0:22
+before continuing
+0:24
+so first of all let me explain what the
+0:27
+rimmel style top map shader is the idea
+0:30
+behind this kind of shader is that the
+0:32
+textures are larger than the tile size
+0:36
+in the current example that you're
+0:37
+seeing right now the textures are 1024
+0:40
+by 1024 pixels
+0:43
+while the tile size is 64 by 64 pixels
+0:46
+so in other words if you divide 1024
+0:50
+by 64 you will get 16
+0:53
+so the textures are 16 by 16 tiles so
+0:57
+any feature will at most repeat every 16
+1:00
+tiles
+1:01
+so if i stop the scrolling here and zoom
+1:04
+in on some of the sand for instance
+1:06
+you can see the sand has a very this
+1:09
+very distinct ridge features that are
+1:11
+repeating every six thin tiles
+1:14
+i can also turn off the blending so it's
+1:15
+a bit easier to see
+1:17
+or count the tiles if you wish to do so
+1:21
+so let's just zoom out and resume
+1:23
+scrolling
+1:24
+and
+Small example
+1:25
+for more visual example we can take a
+1:27
+look at this
+1:29
+six by six tile map
+1:31
+this tile map has two textures that are
+1:34
+each three by three tiles
+1:36
+so now i'm just going to fill this tom
+1:38
+up with some random data
+1:40
+you can see that each cell has been
+1:42
+assigned
+1:43
+added to texture a or picture b now as
+1:45
+we go through the tiles i will take the
+1:48
+x and y coordinate of the tile
+1:51
+and use the modulus operator against the
+1:54
+width and the height
+1:56
+of the texture
+1:58
+so for example
+2:00
+if you take this cell 43 here
+2:02
+you would take the x-coordinate for and
+2:05
+then you take the width of texture a in
+2:08
+tiles which is 3
+2:09
+so it will be 4 mod 3 which is 1 and
+2:13
+then you would take the y coordinate 3
+2:16
+and mod it with the height of the
+2:18
+texture a which is 3 which would then be
+2:21
+zero so in other words we should be
+2:23
+using section one zero
+2:26
+from texture a in this cell
+2:30
+so now we can just repeat this for the
+2:31
+rest of the tile map and you can see
+2:34
+that each texture
+2:36
+repeats every three cells
+2:40
+if the textures you use are seamless
+2:42
+like in the
+2:43
+example in the background
+2:45
+the repetition will be a lot harder to
+2:46
+spot
+2:48
+but in this example here i used or i
+2:50
+deliberately used uh
+2:53
+textures that are not seamless so that's
+2:54
+a lot easier to see how the repetition
+2:57
+works
+2:58
+so for instance for a good example let's
+3:00
+take a look at this screenshot from
+3:04
+uses the same technique and their
+3:06
+textures are also
+3:09
+1024x1024 pixels
+3:11
+i'm not certain what their tile size is
+3:13
+but this means that the
+3:15
+tiles are repeating after a certain
+3:18
+distance
+3:20
+however because of all the foliage
+3:23
+objects fire shadow debris characters
+3:26
+trees
+3:27
+and the dirt on the ground and such all
+3:30
+these other things that removal has on
+3:32
+top of the tile map it becomes very very
+3:35
+difficult to spot the repetition
+3:37
+of the tiles
+3:40
+so how does this time-lapse shader
+3:42
+compare to the built-in good old tile
+3:44
+map
+Advantages of this shader
+3:45
+let's first go through some of the
+3:47
+advantages of this shader
+3:50
+in the example you can see in the
+3:51
+background
+3:52
+i've added some scripts so that it
+3:54
+shunks the tile map and it can go on
+3:57
+forever
+3:59
+each of the chunks
+4:00
+will only use a single draw call
+4:02
+this means that in the example you're
+4:04
+seeing right now if i set the chunk size
+4:06
+relatively high so for instance 512 by
+4:09
+512 tiles
+4:12
+it only needs about four textures to be
+4:15
+visible at one time to
+4:18
+always ensure
+4:19
+that you have a smooth scrolling tile
+4:21
+map and it will only use four draw calls
+4:25
+the blending algorithm that is used is
+4:28
+also really easy to modify as you saw
+4:31
+earlier i can turn it uh off and on with
+4:33
+a single button press so it's very easy
+4:35
+to strip out of the shader and replace
+4:37
+with something else
+4:40
+the shader itself is also
+4:42
+relatively flexible it's quite easy to
+4:45
+extend with things like foliage or even
+4:48
+animated textures
+4:50
+and there will be more about this in the
+4:52
+last section of this video
+Disadvantages of this shader
+4:56
+now let's look at some of the primary
+4:58
+disadvantages
+5:00
+the main thing is that
+5:02
+this
+5:03
+timer shader may bloat your gpu memory
+5:07
+each 1024 by 1024 texture takes roughly
+5:11
+three megabytes
+5:13
+and the shader supports up to 256 of
+5:16
+them
+5:17
+so that means that
+5:19
+if you used all of them you would take
+5:21
+768 megabyte of video memory
+5:25
+the setup of the shader can also be a
+5:27
+bit more complex
+5:29
+at least if you want a smooth scrolling
+5:31
+map like i have here that can go on
+5:33
+forever
+5:34
+you will need to do a bit more
+5:35
+calculation to get it to work but all of
+5:38
+that is explained in this video
+5:41
+enough with the introduction now let's
+5:42
+move on to the actual tutorial
+Table of contents
+5:45
+so here's what we will cover in this
+5:47
+tutorial
+5:48
+you can also use the youtube section
+5:50
+feature to skip to any part you're
+5:52
+interested in
+5:53
+i will not go through what is in each of
+5:56
+these sections right now so feel free to
+5:58
+pause the video if you want to read it
+Shader code overview
+6:01
+so let's start with a quick look through
+6:03
+the shader code so you can get a basic
+6:05
+understanding of how it works
+6:07
+here you have the inputs for the shader
+6:09
+they are all described in the code
+6:11
+comments but i will still quickly go
+6:12
+over them here this is just a brief
+6:14
+introduction if you don't understand
+6:16
+what they are for don't worry about it
+6:18
+as we'll go over all the code that uses
+6:20
+them later on
+6:21
+the first one tile size in pixels
+6:24
+determines the grid size just changing
+6:26
+this variable alone is not enough as you
+6:28
+also need to scale the image shader is
+6:30
+applied on correctly
+6:32
+we will get back to that later in the
+6:34
+important info section
+6:36
+half tile size and pixels is simply tile
+6:39
+size and pixels divided by two
+6:41
+i just used this so i don't have to
+6:43
+calculate it for every pixel
+6:45
+texture atlas texture size that's the
+6:47
+size of the textures in your texture
+6:49
+atlas
+6:50
+as i mentioned previously in the
+6:52
+introduction
+6:53
+the texture size for this example that
+6:55
+you see in the background is 1024 pixels
+6:58
+texture atlas texture width is the
+7:00
+amount of textures per row in your
+7:02
+taster atlas maximum size of the image
+7:04
+you can pass through shade with godot is
+7:07
+16 384 pixels
+7:10
+so
+7:10
+this should be 16 384 divided by the
+7:14
+texture atlas texture size
+7:17
+the maptilescountx and maptile's count y
+7:20
+is the size of the map we are rendering
+7:23
+this should be at two less than the map
+7:25
+data sent in as we assume there is a
+7:27
+border of one tile around the map we do
+7:30
+this so that we can blend the corners of
+7:32
+the map correctly
+7:34
+the next three each have their own
+7:35
+section in this video so i'll just
+7:37
+briefly introduce them here
+7:39
+texture atlas is the atlas texture where
+7:42
+all the textures used in the tile map
+7:44
+are combined into one
+7:46
+map data
+7:48
+is a texture that contains the data for
+7:50
+the timelapse itself this is all in the
+7:52
+red channel of the image
+7:54
+the blend texture is a texture that's
+7:56
+used for blending tiles together
+7:58
+and finally the blend texture tiles
+8:01
+tells you how many tiles there are
+8:03
+within the blend texture
+8:05
+this is the blend texture divided by the
+8:07
+tile size in pixels
+8:09
+before we look at the main fragment
+8:11
+method of the shader let's take a look
+8:13
+at the supporting methods
+8:15
+the first method get tilepuss calculates
+8:18
+the tile the current pixel is in it does
+8:21
+this by taking the uv coordinate and
+8:23
+multiplying it by the amount of tiles
+8:26
+for each direction and then it floors
+8:28
+the results since we don't want to have
+8:30
+a decimal in the tile number
+8:32
+then we add one to this number because
+8:34
+of the one wide border we have around
+8:37
+the map
+8:38
+get pixelpost and tile will get the
+8:40
+position of the pixel we are currently
+8:42
+working on within the current tile this
+8:44
+will be a number from zero to tile size
+8:46
+and pixels minus one
+8:48
+so for tile size of 64 pixels this will
+8:51
+be a number from 0 to 63. it does this
+8:54
+by doing almost the same calculation as
+8:57
+get tile plus
+8:58
+multiplying the uv coordinate with the
+9:00
+amount of tiles plus one
+9:03
+then we multiply this by the pixel tile
+9:05
+size
+9:06
+so in the default case 64.
+9:09
+and finally we floor the result of this
+9:12
+as we are not interested in partial
+9:14
+pixels after this we take this position
+9:17
+a modulus it with a tile size and pixels
+9:20
+the remainder of this for the position
+9:22
+of the pixel in the current tile
+9:25
+so as an example we have the six by six
+9:27
+grid again
+9:29
+and we take the uv coordinate 0 23 to
+9:32
+0.75 so if you multiply this out you
+9:35
+will see that the x-axis 023 becomes 152
+9:41
+and the y-axis becomes 352. if we mod
+9:44
+this both of these by 64 we end up with
+9:48
+the current position within the tile
+9:50
+which is x 24 y 32
+9:53
+get tile id fetches the id of the
+9:56
+current tile from the red channel of the
+9:57
+map data texture it's a fairly simple
+10:00
+method and probably doesn't need much
+10:01
+more explanation
+10:05
+get atlas pixel plus calculates which
+10:08
+pixels to use from the texture atlas
+10:10
+based on the current pixel position and
+10:12
+which actual atlas texture we are using
+10:15
+first it calculates the row column of
+10:18
+the texture we want in the texture atlas
+10:20
+then it uses this to calculate the top
+10:22
+left corner pixel of the texture
+10:25
+next up it checks how many tiles there
+10:27
+are within the texture
+10:29
+in each direction
+10:31
+it uses this to calculate the pixel
+10:33
+position of the tile we want
+10:35
+finally it adds the current pixel
+10:37
+position within the tile to this pixel
+10:40
+position
+10:42
+so if you resume the example from the
+10:44
+previous slides
+10:46
+we have a pixel position of 2432 we have
+10:49
+a tile id of 1
+10:51
+and we are entitled to 0.5
+10:54
+the first thing we do is calculate the
+10:57
+row and the column
+10:59
+then we calculate the start position
+11:01
+then we calculate the start position and
+11:03
+the tile repeat
+11:05
+finally we mod these values by 64 by the
+11:08
+tile size
+11:10
+and then we sum them all together to get
+11:12
+the x and the y position that we want in
+11:16
+the texture
+11:17
+finally we have the get color for
+11:19
+current pixel it just uses get atlas
+11:22
+pixel position to get which pixel
+11:24
+position to use
+11:25
+and then it fetches the pixel from the
+11:27
+texture
+11:30
+finally we get to the fragment part of
+11:31
+the shader
+11:32
+this part simply uses the previous
+11:34
+method we defined to do its work the
+11:36
+first part of the fragment function
+11:38
+fetches all the basic information we
+11:40
+need which tile we are on which pixel in
+11:43
+the tile we are on what's the id of this
+11:45
+tile and finally what color is the
+11:48
+current pixel of the current tile if
+11:51
+blending is not activated we simply set
+11:52
+the result of this into the color and
+11:54
+we're done if blending is activated
+11:56
+however we need to sample a few more
+11:58
+things we can reuse a lot of the data we
+12:00
+fetched like the current tile and the
+12:02
+current pixel
+12:04
+but we need to fetch some more data as
+12:05
+well
+12:06
+we start by figuring out which edges and
+12:09
+which corner we are closest to
+12:11
+then we get the atlas texture tile id
+12:13
+for the surrounding tiles
+12:15
+and grab the color for each of them
+12:17
+finally we do a very simple modulus
+12:19
+calculation to figure out which part of
+12:21
+the blend texture we should be using we
+12:23
+then grab the correct pixel from the
+12:25
+blend texture and extract each of the
+12:27
+color channels from this pixel these
+12:29
+color channels contains the strength of
+12:31
+blending for each of the four textures
+12:33
+as a percentage from zero to one hundred
+12:35
+there will be more on this later in the
+12:37
+blend texture section of the video
+12:39
+finally we blend each color based on the
+12:41
+percentages we are supposed to use and
+12:43
+that's it
+12:44
+this is the entire shader code if you
+12:46
+understand the basics of shaders in good
+12:48
+old and this shouldn't be very difficult
+12:50
+to comprehend as is mostly just
+12:52
+calculating tile and pixel positions and
+12:55
+grabbing the corresponding data from
+Texture atlas
+12:56
+textures now let's move on to the
+12:58
+texture atlas
+13:00
+this image you see now is the textured
+13:02
+list that is passed into the shader in
+13:04
+the current example
+13:05
+it contains all the texture the map uses
+13:07
+in a single large texture
+13:10
+the reason we do this is because it's
+13:12
+faster for the shader to look from a
+13:13
+single texture rather than from multiple
+13:15
+textures
+13:17
+i use c-sharp in this example but this
+13:20
+should be fairly easy to translate to gd
+13:22
+script if you prefer to use that as the
+13:23
+code is fairly simple
+13:26
+first we get a list of all the textures
+13:27
+that we're going to use the order of
+13:29
+this list is important as you use the
+13:31
+index of the texture when passing in map
+13:34
+data
+13:35
+the textures used are all
+13:37
+1024x1024 pixels and we simply collect
+13:40
+them all during loading and generate
+13:42
+atlas from code
+13:44
+doing it this way makes it a lot easier
+13:46
+to replace a single texture or to add
+13:48
+more textures
+13:50
+second it calculates the width and
+13:52
+height of the atlas based on how many
+13:53
+textures we got and then it creates a
+13:55
+new image of that size and locks it
+13:58
+here you can see the loop that does the
+14:00
+actual copying it grabs the data of the
+14:02
+next texture in the list copies it to
+14:04
+the atlas texture using the blend direct
+14:06
+method on the image and finally it just
+14:09
+updates the position we are in on the
+14:12
+image
+14:13
+we have 16 textures per roll so every 16
+14:15
+textures will go to the next row
+14:17
+lastly we unlock the image and use it to
+14:20
+create detection
+Blend texture
+14:23
+now let's have a look at the blend
+14:24
+texture so this is what the blend
+14:26
+texture looks like as you saw in the
+14:28
+shader code overview earlier we use the
+14:30
+different color channels of the blend
+14:32
+texture to decide between how we blend
+14:34
+between tiles
+14:35
+i've used a very simple algorithm to
+14:37
+create the blend textures you see here
+14:39
+it's a fairly smooth blend with a little
+14:41
+bit of noise added to it
+14:42
+i will now separate out the different
+14:44
+color channels of the image so you can
+14:46
+better see how the blending works
+14:49
+here is the red channel it is used to do
+14:51
+horizontal blending between tiles
+14:53
+the way to read this image is that the
+14:55
+brighter any part of a cell is the more
+14:57
+of the neighboring cell color is used in
+14:59
+that spot
+15:02
+the green channel is for vertical
+15:04
+blending between tiles
+15:08
+the blue channel is for the corner
+15:11
+blending
+15:14
+and finally the alpha channel is used
+15:16
+for the current tile
+15:18
+how you generate this texture is up to
+15:20
+you the method i use results in a fairly
+15:22
+uniform blend with a little bit of noise
+15:26
+looking at the code here the method has
+15:28
+a few inputs
+15:29
+the smooth edge and smooth corner
+15:31
+decides how many pixels away from the
+15:33
+edges we should want
+15:34
+a large number leads a smoother and
+15:36
+wider blend
+15:38
+the edge percentage and corner
+15:39
+percentage decides the maximum
+15:41
+percentage of blending
+15:43
+so an edge percentage of 50 means that
+15:45
+right at the border between tiles we are
+15:47
+using 50 of the current tile and 50 of
+15:50
+the neighboring tile
+15:51
+as we approach the corner of the tile we
+15:53
+need to blend all four tiles together
+15:55
+the current tile horizontal tile
+15:58
+vertical tile and the corner tile
+16:00
+as such the corner percentage is set to
+16:02
+25 so that way we use 25 current tile 25
+16:06
+vertical 25 horizontal and 25 corner
+16:09
+tile when blending
+16:11
+the final parameter that's relevant is
+16:13
+the texture size this decides how many
+16:15
+tiles we should create
+16:17
+this should be a power of two and i
+16:20
+recommend setting it to the same size as
+16:22
+your textures
+16:23
+it's set to 16 here since our tile size
+16:25
+is 64 pixels so 16 times 64 is equal to
+16:29
+1024
+16:31
+this makes this blending texture the
+16:33
+same size as our ground texture now
+16:36
+looking at the actual code the first
+16:37
+thing we do is grab three noise textures
+16:40
+one for each of the direction so one for
+16:42
+horizontal one for vertical and one for
+16:44
+the corners
+16:46
+the most important part of the noise
+16:47
+generation is the noise texture is
+16:49
+seamless and the size tiles perfectly
+16:52
+inside the blend texture you want to
+16:53
+make
+16:54
+in this example i set it to 1024 but i
+16:58
+could also set it to 512 or 256
+17:01
+but that would cause more repetition of
+17:03
+the noise
+17:05
+just like the texture atlas we create an
+17:08
+image and lock it
+17:09
+then we start a loop to loop through
+17:11
+every tile and every pixel within the
+17:13
+tile
+17:14
+so row and column tells you which tile
+17:16
+we are currently in and x and y tells
+17:19
+you the pixel within that tile the
+17:21
+actual creation of the texture is
+17:23
+slightly more complex but not that
+17:25
+difficult
+17:27
+first we calculate the actual position
+17:29
+within the image
+17:30
+then we find the closest edges and
+17:32
+calculate the distance to the closest
+17:34
+surrounding tiles
+17:36
+after that we simply calculate the
+17:37
+percentage based on our edge percentage
+17:40
+corner percentage and the max smoothing
+17:42
+distance smooth edge and smooth corner
+17:45
+if we stopped here we would end up with
+17:46
+a very smooth and uniform blend which is
+17:49
+why the next step is to add some noise
+17:52
+when grabbing the noise values i reduce
+17:54
+the effect of the noise the closer you
+17:56
+are to the edge the reason for this is
+17:58
+that if this is not done sometimes the
+18:01
+noise would completely remove the
+18:02
+blending and it would get hard edges
+18:05
+we then apply the noise to the
+18:06
+percentage values we have and finally we
+18:09
+subtract the corner percentages from the
+18:10
+side percentages
+18:12
+the reason we do this is to ensure
+18:14
+smooth blending of corners if you
+18:16
+imagine we are looking at the corner
+18:18
+pixel then the corner percentage would
+18:20
+be at max which would be 25
+18:22
+but edge percentages would also be at
+18:24
+max 50
+18:26
+add that together and you get 155 which
+18:29
+we do not want so by subtracting the
+18:32
+corner percentage from the side blending
+18:34
+percentages we get a smooth blending
+18:36
+if you don't understand how this works
+18:38
+feel free to download this project and
+18:40
+simply comment out parts of this code or
+18:42
+change stuff wrong since the texture is
+18:44
+regenerated in the startup you can try
+18:46
+out different blend strategies
+18:49
+final step of calculation is to figure
+18:51
+out the percentage for the current top
+18:53
+this will simply be 100 minus the other
+18:55
+percentages this way we always end up
+18:58
+with 100 blend in total between the four
+19:00
+tiles we are blending
+19:02
+then we write these values into each of
+19:04
+the color channels of the image and once
+19:06
+the loop is done we simply create a
+19:08
+texture from the image again like we did
+19:11
+for the texture wrappers
+19:13
+the final texture we need to generate is
+19:15
+the actual data for our world map
+19:18
+this texture will contain the index for
+Map data texture
+19:20
+the atlas texture to use for each tile
+19:22
+we are rendering
+19:23
+as we currently only need one index we
+19:25
+just put this data into the red channel
+19:27
+of the image if you had more data such
+19:30
+as foliage or animations you could put
+19:32
+that into the other color channels of
+19:34
+this image
+19:36
+the code for this is relatively short we
+19:38
+simply loop through the section of the
+19:39
+map we are generating take the tile
+19:41
+index and put it into the image data
+19:44
+you will notice that the way this image
+19:46
+is created is slightly different from
+19:48
+the method used for one texture here we
+19:50
+create a data array and create the image
+19:53
+from the data array
+19:54
+this method of making an image is
+19:56
+slightly faster than setting each pixel
+19:58
+individually but also adds a little bit
+20:00
+of complexity
+20:02
+i do this here since this code is not
+20:04
+run during loading time like blend
+20:06
+texture or atlas texture
+20:08
+but rather run as you scroll around the
+20:09
+map so speed is more important here
+Other shader code
+20:13
+if you look at the example project you
+20:14
+will see that the shader consists of
+20:16
+three main classes in this section i
+20:18
+will give a quick overview of what each
+20:20
+of these are for
+20:22
+the map shader display could be seen as
+20:24
+a brain scrolling tile map at regular
+20:26
+intervals it asks the camera which
+20:28
+section of the map is visible it will
+20:30
+then spawn in a map shader chunk to draw
+20:33
+this section if necessary
+20:35
+it also keeps track of which sections
+20:37
+are currently active and keeps a list of
+20:39
+map shader chunks that are inactive this
+20:41
+way it can reuse any map shader chunk
+20:44
+that is no longer needed
+20:46
+the most complex code here is a
+20:47
+calculation used to figure out which
+20:49
+segments to render based on camera
+20:51
+position except for that most of the
+20:53
+code is quite simple
+20:57
+the map shader data provider is a very
+20:58
+simple class that allows for events or
+21:00
+signals if you're using gd scripts
+21:03
+to be passed between map shaded display
+21:05
+and the map shader chunk
+21:07
+if you look at the c sharp code and
+21:09
+don't know what an event is it's
+21:10
+essentially almost the same as a good
+21:12
+old signal
+21:13
+if you want to reuse this code as this
+21:15
+then the main thing you would need to
+21:17
+change in the data provider is to get
+21:19
+tile method which you can see on the
+21:21
+right here
+21:22
+the get tile method in this example code
+21:25
+is an extremely simple map generation
+21:27
+code that uses a noise texture and just
+21:30
+picks different texture based on the
+21:32
+valley of the current pixel
+21:34
+the map shaded chunk is a script that
+21:36
+runs the scene that contains the title
+21:38
+of shading its job is to generate the
+21:40
+map texture position itself in the
+21:42
+correct position and set all the shaded
+21:44
+parameter values
+21:46
+the most complex part of this class is
+21:48
+probably the maps texture generation
+21:51
+which was already covered in the last
+21:52
+section of this video
+Non-shader code
+21:54
+next up we will have a brief look at the
+21:56
+two non-shader edited classes i included
+21:58
+in the demo project
+22:00
+as this shader is coming from my game
+22:01
+project i simply copied these two
+22:03
+classes as well as it was easier than
+22:05
+implementing them again the player
+22:07
+camera is a simple camera class for
+22:09
+smooth scrolling and zooming it has some
+22:11
+functionality for figuring out its
+22:13
+position on a tile map and can be reused
+22:15
+without any problem
+22:16
+feel free to use it for your own project
+22:19
+if you need a camera class simply attach
+22:21
+it to a camera 2d and it's good to go
+22:23
+just note that it's set up so it should
+22:25
+only be one player camera at the time if
+22:28
+you wish to have more controllable
+22:29
+cameras in your scene then this
+22:31
+class will need some modifications
+22:35
+the inpair class is essentially the same
+22:37
+as a vector 2 in godot except that it
+22:39
+works with integers
+22:41
+if you want to reuse it feel free you
+22:43
+will only need to remove the two
+22:45
+globalposition method as this contains a
+22:47
+reference to gamemanager.tilesize
+22:50
+except for that reference the class is
+22:51
+completely standalone and can be reused
+Important information
+22:55
+if you decide to reuse the shader there
+22:57
+are a few important things you should
+22:59
+know
+23:00
+first of all you have to turn on local
+23:02
+to scene on the shader if you plan on
+23:04
+having more than one instance of it else
+23:06
+you'll have unpredictable results when
+23:08
+you're passing your map data
+23:10
+if you wish to use more than one copy of
+23:12
+the shader then you should turn on gpu
+23:15
+pixel snap in your project settings
+23:17
+if you do not you will notice that you
+23:19
+will get a border between the different
+23:20
+map shells
+23:25
+this has been mentioned previously but
+23:27
+it's very important that the size of the
+23:28
+sprite the shader is applied to matches
+23:30
+the region the shader is supposed to
+23:32
+render the godot icon is 64 by 64 pixels
+23:37
+so since the tile size in this example
+23:39
+is 64 by 64 i simply use that
+23:43
+if you wish to change the tile size i
+23:45
+would recommend just replacing the godot
+23:46
+image with an image that matches your
+23:48
+tile size
+23:49
+that way the scaling code will still
+23:51
+work
+23:51
+of course if you prefer you can also go
+23:53
+adjust the scaling code instead
+23:57
+now if you wish to simply copy the
+23:59
+shader to a new project that is not so
+24:01
+difficult start by copying all the c
+24:04
+sharp scripts in the scripts folder and
+24:06
+the shader in the shaders folder
+24:08
+then you just need to replicate the two
+24:10
+main scene the main scene should contain
+24:12
+a node with the map shaded display
+24:14
+script on it and the camera with a
+24:16
+player camera script on it the second
+24:18
+scene should be a scene with the map
+24:21
+shader shank as a script on the root
+24:23
+node and it should contain a single
+24:24
+sprite with a shader applied to it
+24:27
+finally update the part to the map
+24:28
+shader chunk scene inside the map shader
+24:31
+display script
+Other ideas
+24:33
+if you understood how this shader worked
+24:35
+then adding foliage should be pretty
+24:36
+trivial
+24:38
+simply make a foliage outlet that is
+24:39
+similar to the texture atlas and then
+24:41
+pass in which image from this foliage
+24:44
+atlas to use in one of the remaining
+24:45
+color channels of the map data
+24:49
+a similar shade of this that could be
+24:51
+made easily is a fog of war shade
+24:54
+you can make a shader that renders every
+24:56
+pixel as black or use a repeating fog
+24:58
+like image then just pass a value
+25:00
+between 0 and 1 that sets the alpha
+25:02
+value for each pixel through the map
+25:04
+data
+25:05
+you could reuse the same blending method
+25:07
+as here just only apply it to the alpha
+25:09
+channel
+Outro
+25:11
+if you made it all the way here then
+25:12
+thanks for watching if you have any
+25:14
+questions you can find a link to my
+25:16
+discord in the video description
+25:18
+feel free to drop by and ask if you have
+25:20
+any troubles getting the shader to work
