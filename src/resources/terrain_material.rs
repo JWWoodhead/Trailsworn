@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
-use bevy_ecs_tilemap::prelude::*;
 
 /// Shader parameters for terrain rendering.
 #[derive(Clone, Copy, Debug, Default, bevy::render::render_resource::ShaderType)]
@@ -11,7 +10,13 @@ pub struct TerrainParams {
     pub blend_texture_tiles: f32,
     /// Map width in tiles (for bounds checking in shader).
     pub map_width: f32,
-    pub _padding: f32,
+    /// Map height in tiles.
+    pub map_height: f32,
+    /// Tile size in world units.
+    pub tile_size: f32,
+    pub _padding1: f32,
+    pub _padding2: f32,
+    pub _padding3: f32,
 }
 
 /// Custom terrain material that renders terrain with world-space UV tiling
@@ -37,7 +42,7 @@ pub struct TerrainMaterial {
     pub blend_texture: Handle<Image>,
 }
 
-impl MaterialTilemap for TerrainMaterial {
+impl bevy::sprite_render::Material2d for TerrainMaterial {
     fn fragment_shader() -> bevy::shader::ShaderRef {
         "terrain_shader.wgsl".into()
     }

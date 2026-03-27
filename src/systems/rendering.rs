@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::image::ImageSampler;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
-use bevy_ecs_tilemap::prelude::*;
+use bevy::prelude::MeshMaterial2d;
 use rand::RngExt;
 
 use crate::resources::map::{MapSettings, TileWorld};
@@ -9,14 +9,15 @@ use crate::resources::terrain_material::{
     TerrainMaterial, TerrainMapHandle, TerrainMaterialHandle, TerrainParams,
 };
 
-/// Spawns the terrain tilemap using our custom TerrainMaterial shader.
-pub fn spawn_tilemap(
+/// Spawns a single quad covering the full map, rendered with our custom TerrainMaterial shader.
+pub fn spawn_terrain_quad(
     mut commands: Commands,
     tile_world: Res<TileWorld>,
     map_settings: Res<MapSettings>,
     asset_server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<TerrainMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     // Load the terrain texture array (stacked 512×N → 2D array, one layer per terrain type)
     let terrain_tex_handle: Handle<Image> = asset_server.load_with_settings(
@@ -60,7 +61,11 @@ pub fn spawn_tilemap(
             texture_scale: 4.0,
             blend_texture_tiles: 8.0,
             map_width: tile_world.width as f32,
-            _padding: 0.0,
+            map_height: tile_world.height as f32,
+            tile_size: map_settings.tile_size,
+            _padding1: 0.0,
+            _padding2: 0.0,
+            _padding3: 0.0,
         },
         blend_texture: blend_tex_handle,
     };
@@ -70,46 +75,15 @@ pub fn spawn_tilemap(
     commands.insert_resource(TerrainMapHandle(terrain_map_handle));
     commands.insert_resource(TerrainMaterialHandle(material_handle.clone()));
 
-    // Spawn the tilemap
-    let map_size = TilemapSize {
-        x: tile_world.width,
-        y: tile_world.height,
-    };
-    let tile_size = TilemapTileSize {
-        x: map_settings.tile_size,
-        y: map_settings.tile_size,
-    };
-    let grid_size = tile_size.into();
+    // Spawn a single quad covering the full map
+    let world_w = tile_world.width as f32 * map_settings.tile_size;
+    let world_h = tile_world.height as f32 * map_settings.tile_size;
 
-    let mut tile_storage = TileStorage::empty(map_size);
-    let tilemap_entity = commands.spawn_empty().id();
-
-    for y in 0..tile_world.height {
-        for x in 0..tile_world.width {
-            let tile_pos = TilePos { x, y };
-            let tile_entity = commands
-                .spawn(TileBundle {
-                    position: tile_pos,
-                    tilemap_id: TilemapId(tilemap_entity),
-                    texture_index: TileTextureIndex(0),
-                    ..default()
-                })
-                .id();
-            tile_storage.set(&tile_pos, tile_entity);
-        }
-    }
-
-    commands.entity(tilemap_entity).insert(MaterialTilemapBundle {
-        grid_size,
-        map_type: TilemapType::Square,
-        size: map_size,
-        storage: tile_storage,
-        texture: TilemapTexture::Single(asset_server.load("terrain.png")),
-        tile_size,
-        transform: Transform::from_translation(Vec3::ZERO),
-        material: MaterialTilemapHandle::from(material_handle),
-        ..default()
-    });
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(world_w, world_h))),
+        MeshMaterial2d(material_handle),
+        Transform::from_translation(Vec3::new(world_w * 0.5, world_h * 0.5, 0.0)),
+    ));
 }
 
 /// Update the terrain map texture when TileWorld changes (zone transitions).

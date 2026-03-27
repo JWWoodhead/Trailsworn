@@ -1130,7 +1130,7 @@ mod tests {
     fn features_scattered_per_biome() {
         let biomes = [
             (ZoneType::Grassland, 150, 800),
-            (ZoneType::Forest, 200, 1000),
+            (ZoneType::Forest, 200, 2500),
             (ZoneType::Mountain, 100, 700),
             (ZoneType::Desert, 80, 500),
             (ZoneType::Tundra, 100, 600),

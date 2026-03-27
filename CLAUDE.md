@@ -24,7 +24,7 @@ tests/                 — Integration test harness + per-system tests (~257 tes
 
 ## Architecture Rules
 
-- **No custom Bevy plugins** — everything registered directly in main.rs. Exception: `MaterialTilemapPlugin<TerrainMaterial>`.
+- **No custom Bevy plugins** — everything registered directly in main.rs. Exception: `Material2dPlugin<TerrainMaterial>`.
 - **Organize by ECS role**: `systems/` for systems, `resources/` for components/resources
 - **Pure logic at top level**: terrain.rs, generation.rs, pathfinding/, worldgen/
 - All keybindings centralized in `resources/input.rs`
@@ -76,6 +76,7 @@ Colors in `resources/theme.rs`:
 - **UseCondition gaps**: `AllyHpBelow` and `EnemiesInRange` evaluator conditions are stubbed
 - **Terrain feature sprites**: forest has real sprites, other biomes still use placeholder colored squares
 - **Terrain textures**: 5 of 9 still flat color (Sand, Snow, Swamp, Water, Mountain)
+- **Terrain texture shimmer**: no mipmaps on terrain array texture — causes aliasing/shimmer when zoomed out. Fix: generate mip chain in `gen_terrain_array` + enable trilinear filtering (do once art/textures are finalized)
 
 ## CLI
 

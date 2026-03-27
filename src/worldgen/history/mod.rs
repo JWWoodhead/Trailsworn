@@ -76,6 +76,41 @@ pub enum EventKind {
     DivineIntervention,
 }
 
+/// A state mutation that crosses from one domain (divine/mortal) into another.
+/// Emitted by divine phases instead of direct settlement mutation; applied centrally.
+#[derive(Clone, Debug)]
+pub enum CrossDomainEvent {
+    /// A god claims an unworshipped settlement.
+    WorshipEstablished { settlement_index: usize, god_id: GodId, devotion: u32 },
+    /// A god converts a settlement from a rival god.
+    WorshipConverted { settlement_index: usize, new_god_id: GodId, old_god_id: GodId, devotion: u32 },
+    /// A settlement's devotion shifts by a signed delta (clamped to 0..=100).
+    DevotionChanged { settlement_index: usize, delta: i32 },
+}
+
+/// Drain cross-domain events and apply them to settlement state.
+fn apply_cross_domain_events(
+    cross_events: &mut Vec<CrossDomainEvent>,
+    settlements: &mut [SettlementState],
+) {
+    for event in cross_events.drain(..) {
+        match event {
+            CrossDomainEvent::WorshipEstablished { settlement_index, god_id, devotion } => {
+                settlements[settlement_index].patron_god = Some(god_id);
+                settlements[settlement_index].devotion = devotion;
+            }
+            CrossDomainEvent::WorshipConverted { settlement_index, new_god_id, devotion, .. } => {
+                settlements[settlement_index].patron_god = Some(new_god_id);
+                settlements[settlement_index].devotion = devotion;
+            }
+            CrossDomainEvent::DevotionChanged { settlement_index, delta } => {
+                let current = settlements[settlement_index].devotion as i32;
+                settlements[settlement_index].devotion = (current + delta).clamp(0, 100) as u32;
+            }
+        }
+    }
+}
+
 /// The complete generated history — mortal and divine intertwined.
 #[derive(Clone, Debug, bevy::prelude::Resource)]
 pub struct WorldHistory {
@@ -115,6 +150,20 @@ pub struct HistoryConfig {
     pub territory_expansion_rate: u32,
     /// Year range (absolute) during which gods can create races.
     pub race_creation_window: (i32, i32),
+
+    // Phase toggles — disable individual simulation subsystems.
+    /// Phase 2: territory expansion + terrain shaping.
+    pub divine_territory: bool,
+    /// Phase 3: worship competition (gods claim settlements).
+    pub divine_worship: bool,
+    /// Phase 4: drive-based actions (sites, artifacts, races).
+    pub divine_drives: bool,
+    /// Phase 9: divine wars + pacts.
+    pub divine_conflict: bool,
+    /// Phase 10: flaw pressure accumulation + triggers.
+    pub divine_flaws: bool,
+    /// Phases 5-8: faction upkeep, settlements, characters, mortal events.
+    pub mortal_simulation: bool,
 }
 
 impl Default for HistoryConfig {
@@ -126,6 +175,12 @@ impl Default for HistoryConfig {
             initial_factions: 6,
             territory_expansion_rate: 80,
             race_creation_window: (10, 60),
+            divine_territory: true,
+            divine_worship: true,
+            divine_drives: true,
+            divine_conflict: true,
+            divine_flaws: true,
+            mortal_simulation: true,
         }
     }
 }
@@ -159,15 +214,20 @@ pub fn generate_history(
         GodState::new(id, p)
     }).collect();
 
-    // Initialize territory map
+    // Initialize territory map and divine relations
     world_state.territory_map = vec![None; world_map.cells.len()];
     world_state.divine_relations = super::divine_era::state::DivineRelationMatrix::from_relationships(&pantheon.relationships);
+
+    let any_divine = config.divine_territory || config.divine_worship
+        || config.divine_drives || config.divine_conflict || config.divine_flaws;
 
     // BFS frontiers for territory expansion
     let mut frontiers: Vec<BTreeSet<WorldPos>> = vec![BTreeSet::new(); gods.len()];
 
-    // Assign starting seats of power
-    behavior::assign_seats_of_power(&mut gods, &mut frontiers, &mut world_state, world_map, god_pool, &mut rng);
+    // Assign starting seats of power (only needed when divine phases are active)
+    if any_divine {
+        behavior::assign_seats_of_power(&mut gods, &mut frontiers, &mut world_state, world_map, god_pool, &mut rng);
+    }
 
     // --- Initialize divine sites/artifacts/races/scars ---
     let mut divine_sites: Vec<super::divine_era::sites::DivineSite> = Vec::new();
@@ -293,76 +353,88 @@ pub fn generate_history(
     settlements.append(&mut map_settlements);
 
     // --- Unified year-by-year simulation ---
+    let mut cross_events: Vec<CrossDomainEvent> = Vec::new();
+
     for year in config.start_year..config.start_year + config.num_years {
         let event_count_before = events.len();
 
-        // Phase 0: Character aging & death (mortal)
-        // Phase 1: God power update
+        // Always runs — bookkeeping
         behavior::update_god_power(&mut gods);
 
-        // Phase 2: Territory expansion & terrain shaping (gods)
-        behavior::evaluate_territory_expansion(
-            year, config.territory_expansion_rate, &mut gods, &mut frontiers,
-            &mut events, &mut world_state, world_map, god_pool, pantheon, &mut rng,
-        );
-        behavior::evaluate_terrain_shaping(
-            year, &gods, &mut events, &mut terrain_scars,
-            &world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
-        );
-
-        // Phase 3: Worship competition (gods vs settlements)
-        behavior::evaluate_worship(
-            year, &mut gods, &mut events, &mut settlements,
-            &mut world_state, world_map, pantheon, &mut rng,
-        );
-
-        // Phase 4: Drive-based divine actions
-        behavior::evaluate_drive_actions(
-            year, config.race_creation_window, &mut gods, &mut events,
-            &mut divine_sites, &mut divine_artifacts, &mut created_races,
-            &world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
-        );
-
-        // Phase 5-8: Mortal simulation (faction upkeep, settlement upkeep, characters, events)
-        simulate_year(
-            year, &mut factions, &mut settlements, &mut characters,
-            &mut artifacts_list, &mut events,
-            &mut world_state, &regions, &mut next_id,
-            &faction_type_table, &race_table, &mut rng,
-        );
-
-        // Phase 9: Divine conflict
-        let active_god_ids: Vec<u32> = gods.iter().filter(|g| g.is_active()).map(|g| g.god_id).collect();
-        behavior::evaluate_divine_war_declared(year, &gods, &mut events, &mut world_state, &active_god_ids, pantheon, &mut rng);
-        behavior::evaluate_divine_war_resolution(
-            year, &mut gods, &mut events, &mut terrain_scars,
-            &mut world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
-        );
-        behavior::evaluate_divine_pact(year, &gods, &mut events, &mut world_state, &active_god_ids, pantheon, &mut rng);
-        behavior::evaluate_pact_broken(year, &gods, &mut events, &mut world_state, pantheon, &mut rng);
-
-        // Phase 10: Flaw pressure & triggers
-        let new_events = &events[event_count_before..];
-        behavior::accumulate_flaw_pressure(&mut gods, new_events, &world_state);
-        behavior::evaluate_flaw_triggers(year, &mut gods, &mut events, &mut settlements, &mut world_state, pantheon, &mut rng);
-
-        // War drains god power
-        for war in &world_state.divine_wars {
-            if let Some(g) = gods.iter_mut().find(|g| g.god_id == war.aggressor) {
-                g.power = g.power.saturating_sub(5);
-            }
-            if let Some(g) = gods.iter_mut().find(|g| g.god_id == war.defender) {
-                g.power = g.power.saturating_sub(5);
-            }
+        // Phase 2: Territory expansion & terrain shaping
+        if config.divine_territory {
+            behavior::evaluate_territory_expansion(
+                year, config.territory_expansion_rate, &mut gods, &mut frontiers,
+                &mut events, &mut world_state, world_map, god_pool, pantheon, &mut rng,
+            );
+            behavior::evaluate_terrain_shaping(
+                year, &gods, &mut events, &mut terrain_scars,
+                &world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
+            );
         }
 
+        // Phase 3: Worship competition
+        if config.divine_worship {
+            behavior::evaluate_worship(
+                year, &mut gods, &mut events, &settlements,
+                &mut cross_events, &mut world_state, world_map, pantheon, &mut rng,
+            );
+            apply_cross_domain_events(&mut cross_events, &mut settlements);
+        }
+
+        // Phase 4: Drive-based divine actions
+        if config.divine_drives {
+            behavior::evaluate_drive_actions(
+                year, config.race_creation_window, &mut gods, &mut events,
+                &mut divine_sites, &mut divine_artifacts, &mut created_races,
+                &world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
+            );
+        }
+
+        // Phases 5-8: Mortal simulation
+        if config.mortal_simulation {
+            simulate_year(
+                year, &mut factions, &mut settlements, &mut characters,
+                &mut artifacts_list, &mut events,
+                &mut world_state, &regions, &mut next_id,
+                &faction_type_table, &race_table, &mut rng,
+            );
+        }
+
+        // Phase 9: Divine conflict
+        if config.divine_conflict {
+            let active_god_ids: Vec<u32> = gods.iter().filter(|g| g.is_active()).map(|g| g.god_id).collect();
+            behavior::evaluate_divine_war_declared(year, &gods, &mut events, &mut world_state, &active_god_ids, pantheon, &mut rng);
+            behavior::evaluate_divine_war_resolution(
+                year, &mut gods, &mut events, &mut terrain_scars,
+                &mut world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
+            );
+            behavior::evaluate_divine_pact(year, &gods, &mut events, &mut world_state, &active_god_ids, pantheon, &mut rng);
+            behavior::evaluate_pact_broken(year, &gods, &mut events, &mut world_state, pantheon, &mut rng);
+        }
+
+        // Phase 10: Flaw pressure & triggers
+        if config.divine_flaws {
+            let new_events = &events[event_count_before..];
+            behavior::accumulate_flaw_pressure(&mut gods, new_events, &world_state);
+            behavior::evaluate_flaw_triggers(
+                year, &mut gods, &mut events, &settlements,
+                &mut cross_events, &mut world_state, pantheon, &mut rng,
+            );
+            apply_cross_domain_events(&mut cross_events, &mut settlements);
+        }
+
+        // Always runs — maintenance
+        behavior::drain_divine_war_power(&mut gods, &world_state);
         world_state.divine_relations.drift_toward_neutral();
     }
 
     // Write final divine_owner to world map cells
-    for (i, owner) in world_state.territory_map.iter().enumerate() {
-        if let Some(god_id) = owner {
-            world_map.cells[i].divine_owner = Some(*god_id);
+    if config.divine_territory {
+        for (i, owner) in world_state.territory_map.iter().enumerate() {
+            if let Some(god_id) = owner {
+                world_map.cells[i].divine_owner = Some(*god_id);
+            }
         }
     }
 

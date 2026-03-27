@@ -8,7 +8,7 @@ use rand::{Rng, RngExt};
 use crate::worldgen::gods::{DrawnPantheon, GodId, GodPool};
 use crate::worldgen::history::characters::CharacterTrait;
 use crate::worldgen::history::state::{SettlementState, WorldState};
-use crate::worldgen::history::{EventKind, HistoricEvent};
+use crate::worldgen::history::{CrossDomainEvent, EventKind, HistoricEvent};
 use crate::worldgen::names::{full_name, Race};
 use crate::worldgen::population_table::PopTable;
 use crate::worldgen::world_map::{WorldMap, WorldPos};
@@ -302,7 +302,8 @@ pub fn evaluate_worship(
     year: i32,
     gods: &mut [GodState],
     events: &mut Vec<HistoricEvent>,
-    settlements: &mut [SettlementState],
+    settlements: &[SettlementState],
+    cross_events: &mut Vec<CrossDomainEvent>,
     world_state: &mut WorldState,
     world_map: &WorldMap,
     pantheon: &DrawnPantheon,
@@ -323,7 +324,9 @@ pub fn evaluate_worship(
             Some(id) => id,
             None => {
                 if current_devotion > 0 {
-                    settlements[si].devotion = current_devotion.saturating_sub(2);
+                    cross_events.push(CrossDomainEvent::DevotionChanged {
+                        settlement_index: si, delta: -2,
+                    });
                 }
                 continue;
             }
@@ -340,7 +343,9 @@ pub fn evaluate_worship(
                 Some(DivineDrive::Dominion) => 3,
                 _ => 2,
             };
-            settlements[si].devotion = (current_devotion + growth).min(100);
+            cross_events.push(CrossDomainEvent::DevotionChanged {
+                settlement_index: si, delta: growth,
+            });
         } else if current_patron.is_none() {
             let drive = gods.iter().find(|g| g.god_id == owner_god_id).map(|g| g.drive());
             let claim_prob = match drive {
@@ -352,8 +357,9 @@ pub fn evaluate_worship(
             };
             if rng.random::<f32>() < claim_prob {
                 let sname = settlements[si].name.clone();
-                settlements[si].patron_god = Some(owner_god_id);
-                settlements[si].devotion = 20;
+                cross_events.push(CrossDomainEvent::WorshipEstablished {
+                    settlement_index: si, god_id: owner_god_id, devotion: 20,
+                });
 
                 if let Some(g) = gods.iter_mut().find(|g| g.god_id == owner_god_id) {
                     g.worshipper_settlements.push(settlement_pos);
@@ -380,8 +386,10 @@ pub fn evaluate_worship(
             if rng.random::<f32>() < convert_prob {
                 let old_patron = current_patron.unwrap();
                 let sname = settlements[si].name.clone();
-                settlements[si].patron_god = Some(owner_god_id);
-                settlements[si].devotion = 15;
+                cross_events.push(CrossDomainEvent::WorshipConverted {
+                    settlement_index: si, new_god_id: owner_god_id,
+                    old_god_id: old_patron, devotion: 15,
+                });
 
                 if let Some(g) = gods.iter_mut().find(|g| g.god_id == old_patron) {
                     g.worshipper_settlements.retain(|p| *p != settlement_pos);
@@ -399,7 +407,9 @@ pub fn evaluate_worship(
                     vec![owner_god_id, old_patron],
                 ));
             } else {
-                settlements[si].devotion = current_devotion.saturating_sub(1);
+                cross_events.push(CrossDomainEvent::DevotionChanged {
+                    settlement_index: si, delta: -1,
+                });
             }
         }
     }
@@ -938,7 +948,8 @@ pub fn evaluate_flaw_triggers(
     year: i32,
     gods: &mut [GodState],
     events: &mut Vec<HistoricEvent>,
-    settlements: &mut [SettlementState],
+    settlements: &[SettlementState],
+    cross_events: &mut Vec<CrossDomainEvent>,
     world_state: &mut WorldState,
     pantheon: &DrawnPantheon,
     rng: &mut impl Rng,
@@ -977,9 +988,11 @@ pub fn evaluate_flaw_triggers(
                 }
             }
             Obsession => {
-                for s in settlements.iter_mut() {
+                for (si, s) in settlements.iter().enumerate() {
                     if s.patron_god == Some(god_id) {
-                        s.devotion = s.devotion.saturating_sub(10);
+                        cross_events.push(CrossDomainEvent::DevotionChanged {
+                            settlement_index: si, delta: -10,
+                        });
                     }
                 }
                 events.push(make_event(year, EventKind::NarrativeAdvanced,
@@ -987,9 +1000,11 @@ pub fn evaluate_flaw_triggers(
                     vec![god_id]));
             }
             Cruelty => {
-                for s in settlements.iter_mut() {
+                for (si, s) in settlements.iter().enumerate() {
                     if s.patron_god == Some(god_id) {
-                        s.devotion = s.devotion.saturating_sub(15);
+                        cross_events.push(CrossDomainEvent::DevotionChanged {
+                            settlement_index: si, delta: -15,
+                        });
                     }
                 }
                 events.push(make_event(year, EventKind::NarrativeAdvanced,
@@ -1012,8 +1027,10 @@ pub fn evaluate_flaw_triggers(
             Isolation => {
                 let lost: Vec<WorldPos> = gods[gi].worshipper_settlements.clone();
                 for pos in &lost {
-                    if let Some(s) = settlements.iter_mut().find(|s| s.world_pos == Some(*pos) && s.patron_god == Some(god_id)) {
-                        s.devotion = s.devotion.saturating_sub(20);
+                    if let Some(si) = settlements.iter().position(|s| s.world_pos == Some(*pos) && s.patron_god == Some(god_id)) {
+                        cross_events.push(CrossDomainEvent::DevotionChanged {
+                            settlement_index: si, delta: -20,
+                        });
                     }
                 }
                 events.push(make_event(year, EventKind::NarrativeAdvanced,
@@ -1055,5 +1072,17 @@ pub fn evaluate_flaw_triggers(
         }
 
         gods[gi].flaw_pressure = 20;
+    }
+}
+
+/// Drain power from gods engaged in active divine wars.
+pub fn drain_divine_war_power(gods: &mut [GodState], world_state: &WorldState) {
+    for war in &world_state.divine_wars {
+        if let Some(g) = gods.iter_mut().find(|g| g.god_id == war.aggressor) {
+            g.power = g.power.saturating_sub(5);
+        }
+        if let Some(g) = gods.iter_mut().find(|g| g.god_id == war.defender) {
+            g.power = g.power.saturating_sub(5);
+        }
     }
 }

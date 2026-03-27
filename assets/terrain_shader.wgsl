@@ -1,26 +1,29 @@
-#import bevy_ecs_tilemap::common::{tilemap_data, sprite_texture, sprite_sampler}
-#import bevy_ecs_tilemap::vertex_output::MeshVertexOutput
+#import bevy_sprite::mesh2d_vertex_output::VertexOutput
 
-// Custom material bindings (group 3)
-@group(3) @binding(0) var terrain_textures: texture_2d_array<f32>;
-@group(3) @binding(1) var terrain_sampler: sampler;
-@group(3) @binding(2) var terrain_map: texture_2d<u32>;
+// Custom material bindings (group 2 for Material2d)
+@group(2) @binding(0) var terrain_textures: texture_2d_array<f32>;
+@group(2) @binding(1) var terrain_sampler: sampler;
+@group(2) @binding(2) var terrain_map: texture_2d<u32>;
 
 struct TerrainParams {
     texture_scale: f32,
     blend_texture_tiles: f32,
     map_width: f32,
-    _padding: f32,
+    map_height: f32,
+    tile_size: f32,
+    _padding1: f32,
+    _padding2: f32,
+    _padding3: f32,
 };
-@group(3) @binding(3) var<uniform> params: TerrainParams;
+@group(2) @binding(3) var<uniform> params: TerrainParams;
 
-@group(3) @binding(4) var blend_texture: texture_2d<f32>;
-@group(3) @binding(5) var blend_sampler: sampler;
+@group(2) @binding(4) var blend_texture: texture_2d<f32>;
+@group(2) @binding(5) var blend_sampler: sampler;
 
 // Read terrain type at a tile coordinate, with bounds checking.
 fn read_terrain(coord: vec2<i32>) -> u32 {
     let map_w = i32(params.map_width);
-    let map_h = i32(params.map_width);
+    let map_h = i32(params.map_height);
     if coord.x < 0 || coord.y < 0 || coord.x >= map_w || coord.y >= map_h {
         return 0u;
     }
@@ -35,18 +38,17 @@ fn get_terrain_color(world_tile: vec2<f32>, local_uv: vec2<f32>, terrain_type: u
 }
 
 @fragment
-fn fragment(in: MeshVertexOutput) -> @location(0) vec4<f32> {
-    // World tile coordinate and local position within tile
-    let world_tile = tilemap_data.chunk_pos + vec2<f32>(in.storage_position);
-    let local_uv = in.uv.zw; // 0..1 within tile
+fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Compute tile coordinates from world position (avoids UV precision issues)
+    let world_pos = in.world_position.xy / params.tile_size;
+    let world_tile = floor(world_pos);
+    let local_uv = fract(world_pos);
     let tile_coord = vec2<i32>(world_tile);
 
     // Current tile's terrain type
     let my_type = read_terrain(tile_coord);
 
-    // Pixel position within tile (0 to tile_px-1), matching Godot's getPixelPosInTile
-    let tile_px = params.blend_texture_tiles; // blend texture pixels per tile = tex_size / tile_count
-    // Actually: px_per_tile = blend_tex_width / blend_texture_tiles
+    // Pixel position within tile (0 to tile_px-1)
     let blend_tex_size = textureDimensions(blend_texture, 0);
     let px_per_tile_f = f32(blend_tex_size.x) / params.blend_texture_tiles;
     let pixel_in_tile = vec2<f32>(
@@ -54,7 +56,7 @@ fn fragment(in: MeshVertexOutput) -> @location(0) vec4<f32> {
         floor(local_uv.y * px_per_tile_f),
     );
 
-    // Quadrant detection matching Godot: clamp(-halfTile + pixelPos, -1, 1)
+    // Quadrant detection: clamp(-halfTile + pixelPos, -1, 1)
     let half_tile = px_per_tile_f * 0.5;
     let horizontal = clamp(-half_tile + pixel_in_tile.x, -1.0, 1.0);
     let vertical = clamp(-half_tile + pixel_in_tile.y, -1.0, 1.0);
@@ -62,10 +64,10 @@ fn fragment(in: MeshVertexOutput) -> @location(0) vec4<f32> {
     let h_dir = i32(sign(horizontal));
     let v_dir = i32(sign(vertical));
 
-    // Y is flipped: local_uv.y=0 is north, but tile coord Y increases northward
+    // World space: Y increases upward, local_uv.y=0 is bottom of tile
     let h_offset = vec2<i32>(h_dir, 0);
-    let v_offset = vec2<i32>(0, -v_dir);
-    let c_offset = vec2<i32>(h_dir, -v_dir);
+    let v_offset = vec2<i32>(0, v_dir);
+    let c_offset = vec2<i32>(h_dir, v_dir);
 
     // Get terrain types for neighbors
     let h_type = read_terrain(tile_coord + h_offset);
@@ -79,24 +81,23 @@ fn fragment(in: MeshVertexOutput) -> @location(0) vec4<f32> {
     let color_c = get_terrain_color(world_tile, local_uv, c_type);
 
     // Sample blend texture using integer pixel coordinates (texelFetch equivalent)
-    // Matches Godot: modX = (mod(tile.x, blendTextureTiles) * tileSizeInPixels) + pixelPosInTile.x
     let blend_tile_x = i32(world_tile.x) % i32(params.blend_texture_tiles);
     let blend_tile_y = i32(world_tile.y) % i32(params.blend_texture_tiles);
     let blend_px = vec2<i32>(
         blend_tile_x * i32(px_per_tile_f) + i32(pixel_in_tile.x),
         blend_tile_y * i32(px_per_tile_f) + i32(pixel_in_tile.y),
     );
-    // Use textureLoad (integer lookup, no filtering) — matches Godot's texelFetch
+    // Use textureLoad (integer lookup, no filtering)
     let blend_raw = textureLoad(blend_texture, blend_px, 0);
 
-    // Extract blend strengths: channel * 255 / 100 (matching Godot)
+    // Extract blend strengths: channel * 255 / 100
     let str_h = blend_raw.r * 255.0 / 100.0;
     let str_v = blend_raw.g * 255.0 / 100.0;
     let str_c = blend_raw.b * 255.0 / 100.0;
     let str_self = blend_raw.a * 255.0 / 100.0;
 
-    // Weighted blend (additive, same as Godot)
+    // Weighted blend (additive)
     let color = color_self * str_self + color_h * str_h + color_v * str_v + color_c * str_c;
 
-    return color * in.color;
+    return color;
 }

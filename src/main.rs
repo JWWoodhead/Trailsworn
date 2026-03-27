@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_ecs_tilemap::prelude::*;
+use bevy::sprite_render::Material2dPlugin;
 use trailsworn::resources::terrain_material::TerrainMaterial;
 use trailsworn::resources::abilities::AbilityRegistry;
 use trailsworn::resources::ability_defs::register_starter_abilities;
@@ -53,7 +53,7 @@ fn biome_override_from_args() -> Option<trailsworn::worldgen::zone::ZoneType> {
 fn main() {
     let debug_flags = debug::DebugFlags::from_args();
     let biome_override = biome_override_from_args();
-    let world_seed = 42u64; // TODO: randomize or accept from CLI
+    let world_seed = 50u64; // TODO: randomize or accept from CLI
 
     let settings = MapSettings::default();
 
@@ -144,8 +144,7 @@ fn main() {
         })
         .set(ImagePlugin::default_nearest())
     )
-    .add_plugins(TilemapPlugin)
-    .add_plugins(MaterialTilemapPlugin::<TerrainMaterial>::default())
+    .add_plugins(Material2dPlugin::<TerrainMaterial>::default())
     // State
     .init_state::<GameState>()
     // Resources
@@ -208,7 +207,7 @@ fn main() {
         Startup,
         (
             camera::setup_camera,
-            rendering::spawn_tilemap,
+            rendering::spawn_terrain_quad,
             spawning::spawn_player,
             hover_info::setup_hover_tooltip,
             hud::setup_hud,
@@ -231,7 +230,6 @@ fn main() {
                 game_time::game_speed_input.after(input::process_input),
                 camera::camera_pan.after(input::process_input),
                 camera::camera_zoom,
-                camera::snap_camera_to_pixel.after(camera::camera_pan).after(camera::camera_zoom),
                 selection::selection_input.after(camera::update_cursor_position),
                 selection::right_click_command.after(camera::update_cursor_position),
                 selection::ability_input.after(input::process_input),

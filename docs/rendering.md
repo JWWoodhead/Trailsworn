@@ -1,7 +1,7 @@
 # Terrain Rendering
 
 ## Architecture
-Uses a **custom WGSL fragment shader** via `bevy_ecs_tilemap`'s `MaterialTilemap` trait. Single tilemap with `MaterialTilemapBundle<TerrainMaterial>`.
+Uses a **custom WGSL fragment shader** via Bevy's `Material2d` trait. Single full-map quad with `Mesh2d` + `MeshMaterial2d<TerrainMaterial>`. No tilemap crate — terrain is rendered as one draw call with no chunk boundaries.
 
 ## How It Works
 1. **Terrain map texture** (`Rgba8Uint`, 250x250): R=terrain type index, G/B=unused (legacy random offset), A=255. Created at startup, updated on zone transitions.
@@ -40,18 +40,18 @@ The previous priority-based layered approach had artifacts at multi-terrain junc
 ## World-space UV Tiling
 Textures tile seamlessly across the map: `world_uv = (world_tile + local_uv) / texture_scale`. Each 512px texture covers `texture_scale` tiles (default 4), so features repeat every 4 tiles. The large texture size makes repetition hard to spot, especially with terrain features on top.
 
-## Key Shader UV Convention
-`in.uv.zw` from bevy_ecs_tilemap: `z` = 0 at left, 1 at right. `w` = 0 at **north/top**, 1 at **south/bottom**. Tile coordinate Y increases northward, so vertical neighbor offset is flipped: `v_offset = (0, -v_dir)`.
+## Key Shader Coordinate Convention
+Tile coordinates are derived from `in.world_position.xy / tile_size`. World Y increases northward/upward. `local_uv = fract(world_pos / tile_size)` where `local_uv.y = 0` is the **bottom** of the tile. Vertical neighbor offset matches world Y: `v_offset = (0, v_dir)`.
 
 ## Y-sorted Depth Ordering
 `sync_transforms` computes z from y-position: `z = base_layer + (1.0 - world_y / map_height_px) * 0.999`. Entities lower on screen (south) render in front of entities higher on screen (north).
 
 ## TerrainMaterial (`resources/terrain_material.rs`)
-Bind group 3:
+Bind group 2 (Material2d convention):
 - **binding 0**: `terrain_textures` — 2D array texture (9 layers, one per terrain type)
 - **binding 1**: `terrain_sampler` — linear filtering, repeat addressing
 - **binding 2**: `terrain_map` — Rgba8Uint per-tile data
-- **binding 3**: `params: TerrainParams` — texture_scale (4.0), blend_texture_tiles (8.0), map_width
+- **binding 3**: `params: TerrainParams` — texture_scale (4.0), blend_texture_tiles (8.0), map_width, map_height, tile_size
 - **binding 4**: `blend_texture` — blend weight texture
 - **binding 5**: `blend_sampler` — for blend texture (textureLoad used in practice)
 
@@ -74,7 +74,7 @@ Bind group 3:
 
 ## Render Layers (`resources/map.rs`)
 ```
-TERRAIN: 0.0          — tilemap
+TERRAIN: 0.0          — terrain quad
 TERRAIN_OVERLAY: 0.5  — (reserved)
 TERRAIN_FEATURES: 1.0 — y-sorted terrain feature sprites (trees, rocks, bushes)
 FLOOR_ITEMS: 2.0      — dropped items
