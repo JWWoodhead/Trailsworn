@@ -218,6 +218,7 @@ mod tests {
             kind,
             description: "test".into(),
             participants,
+            god_participants: vec![],
         }
     }
 

@@ -74,7 +74,8 @@ Colors in `resources/theme.rs`:
 - **No equip/unequip from UI**
 - **No save/load** (`StableId` infrastructure ready, serialization not built)
 - **UseCondition gaps**: `AllyHpBelow` and `EnemiesInRange` evaluator conditions are stubbed
-- **Terrain feature sprites**: no y-sortable sprite entities yet
+- **Terrain feature sprites**: forest has real sprites, other biomes still use placeholder colored squares
+- **Terrain textures**: 5 of 9 still flat color (Sand, Snow, Swamp, Water, Mountain)
 
 ## CLI
 
@@ -85,7 +86,9 @@ cargo run -- --debug grid,pathing      # Specific flags
 cargo run -- --debug perf              # FPS + entity count profiling
 cargo run --release                    # Optimized build
 cargo run --features dev               # Dynamic linking (faster dev compiles)
+cargo run -- --biome forest            # Spawn in specific biome (grassland/forest/mountain/desert/tundra/swamp/coast/settlement)
 cargo run --example gen_terrain_array  # Regenerate terrain texture array
+cargo run --example gen_blend_texture  # Regenerate terrain blend weight texture
 ```
 
 Runtime debug toggles: F1=grid, F2=pathing, F3=aggro, F4=AI state, F5=profiling

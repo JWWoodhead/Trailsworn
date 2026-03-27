@@ -54,20 +54,17 @@ fn fragment(in: MeshVertexOutput) -> @location(0) vec4<f32> {
         floor(local_uv.y * px_per_tile_f),
     );
 
-    // Quadrant detection: which edges/corner are we closest to?
-    // Matches Godot: horizontal = clamp((-halfTile) + pixelPos.x, -1, 1)
+    // Quadrant detection matching Godot: clamp(-halfTile + pixelPos, -1, 1)
     let half_tile = px_per_tile_f * 0.5;
     let horizontal = clamp(-half_tile + pixel_in_tile.x, -1.0, 1.0);
     let vertical = clamp(-half_tile + pixel_in_tile.y, -1.0, 1.0);
 
-    // Neighbor tile offsets (sign gives direction: -1=left/up, +1=right/down, 0=center)
     let h_dir = i32(sign(horizontal));
     let v_dir = i32(sign(vertical));
 
-    // In our coordinate system, tile Y increases northward but local_uv.y=0 is north.
-    // So vertical > 0 means pixel is in south half → sample south neighbor = (0, -1)
+    // Y is flipped: local_uv.y=0 is north, but tile coord Y increases northward
     let h_offset = vec2<i32>(h_dir, 0);
-    let v_offset = vec2<i32>(0, -v_dir); // flip Y: south in UV = -1 in tile coords
+    let v_offset = vec2<i32>(0, -v_dir);
     let c_offset = vec2<i32>(h_dir, -v_dir);
 
     // Get terrain types for neighbors

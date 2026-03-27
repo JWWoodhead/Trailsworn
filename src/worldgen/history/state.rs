@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
+use crate::worldgen::divine_era::state::{DivineRelationMatrix, DivineWar, DivinePact};
+use crate::worldgen::gods::GodId;
 use crate::worldgen::names::{FactionType, Race};
+use crate::worldgen::world_map::WorldPos;
 
 /// Pairwise faction sentiment. Range -100 (blood feud) to +100 (sworn brothers).
 #[derive(Clone, Debug, Default)]
@@ -129,6 +132,10 @@ pub struct FactionState {
     pub territory: Vec<String>,
     /// Settlement IDs owned.
     pub settlements: Vec<u32>,
+    /// The god this faction worships, if any.
+    pub patron_god: Option<GodId>,
+    /// Faction's devotion to their patron (0-100).
+    pub devotion: u32,
 }
 
 impl FactionState {
@@ -188,6 +195,12 @@ pub struct SettlementState {
     pub population_class: PopulationClass,
     pub prosperity: u32,
     pub defenses: u32,
+    /// Which god this settlement worships.
+    pub patron_god: Option<GodId>,
+    /// Devotion level (0-100).
+    pub devotion: u32,
+    /// World map position.
+    pub world_pos: Option<WorldPos>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -228,6 +241,14 @@ pub struct WorldState {
     pub active_wars: Vec<War>,
     pub active_alliances: Vec<Alliance>,
     pub active_treaties: Vec<Treaty>,
+    /// Pairwise god relationships.
+    pub divine_relations: DivineRelationMatrix,
+    /// Active wars between gods.
+    pub divine_wars: Vec<DivineWar>,
+    /// Active pacts between gods.
+    pub divine_pacts: Vec<DivinePact>,
+    /// Which god owns each world map cell (parallel to WorldMap.cells).
+    pub territory_map: Vec<Option<GodId>>,
 }
 
 impl WorldState {
@@ -249,6 +270,28 @@ impl WorldState {
     pub fn war_count(&self, faction_id: u32) -> usize {
         self.active_wars.iter().filter(|w| {
             w.aggressor == faction_id || w.defender == faction_id
+        }).count()
+    }
+
+    /// Check if two gods are currently at war.
+    pub fn gods_at_war(&self, a: GodId, b: GodId) -> bool {
+        self.divine_wars.iter().any(|w| {
+            (w.aggressor == a && w.defender == b)
+                || (w.aggressor == b && w.defender == a)
+        })
+    }
+
+    /// Check if two gods have an active pact.
+    pub fn gods_have_pact(&self, a: GodId, b: GodId) -> bool {
+        self.divine_pacts.iter().any(|p| {
+            (p.god_a == a && p.god_b == b) || (p.god_a == b && p.god_b == a)
+        })
+    }
+
+    /// Count how many wars a god is currently in.
+    pub fn god_war_count(&self, god_id: GodId) -> usize {
+        self.divine_wars.iter().filter(|w| {
+            w.aggressor == god_id || w.defender == god_id
         }).count()
     }
 }
@@ -326,6 +369,7 @@ mod tests {
             dissolved_year: None, leader_name: "L".into(), leader_id: None,
             military_strength: 50, wealth: 50, stability: 50,
             territory: vec![], settlements: vec![],
+            patron_god: None, devotion: 0,
         };
         let goblin = FactionState {
             id: 2, name: "G".into(), faction_type: FactionType::BanditClan,
@@ -333,6 +377,7 @@ mod tests {
             dissolved_year: None, leader_name: "L".into(), leader_id: None,
             military_strength: 50, wealth: 50, stability: 50,
             territory: vec![], settlements: vec![],
+            patron_god: None, devotion: 0,
         };
         let mut rm = RelationMatrix::default();
         rm.initialize_pair(&dwarf, &goblin);
