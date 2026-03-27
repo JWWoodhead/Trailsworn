@@ -85,6 +85,7 @@ cargo run -- --debug grid,pathing      # Specific flags
 cargo run -- --debug perf              # FPS + entity count profiling
 cargo run --release                    # Optimized build
 cargo run --features dev               # Dynamic linking (faster dev compiles)
+cargo run -- --biome forest            # Spawn in a specific biome (grassland, forest, mountain, desert, tundra, swamp, coast, settlement)
 cargo run --example gen_terrain_array  # Regenerate terrain texture array
 ```
 
