@@ -231,6 +231,7 @@ fn main() {
                 game_time::game_speed_input.after(input::process_input),
                 camera::camera_pan.after(input::process_input),
                 camera::camera_zoom,
+                camera::snap_camera_to_pixel.after(camera::camera_pan).after(camera::camera_zoom),
                 selection::selection_input.after(camera::update_cursor_position),
                 selection::right_click_command.after(camera::update_cursor_position),
                 selection::ability_input.after(input::process_input),

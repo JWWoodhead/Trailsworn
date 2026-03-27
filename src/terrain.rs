@@ -31,8 +31,23 @@ impl TerrainType {
     pub fn default_blocks_los(self) -> bool {
         match self {
             Self::Mountain => true,
-            Self::Forest => true,
             _ => false,
+        }
+    }
+
+    /// Scatter density multiplier for feature placement.
+    /// Higher values = more features placed on this terrain type.
+    pub fn scatter_density(self) -> f32 {
+        match self {
+            Self::Forest => 3.0,
+            Self::Grass => 1.5,
+            Self::Swamp => 0.9,
+            Self::Dirt => 0.7,
+            Self::Snow => 0.6,
+            Self::Sand => 0.5,
+            Self::Stone => 0.3,
+            Self::Mountain => 0.0,
+            Self::Water => 0.0,
         }
     }
 

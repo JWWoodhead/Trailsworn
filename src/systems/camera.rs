@@ -10,12 +10,27 @@ use crate::systems::world_map_ui::WorldMapVisible;
 #[derive(Component)]
 pub struct MainCamera;
 
-const MIN_ZOOM: f32 = 0.5;
-const MAX_ZOOM: f32 = 3.0;
 const KEYBOARD_PAN_SPEED: f32 = 500.0;
 const EDGE_SCROLL_SPEED: f32 = 400.0;
 const EDGE_SCROLL_MARGIN: f32 = 20.0;
-const ZOOM_SPEED: f32 = 0.1;
+const TILE_PX: f32 = 64.0;
+
+/// Pre-computed zoom scales where `TILE_PX / scale` is an integer,
+/// guaranteeing tiles always map to whole screen pixels.
+/// Covers scale = 64/n for n in 22..=128 (scale ~0.5 to ~2.9).
+const PIXEL_PERFECT_SCALES: &[f32] = &{
+    // 64/128=0.500, 64/127=0.504, ..., 64/22=2.909
+    // Build from largest scale (most zoomed out) to smallest.
+    let mut arr = [0.0f32; 107]; // 128 - 22 + 1
+    let mut i = 0usize;
+    let mut n = 22u32;
+    while n <= 128 {
+        arr[i] = TILE_PX / n as f32;
+        i += 1;
+        n += 1;
+    }
+    arr
+};
 
 pub fn setup_camera(mut commands: Commands, map_settings: Res<MapSettings>) {
     let center_x = map_settings.width as f32 * map_settings.tile_size * 0.5;
@@ -134,7 +149,37 @@ pub fn update_cursor_position(
     cursor.tile = Some((tile_x, tile_y));
 }
 
-/// Zoom still reads raw scroll events — scroll wheel isn't an "action" in the same sense.
+/// Step one notch up or down in the pixel-perfect zoom table.
+fn step_pixel_perfect_scale(current: f32, zoom_in: bool) -> f32 {
+    // Table is sorted descending (largest scale = most zoomed out first)
+    let mut closest_idx = 0usize;
+    let mut closest_dist = f32::MAX;
+    for (i, &s) in PIXEL_PERFECT_SCALES.iter().enumerate() {
+        let d = (s - current).abs();
+        if d < closest_dist {
+            closest_dist = d;
+            closest_idx = i;
+        }
+    }
+    if zoom_in {
+        // Zoom in = smaller scale = higher index in descending table
+        if closest_idx + 1 < PIXEL_PERFECT_SCALES.len() {
+            PIXEL_PERFECT_SCALES[closest_idx + 1]
+        } else {
+            PIXEL_PERFECT_SCALES[closest_idx]
+        }
+    } else {
+        // Zoom out = larger scale = lower index
+        if closest_idx > 0 {
+            PIXEL_PERFECT_SCALES[closest_idx - 1]
+        } else {
+            PIXEL_PERFECT_SCALES[closest_idx]
+        }
+    }
+}
+
+/// Zoom via scroll wheel, snapping to pixel-perfect scales where tiles
+/// map to whole screen pixels (eliminates sub-pixel tile seams).
 pub fn camera_zoom(
     mut scroll_events: MessageReader<bevy::input::mouse::MouseWheel>,
     mut camera_query: Query<&mut Projection, With<MainCamera>>,
@@ -145,8 +190,25 @@ pub fn camera_zoom(
 
     for event in scroll_events.read() {
         if let Projection::Orthographic(ref mut ortho) = *projection {
-            let zoom_delta = -event.y * ZOOM_SPEED;
-            ortho.scale = (ortho.scale + zoom_delta).clamp(MIN_ZOOM, MAX_ZOOM);
+            let zoom_in = event.y > 0.0;
+            ortho.scale = step_pixel_perfect_scale(ortho.scale, zoom_in);
         }
     }
+}
+
+/// Snap camera position to the nearest screen-pixel boundary to prevent
+/// sub-pixel tile seams. Must run after camera_pan and camera_zoom.
+pub fn snap_camera_to_pixel(
+    mut camera_query: Query<(&mut Transform, &Projection), With<MainCamera>>,
+) {
+    let Ok((mut transform, projection)) = camera_query.single_mut() else {
+        return;
+    };
+    let scale = match projection {
+        Projection::Orthographic(ortho) => ortho.scale,
+        _ => 1.0,
+    };
+    // One screen pixel = `scale` world units. Round to that grid.
+    transform.translation.x = (transform.translation.x / scale).round() * scale;
+    transform.translation.y = (transform.translation.y / scale).round() * scale;
 }

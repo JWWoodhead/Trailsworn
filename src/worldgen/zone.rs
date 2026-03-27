@@ -454,11 +454,6 @@ fn scatter_features(
         return Vec::new();
     }
 
-    let total_weight: u32 = table.iter().map(|(_, w)| w).sum();
-    if total_weight == 0 {
-        return Vec::new();
-    }
-
     let feature_seed = seed ^ 0xFEA7;
     let mut rng = rand::rngs::StdRng::seed_from_u64(feature_seed);
     let noise = NoiseLayer::new((feature_seed & 0xFFFFFFFF) as u32, 0.06, 3);
@@ -480,10 +475,6 @@ fn scatter_features(
         for gx in (margin..(w - margin)).step_by(stride as usize) {
             // RNG-driven placement with noise modulation for spatial clustering
             let n = noise.sample_normalized(gx as f64, gy as f64);
-            let adjusted_prob = place_prob * (0.5 + n);
-            if rng.random::<f64>() > adjusted_prob {
-                continue;
-            }
 
             // Small random offset within the stride cell to avoid grid patterns
             let x = gx + rng.random_range(0..stride.min(w - margin - gx));
@@ -491,22 +482,46 @@ fn scatter_features(
 
             let idx = tile_world.idx(x, y);
 
-            // Only place on walkable, non-water, non-mountain terrain
+            // Only place on walkable terrain
             if tile_world.walk_cost[idx] <= 0.0 {
                 continue;
             }
-            if tile_world.terrain[idx] == TerrainType::Water
-                || tile_world.terrain[idx] == TerrainType::Mountain
-            {
+
+            // Terrain-aware density: scale placement probability by terrain type
+            let terrain = tile_world.terrain[idx];
+            let density_mult = terrain.scatter_density();
+            if density_mult <= 0.0 {
                 continue;
             }
 
-            // Weighted random selection from the biome table
-            let roll = rng.random_range(0..total_weight);
-            let mut accum = 0u32;
-            let mut selected_id = table[0].0;
-            for &(id, weight) in table {
-                accum += weight;
+            let adjusted_prob = place_prob * (0.5 + n) * density_mult as f64;
+            if rng.random::<f64>() > adjusted_prob {
+                continue;
+            }
+
+            // Filter biome table to features compatible with this terrain,
+            // adjusting weights by the terrain multiplier
+            let mut filtered: Vec<(FeatureId, f32)> = Vec::new();
+            let mut total_w = 0.0f32;
+            for &(id, base_weight) in table {
+                if let Some(def) = registry.get(id) {
+                    if let Some(&(_, tw)) = def.terrain_weights.iter().find(|(t, _)| *t == terrain) {
+                        let w = base_weight as f32 * tw;
+                        filtered.push((id, w));
+                        total_w += w;
+                    }
+                }
+            }
+            if filtered.is_empty() || total_w <= 0.0 {
+                continue;
+            }
+
+            // Weighted random selection from filtered table
+            let roll = rng.random::<f32>() * total_w;
+            let mut accum = 0.0f32;
+            let mut selected_id = filtered[0].0;
+            for &(id, fw) in &filtered {
+                accum += fw;
                 if roll < accum {
                     selected_id = id;
                     break;
