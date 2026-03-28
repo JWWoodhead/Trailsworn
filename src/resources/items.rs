@@ -524,6 +524,7 @@ mod tests {
                 range: 1.5,
                 projectile_speed: 0.0,
                 is_melee: true,
+                attack_sfx: None,
             }),
             base_tier: Some(BaseTier::Crude),
             item_level_req: 1,

@@ -54,6 +54,7 @@ fn weapon_cooldown() {
         range: 1.5,
         projectile_speed: 0.0,
         is_melee: true,
+        attack_sfx: None,
     };
     let mut equipped = EquippedWeapon::new(weapon);
     assert!(equipped.is_ready());

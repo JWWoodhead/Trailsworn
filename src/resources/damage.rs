@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use super::audio::SfxKind;
+
 /// Types of damage that can be dealt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DamageType {
@@ -107,6 +109,8 @@ pub struct WeaponDef {
     pub projectile_speed: f32,
     /// Whether this is a melee weapon.
     pub is_melee: bool,
+    /// Sound effect played when this weapon hits. Falls back to generic SfxKind::MeleeHit if None.
+    pub attack_sfx: Option<SfxKind>,
 }
 
 /// The weapon a character currently has equipped.

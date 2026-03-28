@@ -143,6 +143,7 @@ pub fn auto_attack(
                     part_destroyed: result.part_destroyed,
                     target_killed: result.target_killed,
                     ability_name: None,
+                    ability_id: None,
                 });
 
                 threat_table.add_threat(attacker_entity, result.damage_dealt);

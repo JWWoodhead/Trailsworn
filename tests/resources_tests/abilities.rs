@@ -67,6 +67,11 @@ fn ability_registry() {
         aoe_width: 0.0,
         effects: vec![],
         interruptible: true,
+        cast_sfx: None,
+        impact_sfx: None,
+        impact_vfx: None,
+        impact_vfx_scale: 1.0,
+        cast_vfx: None,
     });
 
     assert!(registry.get(1).is_some());

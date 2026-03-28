@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 
+use super::audio::SfxKind;
 use super::damage::DamageType;
+use super::particles::VfxKind;
 use super::status_effects::StatusId;
 use super::stats::AttributeChoice;
 
@@ -92,6 +94,16 @@ pub struct AbilityDef {
     pub effects: Vec<AbilityEffect>,
     /// Can be interrupted by taking damage while casting.
     pub interruptible: bool,
+    /// Sound effect played when casting begins. Falls back to generic SfxKind::SpellCast if None.
+    pub cast_sfx: Option<SfxKind>,
+    /// Sound effect played when the ability impacts. Falls back to generic SfxKind::SpellImpact if None.
+    pub impact_sfx: Option<SfxKind>,
+    /// Particle VFX played at impact point. Falls back to damage-type default if None.
+    pub impact_vfx: Option<VfxKind>,
+    /// Scale multiplier for the impact VFX. 1.0 = default, 3.0 = 3x bigger. Useful for AoE.
+    pub impact_vfx_scale: f32,
+    /// Particle VFX played on caster during cast (future use).
+    pub cast_vfx: Option<VfxKind>,
 }
 
 /// Registry of all ability definitions.

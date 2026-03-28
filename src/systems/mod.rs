@@ -1,4 +1,5 @@
 pub mod ability_bar;
+pub mod audio;
 pub mod camera;
 pub mod cast_bars;
 pub mod character_sheet;
@@ -19,5 +20,6 @@ pub mod selection;
 pub mod spawning;
 pub mod task;
 pub mod ui_panel;
+pub mod vfx;
 pub mod world_map_ui;
 pub mod zone;

@@ -8,6 +8,7 @@ dev = ["bevy/dynamic_linking"]
 
 [dependencies]
 bevy = { version = "0.18.1", features = ["bevy_dev_tools"] }
+bevy_hanabi = { version = "0.18", default-features = false, features = ["2d"] }
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 noise = "0.9"
 rand = "0.10.0"
