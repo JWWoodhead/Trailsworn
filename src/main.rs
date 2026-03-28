@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
+use bevy_hanabi::prelude::*;
 use trailsworn::resources::terrain_material::TerrainMaterial;
 use trailsworn::resources::abilities::AbilityRegistry;
 use trailsworn::resources::ability_defs::register_starter_abilities;
@@ -9,7 +10,7 @@ use trailsworn::resources::affixes::AffixRegistry;
 use trailsworn::resources::item_defs::register_starter_items;
 use trailsworn::resources::items::{ItemInstanceRegistry, ItemRegistry};
 use trailsworn::resources::body::{humanoid_template, BodyTemplates};
-use trailsworn::resources::events::{AbilityCastEvent, AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
+use trailsworn::resources::events::{AbilityCastEvent, AbilityLandedEvent, AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
 use trailsworn::resources::faction::{Disposition, FactionRelations};
 use trailsworn::resources::game_state::{GameSet, GameState};
 use trailsworn::resources::game_time::GameTime;
@@ -21,9 +22,10 @@ use trailsworn::resources::map::MapSettings;
 use trailsworn::resources::status_effects::StatusEffectRegistry;
 use trailsworn::resources::theme::Theme;
 use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
+use trailsworn::resources::vfx::ScreenTrauma;
 use trailsworn::systems::{
-    ability_bar, camera, cast_bars, casting, character_sheet, combat, debug, equipment, floating_text, game_time,
-    health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, world_map_ui, zone,
+    ability_bar, audio, camera, cast_bars, casting, character_sheet, combat, debug, equipment, floating_text, game_time,
+    health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, vfx, world_map_ui, zone,
 };
 use rand::SeedableRng;
 use trailsworn::worldgen::world_map::generate_world_map;
@@ -145,6 +147,7 @@ fn main() {
         .set(ImagePlugin::default_nearest())
     )
     .add_plugins(Material2dPlugin::<TerrainMaterial>::default())
+    .add_plugins(HanabiPlugin)
     // State
     .init_state::<GameState>()
     // Resources
@@ -181,9 +184,11 @@ fn main() {
     .insert_resource(drawn_pantheon)
     .insert_resource(world_history)
     .insert_resource(trailsworn::resources::zone_persistence::ZoneStateCache::default())
+    .insert_resource(ScreenTrauma::default())
     // Messages
     .add_message::<DamageDealtEvent>()
     .add_message::<AttackMissedEvent>()
+    .add_message::<AbilityLandedEvent>()
     .add_message::<CastInterruptedEvent>()
     .add_message::<AbilityCastEvent>()
     .add_message::<ZoneTransitionEvent>()
@@ -214,6 +219,8 @@ fn main() {
             ability_bar::setup_ability_bar,
             ui_panel::setup_ui_panel,
             world_map_ui::setup_world_map_ui,
+            audio::setup_audio,
+            trailsworn::resources::particle_defs::setup_particle_effects,
             zone::spawn_starting_zone,
             transition_to_playing,
         )
@@ -313,10 +320,21 @@ fn main() {
                 world_map_ui::update_world_map_marker,
             )
                 .in_set(GameSet::Ui),
+            (
+                vfx::spawn_combat_effects,
+                vfx::spawn_cast_effects,
+                vfx::spawn_interrupt_effects,
+                vfx::spawn_ability_landed_effects,
+                vfx::tick_attack_lunge,
+                vfx::tick_hit_flash,
+                vfx::cleanup_despawn_timers,
+            )
+                .in_set(GameSet::Ui),
             // Render
             (
                 movement::sync_transforms,
                 rendering::update_terrain_map,
+                vfx::tick_screen_trauma.after(movement::sync_transforms),
             ).in_set(GameSet::Render),
             // Identity (runs always, not state-gated)
             register_stable_ids,

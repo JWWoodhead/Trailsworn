@@ -85,15 +85,21 @@ pub fn movement(
 /// Runs every frame (not tick-locked).
 pub fn sync_transforms(
     map_settings: Res<MapSettings>,
-    mut query: Query<(&GridPosition, Option<&MovePath>, Option<&PathOffset>, &mut Transform)>,
+    mut query: Query<(
+        &GridPosition,
+        Option<&MovePath>,
+        Option<&PathOffset>,
+        Option<&crate::resources::vfx::AttackLunge>,
+        &mut Transform,
+    )>,
 ) {
     let ts = map_settings.tile_size;
 
-    for (grid_pos, move_path, offset, mut transform) in &mut query {
+    for (grid_pos, move_path, offset, attack_lunge, mut transform) in &mut query {
         let offset_px = offset.map_or(Vec2::ZERO, |o| Vec2::new(o.x * ts, o.y * ts));
         let base = grid_pos.to_world(ts) + offset_px;
 
-        let pos = if let Some(path) = move_path {
+        let mut pos = if let Some(path) = move_path {
             if let Some(next) = path.next_tile() {
                 let next_world = Vec2::new(
                     next.0 as f32 * ts,
@@ -106,6 +112,11 @@ pub fn sync_transforms(
         } else {
             base
         };
+
+        // Apply attack lunge offset (small bump toward target)
+        if let Some(lunge) = attack_lunge {
+            pos += lunge.current_offset();
+        }
 
         let map_height_px = map_settings.height as f32 * ts;
         transform.translation.x = pos.x;

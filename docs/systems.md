@@ -36,8 +36,8 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `combat::auto_attack` — entities with an `Engaging` marker attack their target when in range and weapon ready. Fires `DamageDealtEvent` / `AttackMissedEvent`.
 - `casting::tick_ability_cooldowns` — decrements per-slot ability cooldowns
 - `casting::regenerate_resources` — mana/stamina regen per tick
-- `casting::begin_cast` — processes newly-added `CastingState`: spends resources, starts cooldowns, resolves instant casts
-- `casting::tick_casting` — counts down cast timers, resolves effects on completion
+- `casting::begin_cast` — processes newly-added `CastingState`: spends resources, starts cooldowns, resolves instant casts. Fires `AbilityLandedEvent` for VFX.
+- `casting::tick_casting` — counts down cast timers, resolves effects on completion. Fires `AbilityLandedEvent` for VFX.
 - `casting::interrupt_casting` — removes `CastingState` if caster takes damage and ability is interruptible
 - `combat::tick_status_effects` — decrements status effect durations
 - `combat::cleanup_dead` — despawns entities whose vital body parts are destroyed
@@ -63,9 +63,17 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `character_sheet::update_character_sheet` — updates body/stats/resources on Character tab (only when active)
 - `inventory::update_inventory_panel` — updates equipment/grid/weight on Inventory tab (only when active)
 - `ability_bar::update_ability_bar` — hides bar when nothing selected, shows slots when selected
+- `vfx::spawn_combat_effects` — reads `DamageDealtEvent`/`AttackMissedEvent`: inserts `AttackLunge` on attacker, `HitFlash` on target, spawns per-hit particle impact, adds screen trauma, plays audio one-shots
+- `vfx::spawn_cast_effects` — reads `AbilityCastEvent`: plays cast audio (data-driven per ability via `cast_sfx`)
+- `vfx::spawn_interrupt_effects` — reads `CastInterruptedEvent`: plays interrupt audio
+- `vfx::spawn_ability_landed_effects` — reads `AbilityLandedEvent`: spawns big particle burst at ability impact position (AoE center), scaled by `AbilityDef.impact_vfx_scale`
+- `vfx::tick_attack_lunge` — advances `AttackLunge.progress`, removes when done
+- `vfx::tick_hit_flash` — ticks `HitFlash.timer`, overrides sprite to white, restores on expiry
+- `vfx::cleanup_despawn_timers` — ticks `DespawnTimer` on effect entities, despawns when expired
 
 ## Render (GameSet::Render)
-- `movement::sync_transforms` — sets entity `Transform` from `GridPosition` + `MovePath.progress` + `PathOffset`. Computes y-sorted z-depth via `render_layers::y_sorted_z()` so entities further north render behind entities further south.
+- `movement::sync_transforms` — sets entity `Transform` from `GridPosition` + `MovePath.progress` + `PathOffset` + `AttackLunge` offset. Computes y-sorted z-depth via `render_layers::y_sorted_z()` so entities further north render behind entities further south.
+- `vfx::tick_screen_trauma` — decays `ScreenTrauma.trauma` exponentially, applies camera shake offset (runs after sync_transforms)
 - `rendering::update_terrain_map` — updates the terrain map GPU texture (R=terrain type, G/B=random UV offset) when `TileWorld` changes (zone transitions)
 
 ## Always-running (not state-gated)

@@ -1,5 +1,7 @@
 use super::abilities::{AbilityDef, AbilityEffect, AbilityRegistry, StatScaling, TargetType};
+use super::audio::SfxKind;
 use super::damage::DamageType;
+use super::particles::VfxKind;
 use super::stats::AttributeChoice;
 use super::status_effects::{CcFlags, StatModifier, StatusEffectDef, StatusEffectRegistry, TickEffect};
 
@@ -127,6 +129,11 @@ fn register_abilities(registry: &mut AbilityRegistry) {
             AbilityEffect::GenerateThreat { amount: 15.0 },
         ],
         interruptible: false,
+        cast_sfx: None,
+        impact_sfx: Some(SfxKind::CleaveImpact),
+        impact_vfx: Some(VfxKind::CleaveImpact),
+        impact_vfx_scale: 1.5,
+        cast_vfx: None,
     });
 
     // 2. Shield Bash — instant stun + threat
@@ -157,6 +164,11 @@ fn register_abilities(registry: &mut AbilityRegistry) {
             AbilityEffect::GenerateThreat { amount: 25.0 },
         ],
         interruptible: false,
+        cast_sfx: None,
+        impact_sfx: Some(SfxKind::ShieldBashImpact),
+        impact_vfx: Some(VfxKind::ShieldBashImpact),
+        impact_vfx_scale: 1.0,
+        cast_vfx: None,
     });
 
     // 3. Fireball — cast-time AoE fire damage
@@ -184,6 +196,11 @@ fn register_abilities(registry: &mut AbilityRegistry) {
             },
         ],
         interruptible: true,
+        cast_sfx: Some(SfxKind::SpellCast),
+        impact_sfx: Some(SfxKind::FireImpact),
+        impact_vfx: Some(VfxKind::FireballImpact),
+        impact_vfx_scale: 6.0,
+        cast_vfx: None,
     });
 
     // 4. Frost Bolt — cast-time single target + slow
@@ -216,6 +233,11 @@ fn register_abilities(registry: &mut AbilityRegistry) {
             },
         ],
         interruptible: true,
+        cast_sfx: Some(SfxKind::SpellCast),
+        impact_sfx: Some(SfxKind::FrostImpact),
+        impact_vfx: Some(VfxKind::FrostBoltImpact),
+        impact_vfx_scale: 1.5,
+        cast_vfx: None,
     });
 
     // 5. Heal — cast-time single ally heal
@@ -242,6 +264,11 @@ fn register_abilities(registry: &mut AbilityRegistry) {
             },
         ],
         interruptible: true,
+        cast_sfx: Some(SfxKind::HealCast),
+        impact_sfx: Some(SfxKind::HealLand),
+        impact_vfx: Some(VfxKind::HealLand),
+        impact_vfx_scale: 2.0,
+        cast_vfx: None,
     });
 
     // 6. Bandage — cast-time self heal + regen
@@ -270,6 +297,11 @@ fn register_abilities(registry: &mut AbilityRegistry) {
             },
         ],
         interruptible: true,
+        cast_sfx: Some(SfxKind::BandageRip),
+        impact_sfx: None,
+        impact_vfx: None,
+        impact_vfx_scale: 1.0,
+        cast_vfx: None,
     });
 
     // 7. War Cry — instant self buff + massive threat
@@ -295,6 +327,11 @@ fn register_abilities(registry: &mut AbilityRegistry) {
             },
         ],
         interruptible: false,
+        cast_sfx: Some(SfxKind::WarCry),
+        impact_sfx: None,
+        impact_vfx: None,
+        impact_vfx_scale: 1.0,
+        cast_vfx: None,
     });
 
     // 8. Aimed Shot — cast-time ranged physical, agility scaling
@@ -322,6 +359,11 @@ fn register_abilities(registry: &mut AbilityRegistry) {
             },
         ],
         interruptible: true,
+        cast_sfx: Some(SfxKind::BowDraw),
+        impact_sfx: Some(SfxKind::ArrowImpact),
+        impact_vfx: Some(VfxKind::AimedShotImpact),
+        impact_vfx_scale: 1.0,
+        cast_vfx: None,
     });
 }
 

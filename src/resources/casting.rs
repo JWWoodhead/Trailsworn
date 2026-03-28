@@ -212,6 +212,11 @@ mod tests {
             aoe_width: 0.0,
             effects: vec![],
             interruptible: true,
+            cast_sfx: None,
+            impact_sfx: None,
+            impact_vfx: None,
+            impact_vfx_scale: 1.0,
+            cast_vfx: None,
         }
     }
 

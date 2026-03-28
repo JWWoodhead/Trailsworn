@@ -69,6 +69,7 @@ pub fn placeholder_weapon(base_id: ItemId, item_registry: &ItemRegistry) -> Weap
             range: 1.5,
             projectile_speed: 0.0,
             is_melee: true,
+            attack_sfx: None,
         })
 }
 

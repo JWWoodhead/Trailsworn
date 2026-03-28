@@ -24,7 +24,7 @@ tests/                 — Integration test harness + per-system tests (~257 tes
 
 ## Architecture Rules
 
-- **No custom Bevy plugins** — everything registered directly in main.rs. Exception: `Material2dPlugin<TerrainMaterial>`.
+- **No custom Bevy plugins** — everything registered directly in main.rs. Exceptions: `Material2dPlugin<TerrainMaterial>`, `HanabiPlugin` (bevy_hanabi GPU particles).
 - **Organize by ECS role**: `systems/` for systems, `resources/` for components/resources
 - **Pure logic at top level**: terrain.rs, generation.rs, pathfinding/, worldgen/
 - All keybindings centralized in `resources/input.rs`
@@ -45,7 +45,7 @@ All gated by `run_if(in_state(GameState::Playing))`. See [docs/systems.md](docs/
 - **DespawnOnExit(GameState::Playing)**: on all spawned gameplay entities.
 - **StableId**: on all persistent entities. `StableIdRegistry` for lookups. Ready for save/load.
 - **Name component**: Bevy's built-in `Name` alongside `EntityName` on all characters.
-- **Events as Messages**: `DamageDealtEvent`, `AttackMissedEvent`, `ZoneTransitionEvent` use Bevy 0.18's `Message`/`MessageWriter`/`MessageReader`.
+- **Events as Messages**: `DamageDealtEvent`, `AttackMissedEvent`, `AbilityCastEvent`, `AbilityLandedEvent`, `CastInterruptedEvent`, `ZoneTransitionEvent` use Bevy 0.18's `Message`/`MessageWriter`/`MessageReader`.
 - **CurrentTask on all agents**: every entity that acts gets a `CurrentTask`. NPC entities additionally get `AiBrain::enemy()`. Player entities have no `AiBrain` — driven by player commands.
 
 ## Design System ("The Gritty Chronicle")
@@ -63,6 +63,7 @@ Colors in `resources/theme.rs`:
 - [docs/worldgen.md](docs/worldgen.md) — World map, zone/cave generation, history simulation, population tables, names
 - [docs/rendering.md](docs/rendering.md) — Terrain shader, blending, UV conventions, render layers, pathfinding algorithms
 - [docs/extension-guide.md](docs/extension-guide.md) — How to add items, affixes, damage types, equip slots, components (with save categorization)
+- [docs/vfx.md](docs/vfx.md) — Combat feedback: VFX particles, audio, micro-animations, and how to add new effects
 
 ## Known Issues
 

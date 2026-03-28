@@ -9,7 +9,7 @@ use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::casting::{calculate_ability_damage, calculate_ability_heal, AoeParams, resolve_aoe_targets};
 use crate::resources::combat::{apply_damage, resolve_hit};
 use crate::resources::damage::EquippedArmor;
-use crate::resources::events::{AbilityCastEvent, CastInterruptedEvent, DamageDealtEvent};
+use crate::resources::events::{AbilityCastEvent, AbilityLandedEvent, CastInterruptedEvent, DamageDealtEvent};
 use crate::systems::spawning::EntityName;
 use crate::resources::game_time::GameTime;
 use crate::resources::map::GridPosition;
@@ -62,6 +62,7 @@ pub fn begin_cast(
     body_templates: Res<BodyTemplates>,
     mut damage_events: MessageWriter<DamageDealtEvent>,
     mut cast_events: MessageWriter<AbilityCastEvent>,
+    mut landed_events: MessageWriter<AbilityLandedEvent>,
     mut casters: Query<
         (
             Entity,
@@ -119,6 +120,7 @@ pub fn begin_cast(
             caster: caster_entity,
             ability_name: ability.name.clone(),
             target_description: target_desc,
+            ability_id: Some(ability.id),
         });
 
         // Instant cast: resolve immediately
@@ -134,6 +136,13 @@ pub fn begin_cast(
                 &mut damage_events,
                 &mut targets,
             );
+            let impact_pos = resolve_impact_position(&casting.target, caster_pos, &targets);
+            landed_events.write(AbilityLandedEvent {
+                caster: caster_entity,
+                ability_id: ability.id,
+                position: impact_pos,
+                impact_vfx_scale: ability.impact_vfx_scale,
+            });
             commands.entity(caster_entity).remove::<CastingState>();
         }
     }
@@ -147,6 +156,7 @@ pub fn tick_casting(
     status_registry: Res<StatusEffectRegistry>,
     body_templates: Res<BodyTemplates>,
     mut damage_events: MessageWriter<DamageDealtEvent>,
+    mut landed_events: MessageWriter<AbilityLandedEvent>,
     mut casters: Query<(
         Entity,
         &mut CastingState,
@@ -198,6 +208,13 @@ pub fn tick_casting(
                 &mut damage_events,
                 &mut targets,
             );
+            let impact_pos = resolve_impact_position(&casting.target, caster_pos, &targets);
+            landed_events.write(AbilityLandedEvent {
+                caster: caster_entity,
+                ability_id: ability.id,
+                position: impact_pos,
+                impact_vfx_scale: ability.impact_vfx_scale,
+            });
             commands.entity(caster_entity).remove::<CastingState>();
         }
     }
@@ -297,6 +314,7 @@ fn resolve_ability_effects(
                                     part_destroyed: result.part_destroyed,
                                     target_killed: result.target_killed,
                                     ability_name: Some(ability.name.clone()),
+                                    ability_id: Some(ability.id),
                                 });
 
                                 threat_table.add_threat(caster_entity, result.damage_dealt);
@@ -413,6 +431,34 @@ fn resolve_cast_targets(
                 .into_iter()
                 .map(|i| candidate_entities[i])
                 .collect()
+        }
+    }
+}
+
+/// Resolve the world-space impact position from a CastTarget.
+/// Used to place the AbilityLandedEvent at the right spot.
+fn resolve_impact_position(
+    cast_target: &CastTarget,
+    caster_pos: &GridPosition,
+    targets: &Query<(
+        Entity,
+        &GridPosition,
+        &mut Body,
+        &EquippedArmor,
+        &mut ActiveStatusEffects,
+        &mut ThreatTable,
+    )>,
+) -> (f32, f32) {
+    match cast_target {
+        CastTarget::SelfCast => (caster_pos.x as f32, caster_pos.y as f32),
+        CastTarget::Position { x, y } => (*x, *y),
+        CastTarget::Direction { dx, dy } => (caster_pos.x as f32 + dx, caster_pos.y as f32 + dy),
+        CastTarget::Entity(e) => {
+            if let Ok((_, pos, _, _, _, _)) = targets.get(*e) {
+                (pos.x as f32, pos.y as f32)
+            } else {
+                (caster_pos.x as f32, caster_pos.y as f32)
+            }
         }
     }
 }

@@ -1,3 +1,4 @@
+use super::audio::SfxKind;
 use super::damage::{DamageType, Resistances, WeaponDef};
 use super::items::*;
 
@@ -141,6 +142,13 @@ fn weapon(
     damage_type: DamageType, base_damage: f32, speed: u32, range: f32, melee: bool, weight: f32,
 ) -> ItemDef {
     let proj_speed = if melee { 0.0 } else { 12.0 };
+    let attack_sfx = Some(match class {
+        WeaponClass::Sword => SfxKind::SwordHit,
+        WeaponClass::Mace => SfxKind::MaceHit,
+        WeaponClass::Dagger => SfxKind::DaggerHit,
+        WeaponClass::Bow => SfxKind::BowHit,
+        WeaponClass::Staff => SfxKind::StaffHit,
+    });
     ItemDef {
         id, name: name.into(), description: desc.into(),
         kind: ItemKind::Weapon, rarity: Rarity::Normal,
@@ -148,6 +156,7 @@ fn weapon(
         properties: ItemProperties::Weapon(WeaponDef {
             name: name.into(), damage_type, base_damage,
             attack_speed_ticks: speed, range, projectile_speed: proj_speed, is_melee: melee,
+            attack_sfx,
         }),
         base_tier: Some(tier), item_level_req: ilvl,
         weapon_class: Some(class), armor_class: None,
