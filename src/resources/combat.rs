@@ -133,3 +133,7 @@ pub struct Projectile {
 /// Marker for entities currently in combat.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct InCombat;
+
+/// Marker for dead entities left as corpses on the ground.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct Dead;

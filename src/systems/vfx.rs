@@ -4,11 +4,13 @@ use bevy_hanabi::prelude::*;
 use crate::resources::abilities::AbilityRegistry;
 use crate::resources::audio::{AudioAssets, SfxKind};
 use crate::resources::damage::EquippedWeapon;
-use crate::resources::events::{AbilityLandedEvent, AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
+use crate::resources::events::{AbilityLandedEvent, AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent, HealEvent};
 use crate::resources::map::MapSettings;
 use crate::resources::particles::ParticleAssets;
+use crate::resources::map::render_layers;
 use crate::resources::vfx::{
-    AttackLunge, DespawnTimer, HitFlash, ImpactKind, ScreenTrauma,
+    AttackLunge, DespawnTimer, HitFlash, ImpactKind, Projectile, ScreenTrauma,
+    PROJECTILE_DEFAULT_SPEED, PROJECTILE_SIZE,
 };
 
 // ---------------------------------------------------------------------------
@@ -23,6 +25,7 @@ pub fn spawn_combat_effects(
     ability_registry: Res<AbilityRegistry>,
     audio_assets: Res<AudioAssets>,
     particle_assets: Res<ParticleAssets>,
+    map_settings: Res<MapSettings>,
     mut screen_trauma: ResMut<ScreenTrauma>,
     transforms: Query<&Transform>,
     sprites: Query<&Sprite>,
@@ -104,6 +107,51 @@ pub fn spawn_combat_effects(
                 commands.spawn((
                     AudioPlayer(handle.clone()),
                     PlaybackSettings::DESPAWN,
+                ));
+            }
+        }
+
+        // Cosmetic projectile for ranged attacks
+        let is_ranged = if let Some(ability_id) = event.ability_id {
+            ability_registry
+                .get(ability_id)
+                .map(|a| a.range > 2.0)
+                .unwrap_or(false)
+        } else {
+            weapons
+                .get(event.attacker)
+                .map(|w| !w.weapon.is_melee)
+                .unwrap_or(false)
+        };
+        if is_ranged {
+            if let (Ok(a_pos), Ok(t_pos)) = (attacker_pos, target_pos) {
+                let start = Vec2::new(a_pos.x, a_pos.y);
+                let end = Vec2::new(t_pos.x, t_pos.y);
+                let color = ImpactKind::from_damage_type(event.damage_type).color();
+                let speed = weapons
+                    .get(event.attacker)
+                    .ok()
+                    .filter(|w| w.weapon.projectile_speed > 0.0)
+                    .map(|w| w.weapon.projectile_speed * map_settings.tile_size)
+                    .unwrap_or(PROJECTILE_DEFAULT_SPEED);
+
+                commands.spawn((
+                    Sprite {
+                        color,
+                        custom_size: Some(Vec2::splat(PROJECTILE_SIZE)),
+                        ..default()
+                    },
+                    Transform::from_translation(Vec3::new(
+                        start.x,
+                        start.y,
+                        render_layers::PROJECTILES,
+                    )),
+                    Projectile {
+                        start,
+                        end,
+                        speed,
+                        progress: 0.0,
+                    },
                 ));
             }
         }
@@ -206,6 +254,47 @@ pub fn spawn_ability_landed_effects(
     }
 }
 
+/// Spawn heal VFX and audio when healing is applied.
+pub fn spawn_heal_effects(
+    mut commands: Commands,
+    mut heal_events: MessageReader<HealEvent>,
+    ability_registry: Res<AbilityRegistry>,
+    audio_assets: Res<AudioAssets>,
+    particle_assets: Res<ParticleAssets>,
+    transforms: Query<&Transform>,
+) {
+    for event in heal_events.read() {
+        let Ok(t_pos) = transforms.get(event.target).map(|t| t.translation) else {
+            continue;
+        };
+
+        // Particles: use ability impact_vfx or fall back to generic heal
+        let vfx_kind = event
+            .ability_id
+            .and_then(|id| ability_registry.get(id))
+            .and_then(|a| a.impact_vfx)
+            .unwrap_or(crate::resources::particles::VfxKind::ImpactHeal);
+
+        if let Some(effect_handle) = particle_assets.get(vfx_kind) {
+            commands.spawn((
+                ParticleEffect::new(effect_handle.clone()),
+                Transform::from_translation(Vec3::new(t_pos.x, t_pos.y, 4.5)),
+                DespawnTimer::new(2.0),
+            ));
+        }
+
+        // Audio: use ability impact_sfx or fall back to HealLand
+        let sfx = event
+            .ability_id
+            .and_then(|id| ability_registry.get(id))
+            .and_then(|a| a.impact_sfx)
+            .unwrap_or(SfxKind::HealLand);
+        if let Some(handle) = audio_assets.get(sfx) {
+            commands.spawn((AudioPlayer(handle.clone()), PlaybackSettings::DESPAWN));
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tick systems — advance animations, clean up expired effects
 // ---------------------------------------------------------------------------
@@ -241,6 +330,30 @@ pub fn tick_hit_flash(
         } else {
             // Flash white
             sprite.color = Color::WHITE;
+        }
+    }
+}
+
+/// Advance cosmetic projectiles and despawn on arrival.
+pub fn tick_projectiles(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut Projectile, &mut Transform)>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut proj, mut transform) in &mut query {
+        let total_dist = (proj.end - proj.start).length();
+        if total_dist < 0.1 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        proj.progress += (proj.speed * dt) / total_dist;
+        if proj.progress >= 1.0 {
+            commands.entity(entity).despawn();
+        } else {
+            let pos = proj.start.lerp(proj.end, proj.progress);
+            transform.translation.x = pos.x;
+            transform.translation.y = pos.y;
         }
     }
 }

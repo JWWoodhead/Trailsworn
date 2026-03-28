@@ -12,12 +12,14 @@ use crate::resources::items::{
     Equipment, EquipSlot, Inventory, ItemId, ItemInstance, ItemInstanceId,
     ItemInstanceRegistry, ItemRegistry, Rarity,
 };
-use crate::resources::item_defs::ITEM_CHIPPED_BLADE;
+use crate::resources::item_defs::{
+    ITEM_GNARLED_BRANCH, ITEM_RANGERS_LONGBOW, ITEM_WANDERERS_STAFF, ITEM_WATCHMANS_SWORD,
+};
 use crate::resources::damage::{EquippedArmor, EquippedWeapon, WeaponDef};
 use crate::resources::faction::{Faction, FACTION_PLAYER};
 use crate::resources::game_state::GameState;
 use crate::resources::identity::StableId;
-use crate::resources::map::{render_layers, GridPosition, MapSettings};
+use crate::resources::map::{render_layers, GridPosition, MapSettings, TileWorld};
 use crate::resources::movement::{FacingDirection, MovementSpeed, PathOffset};
 use crate::resources::stats::{Attributes, CharacterLevel};
 use crate::resources::status_effects::ActiveStatusEffects;
@@ -73,77 +75,245 @@ pub fn placeholder_weapon(base_id: ItemId, item_registry: &ItemRegistry) -> Weap
         })
 }
 
-/// Spawn the player's party.
+/// Spawn the player's party (4 members with different roles).
 pub fn spawn_player(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     map_settings: Res<MapSettings>,
+    tile_world: Res<TileWorld>,
     body_templates: Res<BodyTemplates>,
     item_registry: Res<ItemRegistry>,
     mut instance_registry: ResMut<ItemInstanceRegistry>,
 ) {
-    let pawn_texture = asset_server.load("pawn.png");
+    let pawn_texture: Handle<Image> = asset_server.load("pawn.png");
     let template = body_templates.get("humanoid").unwrap();
 
-    // Create weapon item instance
-    let weapon_instance_id = create_item_instance(ITEM_CHIPPED_BLADE, &mut instance_registry);
-    let placeholder = placeholder_weapon(ITEM_CHIPPED_BLADE, &item_registry);
+    // Find a walkable spawn center near the map center
+    let center = find_walkable_near(
+        map_settings.width / 2,
+        map_settings.height / 2,
+        &tile_world,
+    );
 
-    // Set up equipment
-    let mut equipment = Equipment::default();
-    equipment.equip(EquipSlot::MainHand, weapon_instance_id);
+    struct PartyDef {
+        name: &'static str,
+        weapon_id: ItemId,
+        color: Color,
+        role: CombatRole,
+        attack_range: f32,
+        attrs: Attributes,
+        mana: f32,
+        stamina: f32,
+        abilities: Vec<u32>,
+    }
 
-    let grid_pos = GridPosition::new(125, 125);
-    let world_pos = grid_pos.to_world(map_settings.tile_size);
-
-    let mut entity_commands = commands.spawn((
-        Name::new("Hero"),
-        StableId::next(),
-        DespawnOnExit(GameState::Playing),
-        Sprite {
-            image: pawn_texture,
-            ..default()
+    let party = [
+        PartyDef {
+            name: "Warrior",
+            weapon_id: ITEM_WATCHMANS_SWORD,
+            color: Color::srgb(0.5, 0.6, 0.8),
+            role: CombatRole::Tank,
+            attack_range: 1.5,
+            attrs: Attributes { strength: 8, agility: 4, toughness: 8, intellect: 3, willpower: 4 },
+            mana: 30.0,
+            stamina: 120.0,
+            abilities: vec![
+                ability_defs::ABILITY_CLEAVE,
+                ability_defs::ABILITY_SHIELD_BASH,
+                ability_defs::ABILITY_WAR_CRY,
+                ability_defs::ABILITY_BANDAGE,
+                0, 0,
+            ],
         },
-        Transform::from_translation(Vec3::new(
-            world_pos.x,
-            world_pos.y,
-            render_layers::ENTITIES,
-        )),
-        grid_pos,
-        MovementSpeed::default(),
-        FacingDirection::default(),
-        PathOffset::random(&mut rand::rng()),
-        Faction(FACTION_PLAYER),
-        EntityName("Hero".into()),
-    ));
+        PartyDef {
+            name: "Archer",
+            weapon_id: ITEM_RANGERS_LONGBOW,
+            color: Color::srgb(0.4, 0.7, 0.3),
+            role: CombatRole::RangedDps,
+            attack_range: 10.0,
+            attrs: Attributes { strength: 4, agility: 8, toughness: 5, intellect: 3, willpower: 3 },
+            mana: 20.0,
+            stamina: 100.0,
+            abilities: vec![
+                ability_defs::ABILITY_AIMED_SHOT,
+                ability_defs::ABILITY_BANDAGE,
+                0, 0, 0, 0,
+            ],
+        },
+        PartyDef {
+            name: "Mage",
+            weapon_id: ITEM_WANDERERS_STAFF,
+            color: Color::srgb(0.6, 0.4, 0.9),
+            role: CombatRole::Caster,
+            attack_range: 1.5,
+            attrs: Attributes { strength: 3, agility: 4, toughness: 4, intellect: 8, willpower: 6 },
+            mana: 150.0,
+            stamina: 50.0,
+            abilities: vec![
+                ability_defs::ABILITY_FIREBALL,
+                ability_defs::ABILITY_FROST_BOLT,
+                ability_defs::ABILITY_BANDAGE,
+                0, 0, 0,
+            ],
+        },
+        PartyDef {
+            name: "Healer",
+            weapon_id: ITEM_GNARLED_BRANCH,
+            color: Color::srgb(0.9, 0.8, 0.3),
+            role: CombatRole::Healer,
+            attack_range: 1.5,
+            attrs: Attributes { strength: 3, agility: 4, toughness: 5, intellect: 5, willpower: 8 },
+            mana: 130.0,
+            stamina: 60.0,
+            abilities: vec![
+                ability_defs::ABILITY_HEAL,
+                ability_defs::ABILITY_BANDAGE,
+                ability_defs::ABILITY_FROST_BOLT,
+                0, 0, 0,
+            ],
+        },
+    ];
 
-    entity_commands.insert((
-        Body::from_template(template),
-        Attributes { strength: 7, agility: 6, toughness: 6, ..Default::default() },
-        CharacterLevel::default(),
-        EquippedWeapon::new(placeholder),
-        EquippedArmor::default(),
-        EquipmentBonuses::default(),
-        Mana::new(100.0),
-        Stamina::new(100.0),
-        ActiveStatusEffects::default(),
-        ThreatTable::default(),
-        CombatBehavior::party_member(CombatRole::MeleeDps, 1.5),
-        AbilitySlots::new(vec![
-            ability_defs::ABILITY_CLEAVE,       // Q — SingleEnemy, instant
-            ability_defs::ABILITY_SHIELD_BASH,   // E — SingleEnemy, instant stun
-            ability_defs::ABILITY_BANDAGE,        // R — SelfOnly, cast time
-            ability_defs::ABILITY_FIREBALL,       // T — CircleAoE, cast time
-            ability_defs::ABILITY_FROST_BOLT,     // F — SingleEnemy, cast time ranged
-            ability_defs::ABILITY_HEAL,           // G — SingleAlly, cast time
-        ]),
-    ));
-    entity_commands.insert((
-        RepathTimer::default(),
-        InCombat,
-        PlayerControlled,
-        PartyMode::Passive,
-        Inventory::new(24),
-        equipment,
-    ));
+    // Find walkable spawn positions for each member near center
+    let spawn_positions = find_walkable_formation(center, party.len(), &tile_world);
+
+    for (i, member) in party.into_iter().enumerate() {
+        let weapon_instance_id = create_item_instance(member.weapon_id, &mut instance_registry);
+        let placeholder = placeholder_weapon(member.weapon_id, &item_registry);
+        let mut equipment = Equipment::default();
+        equipment.equip(EquipSlot::MainHand, weapon_instance_id);
+
+        let grid_pos = GridPosition::new(spawn_positions[i].0, spawn_positions[i].1);
+        let world_pos = grid_pos.to_world(map_settings.tile_size);
+
+        let mut entity_commands = commands.spawn((
+            Name::new(member.name),
+            StableId::next(),
+            DespawnOnExit(GameState::Playing),
+            Sprite {
+                image: pawn_texture.clone(),
+                color: member.color,
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(
+                world_pos.x,
+                world_pos.y,
+                render_layers::ENTITIES,
+            )),
+            grid_pos,
+            MovementSpeed::default(),
+            FacingDirection::default(),
+            PathOffset::random(&mut rand::rng()),
+            Faction(FACTION_PLAYER),
+            EntityName(member.name.into()),
+        ));
+
+        entity_commands.insert((
+            Body::from_template(template),
+            member.attrs,
+            CharacterLevel::default(),
+            EquippedWeapon::new(placeholder),
+            EquippedArmor::default(),
+            EquipmentBonuses::default(),
+            Mana::new(member.mana),
+            Stamina::new(member.stamina),
+            ActiveStatusEffects::default(),
+            ThreatTable::default(),
+            CombatBehavior::party_member(member.role, member.attack_range),
+            AbilitySlots::new(member.abilities),
+        ));
+        entity_commands.insert((
+            RepathTimer::default(),
+            InCombat,
+            PlayerControlled,
+            PartyMode::Passive,
+            Inventory::new(24),
+            equipment,
+        ));
+    }
+}
+
+/// Find a walkable tile near (cx, cy), spiraling outward. Falls back to (cx, cy).
+fn find_walkable_near(cx: u32, cy: u32, tile_world: &TileWorld) -> (u32, u32) {
+    let w = tile_world.width as i32;
+    let h = tile_world.height as i32;
+    let ix = cx as i32;
+    let iy = cy as i32;
+
+    if tile_world.walk_cost[tile_world.idx(cx, cy)] > 0.0 {
+        return (cx, cy);
+    }
+
+    for ring in 1..30i32 {
+        for dx in -ring..=ring {
+            for dy in -ring..=ring {
+                if dx.abs() != ring && dy.abs() != ring {
+                    continue;
+                }
+                let nx = ix + dx;
+                let ny = iy + dy;
+                if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                    continue;
+                }
+                let (ux, uy) = (nx as u32, ny as u32);
+                if tile_world.walk_cost[tile_world.idx(ux, uy)] > 0.0 {
+                    return (ux, uy);
+                }
+            }
+        }
+    }
+
+    (cx, cy)
+}
+
+/// Find `count` distinct walkable tiles near `center`. Each tile is validated individually.
+fn find_walkable_formation(
+    center: (u32, u32),
+    count: usize,
+    tile_world: &TileWorld,
+) -> Vec<(u32, u32)> {
+    const OFFSETS: [(i32, i32); 9] = [
+        (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
+        (1, 1), (-1, 1), (1, -1), (-1, -1),
+    ];
+
+    let w = tile_world.width as i32;
+    let h = tile_world.height as i32;
+    let mut result = Vec::with_capacity(count);
+
+    for &(dx, dy) in &OFFSETS {
+        let nx = center.0 as i32 + dx;
+        let ny = center.1 as i32 + dy;
+        if nx < 0 || ny < 0 || nx >= w || ny >= h { continue; }
+        let (ux, uy) = (nx as u32, ny as u32);
+        if tile_world.walk_cost[tile_world.idx(ux, uy)] <= 0.0 { continue; }
+        result.push((ux, uy));
+        if result.len() >= count { break; }
+    }
+
+    // If not enough walkable neighbours, search further out
+    if result.len() < count {
+        for ring in 2..10i32 {
+            for dx in -ring..=ring {
+                for dy in -ring..=ring {
+                    if dx.abs() != ring && dy.abs() != ring { continue; }
+                    let nx = center.0 as i32 + dx;
+                    let ny = center.1 as i32 + dy;
+                    if nx < 0 || ny < 0 || nx >= w || ny >= h { continue; }
+                    let (ux, uy) = (nx as u32, ny as u32);
+                    if tile_world.walk_cost[tile_world.idx(ux, uy)] <= 0.0 { continue; }
+                    if result.contains(&(ux, uy)) { continue; }
+                    result.push((ux, uy));
+                    if result.len() >= count { break; }
+                }
+                if result.len() >= count { break; }
+            }
+            if result.len() >= count { break; }
+        }
+    }
+
+    while result.len() < count {
+        result.push(center);
+    }
+    result
 }

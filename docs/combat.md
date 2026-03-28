@@ -41,10 +41,25 @@
 - Casting pipeline: `begin_cast` (spend resources, resolve instants) -> `tick_casting` (countdown) -> `interrupt_casting` (on damage)
 - On resolution, fires `AbilityLandedEvent` at the impact position for VFX
 
+## Death
+- Destroying a vital body part (Brain, Heart) kills the entity
+- `cleanup_dead` inserts `Dead` marker, rotates sprite 90°, greys out to `Color::srgb(0.4, 0.4, 0.4)`, lowers z-layer to `FLOOR_ITEMS`
+- Removes `InCombat`, `Engaging`, `CurrentTask`, `CastingState`, `MovePath`, `HitFlash`
+- `Without<Dead>` guards on all targeting/combat queries prevent interacting with corpses
+- Corpses persist until zone exit (no despawn timer)
+
 ## Threat
 - `ThreatTable` per entity — tracks threat from each attacker
 - Damage generates threat
 - AI evaluators use highest-threat target when available
+
+## UseCondition (AI ability gating)
+- `Always` — always use
+- `SelfHpBelow(f32)` — self HP fraction below threshold
+- `TargetHpBelow(f32)` — engage target HP fraction below threshold
+- `AllyHpBelow(f32)` — any same-faction ally has HP below threshold
+- `EnemiesInRange(u32)` — at least N hostile entities within aggro range
+- For `SingleAlly` abilities, AI targets the most wounded ally within range (not the engage target)
 
 ## Combat Feedback (VFX / Audio)
 
@@ -54,6 +69,20 @@
 - `AbilityDef.impact_vfx: Option<VfxKind>` — particle effect at impact point (overrides damage-type default)
 - `AbilityDef.impact_vfx_scale: f32` — scale multiplier (1.0 = default, 6.0 = Fireball-sized AoE)
 - `AbilityDef.cast_vfx: Option<VfxKind>` — particle effect on caster during cast (future)
+
+### Healing Feedback
+- `HealEvent` fired when `body.heal_distributed()` returns > 0 during ability resolution
+- Green floating "+N" numbers at target position (same drift/fade as damage numbers)
+- `VfxKind::ImpactHeal` particles at target (green→white upward rise)
+- `SfxKind::HealLand` audio
+
+### Projectile Visuals
+- Cosmetic only — damage is applied instantly, projectiles are purely visual
+- `Projectile` component: flies a small colored sprite from attacker to target position
+- Auto-attacks: spawned when `!weapon.is_melee`
+- Abilities: spawned when `ability.range > 2.0`
+- Color from `ImpactKind::from_damage_type()`, speed from `weapon.projectile_speed` or 400 px/s default
+- Z-layer: `render_layers::PROJECTILES` (4.0)
 
 ### Micro-Animations
 - `AttackLunge`: attacker bumps toward target on hit (0.15s sine-eased, 8px magnitude)

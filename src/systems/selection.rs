@@ -241,7 +241,16 @@ pub fn right_click_command(
         }
     }
 
-    for (entity, _, weapon) in &selected_query {
+    // For move commands, spread selected entities into a formation around the target tile
+    // so they don't all path to the same spot.
+    let selected_entities: Vec<_> = selected_query.iter().collect();
+    let formation_offsets = formation_around(
+        target_tile,
+        selected_entities.len(),
+        &tile_world,
+    );
+
+    for (i, (entity, _, weapon)) in selected_entities.into_iter().enumerate() {
         let new_task = if let Some(target) = hostile_target {
             Task::new(
                 "attack", 100, TaskSource::Player,
@@ -251,19 +260,54 @@ pub fn right_click_command(
                 }],
             )
         } else {
-            if tile_world.walk_cost[tile_world.idx(target_tile.0, target_tile.1)] <= 0.0 {
+            let (fx, fy) = formation_offsets[i];
+            if tile_world.walk_cost[tile_world.idx(fx, fy)] <= 0.0 {
                 continue;
             }
             Task::new(
                 "move", 100, TaskSource::Player,
                 vec![task::Action::MoveToPosition {
-                    x: target_tile.0,
-                    y: target_tile.1,
+                    x: fx,
+                    y: fy,
                 }],
             )
         };
         commands.entity(entity).insert(CurrentTask::new(new_task));
     }
+}
+
+/// Pick `count` distinct walkable tiles near `center`.
+/// Placeholder until a proper formation system is added.
+fn formation_around(
+    center: (u32, u32),
+    count: usize,
+    tile_world: &TileWorld,
+) -> Vec<(u32, u32)> {
+    // Center first, then cardinals, then diagonals
+    const OFFSETS: [(i32, i32); 9] = [
+        (0, 0), (1, 0), (-1, 0), (0, 1), (0, -1),
+        (1, 1), (-1, 1), (1, -1), (-1, -1),
+    ];
+
+    let w = tile_world.width as i32;
+    let h = tile_world.height as i32;
+    let mut result = Vec::with_capacity(count);
+
+    for &(dx, dy) in &OFFSETS {
+        let nx = center.0 as i32 + dx;
+        let ny = center.1 as i32 + dy;
+        if nx < 0 || ny < 0 || nx >= w || ny >= h { continue; }
+        let (ux, uy) = (nx as u32, ny as u32);
+        if tile_world.walk_cost[tile_world.idx(ux, uy)] <= 0.0 { continue; }
+        result.push((ux, uy));
+        if result.len() >= count { break; }
+    }
+
+    // Fallback: pad with center if not enough walkable neighbours
+    while result.len() < count {
+        result.push(center);
+    }
+    result
 }
 
 /// Spawn/despawn selection ring sprites on selected entities.

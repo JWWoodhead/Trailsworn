@@ -61,6 +61,7 @@ fn apply_death_events(
                 spouse.life_events.push(LifeEvent {
                     year,
                     kind: LifeEventKind::LostSpouse { spouse_id: dead_id, cause },
+                    cause: None,
                 });
             }
         }
@@ -71,6 +72,7 @@ fn apply_death_events(
                 parent.life_events.push(LifeEvent {
                     year,
                     kind: LifeEventKind::LostChild { child_id: dead_id, cause },
+                    cause: None,
                 });
             }
         }
@@ -82,6 +84,7 @@ fn apply_death_events(
                     child.life_events.push(LifeEvent {
                         year,
                         kind: LifeEventKind::LostParent { parent_id: dead_id, cause },
+                        cause: None,
                     });
                 }
             }
@@ -98,6 +101,7 @@ fn apply_death_events(
                         sibling.life_events.push(LifeEvent {
                             year,
                             kind: LifeEventKind::LostSibling { sibling_id: dead_id, cause },
+                            cause: None,
                         });
                         notified.push(sib_id);
                     }
@@ -118,12 +122,14 @@ fn apply_marriage_events(people: &mut [Person], marriages: &[MarriageRecord], ye
             m.life_events.push(LifeEvent {
                 year,
                 kind: LifeEventKind::MarriedTo { spouse_id: f_id },
+                cause: None,
             });
         }
         if let Some(f) = person_mut(people, f_id) {
             f.life_events.push(LifeEvent {
                 year,
                 kind: LifeEventKind::MarriedTo { spouse_id: m_id },
+                cause: None,
             });
         }
     }
@@ -142,6 +148,7 @@ fn apply_birth_events(people: &mut [Person], births: &[BirthRecord], year: i32) 
                 mother.life_events.push(LifeEvent {
                     year,
                     kind: LifeEventKind::ChildBorn { child_id },
+                    cause: None,
                 });
             }
         }
@@ -150,6 +157,7 @@ fn apply_birth_events(people: &mut [Person], births: &[BirthRecord], year: i32) 
                 father.life_events.push(LifeEvent {
                     year,
                     kind: LifeEventKind::ChildBorn { child_id },
+                    cause: None,
                 });
             }
         }

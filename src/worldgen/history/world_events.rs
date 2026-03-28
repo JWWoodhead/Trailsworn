@@ -92,6 +92,7 @@ pub(super) fn simulate_year(
             description: format!("After the death of {}, {} became leader of {}", dead_name, new_leader_name, fname),
             participants: vec![*faction_id],
             god_participants: vec![],
+            cause: None,
         });
     }
 
@@ -265,6 +266,7 @@ fn evaluate_war_declared(
         description: format!("{} declared war on {}", fa, fb),
         participants: vec![a, b],
             god_participants: vec![],
+            cause: None,
     });
 }
 
@@ -340,6 +342,7 @@ fn evaluate_war_ended(
                     description: format!("{} conquered {} from {}", fw, old_name, fl),
                     participants: vec![winner, loser],
             god_participants: vec![],
+            cause: None,
                 });
                 world_state.relations.modify(winner, loser, -15);
             }
@@ -350,6 +353,7 @@ fn evaluate_war_ended(
             description: format!("The war between {} and {} ended; {} emerged victorious", fw, fl, fw),
             participants: vec![winner, loser],
             god_participants: vec![],
+            cause: None,
         });
     }
 }
@@ -413,6 +417,7 @@ fn evaluate_betrayal(
             ),
             participants: vec![betrayer_faction, victim_faction],
             god_participants: vec![],
+            cause: None,
         });
         return; // One betrayal per year max
     }
@@ -450,6 +455,7 @@ fn evaluate_alliance(
                 description: format!("{} and {} formed an alliance", fa, fb),
                 participants: vec![a, b],
             god_participants: vec![],
+            cause: None,
             });
             return; // One alliance per year max
         }
@@ -482,6 +488,7 @@ fn evaluate_alliance_broken(
             description: format!("The alliance between {} and {} collapsed", fa, fb),
             participants: vec![alliance.faction_a, alliance.faction_b],
             god_participants: vec![],
+            cause: None,
         });
     }
 }
@@ -515,6 +522,7 @@ fn evaluate_trade_agreement(
                 description: format!("{} and {} signed a trade agreement", fa, fb),
                 participants: vec![a, b],
             god_participants: vec![],
+            cause: None,
             });
             return;
         }
@@ -612,6 +620,7 @@ fn evaluate_leader_changed(
             description: desc,
             participants: vec![fid],
             god_participants: vec![],
+            cause: None,
         });
     }
 }
@@ -627,30 +636,32 @@ fn evaluate_plague(
 
     for s in settlements.iter_mut() {
         if s.destroyed_year.is_none() {
-            // Base chance is very low
-            let mut plague_chance: f32 = 0.005;
+            // Plague chance driven purely by conditions — no artificial cooldowns.
+            // Natural feedback: plague kills people → population drops → overcrowding
+            // bonus drops → plague chance drops.
+            let mut plague_chance: f32 = 0.001;
 
-            // Overcrowding — cities and capitals are vulnerable
+            // Overcrowding — only large settlements are vulnerable
             match s.population_class {
-                PopulationClass::Capital => plague_chance += 0.02,
-                PopulationClass::City => plague_chance += 0.015,
-                PopulationClass::Town => plague_chance += 0.005,
-                _ => {}
+                PopulationClass::Capital => plague_chance += 0.008,
+                PopulationClass::City => plague_chance += 0.005,
+                PopulationClass::Town => plague_chance += 0.002,
+                _ => {} // hamlets/villages rarely get plague
             }
 
             // Famine — malnourished populations get sick
             if s.stockpile.food <= 0 {
-                plague_chance += 0.03;
+                plague_chance += 0.015;
             }
 
             // War — corpses, displacement, breakdown of sanitation
             if world_state.war_count(s.owner_faction) > 0 {
-                plague_chance += 0.015;
+                plague_chance += 0.008;
             }
 
             // Low prosperity = poor conditions
-            if s.prosperity < 30 {
-                plague_chance += 0.01;
+            if s.prosperity < 20 {
+                plague_chance += 0.005;
             }
 
             if rng.random::<f32>() < plague_chance {
@@ -675,6 +686,7 @@ fn evaluate_plague(
             description: "Plague struck settlements across the realm".into(),
             participants: affected_factions,
             god_participants: vec![],
+            cause: None,
         });
     }
 }
@@ -692,6 +704,7 @@ fn evaluate_monster_attack(
         description: format!("A {} terrorized {}", creature, region),
         participants: vec![],
             god_participants: vec![],
+            cause: None,
     });
 }
 
@@ -720,6 +733,7 @@ fn evaluate_hero(
         description: format!("{} rose to fame within {}", hero_name, fname),
         participants: vec![fid],
             god_participants: vec![],
+            cause: None,
     });
 }
 
@@ -773,6 +787,7 @@ fn evaluate_artifact_discovered(
         description: format!("{} discovered {}", discoverer_desc, artifact_name),
         participants: vec![fid],
             god_participants: vec![],
+            cause: None,
     });
 }
 
@@ -813,6 +828,7 @@ fn evaluate_settlement_founded(
         description: format!("{} established {}", fname, sname),
         participants: vec![fid],
             god_participants: vec![],
+            cause: None,
     });
 }
 
@@ -854,6 +870,7 @@ fn evaluate_new_faction(
         description: format!("{} was founded in {}", name, region),
         participants: vec![id],
             god_participants: vec![],
+            cause: None,
     });
 }
 
@@ -886,6 +903,7 @@ fn evaluate_faction_dissolved(
                     description: format!("{} dissolved, unable to sustain itself", fname),
                     participants: vec![fid],
             god_participants: vec![],
+            cause: None,
                 });
             }
         }

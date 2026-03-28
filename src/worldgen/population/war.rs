@@ -110,6 +110,7 @@ pub fn apply_war_effects(
                 p.life_events.push(LifeEvent {
                     year,
                     kind: LifeEventKind::DraftedToWar { enemy_faction_id },
+                    cause: None,
                 });
                 drafted += 1;
             }
@@ -157,6 +158,7 @@ pub fn apply_war_ended(
             p.life_events.push(LifeEvent {
                 year,
                 kind: LifeEventKind::SurvivedWar { enemy_faction_id },
+                cause: None,
             });
         }
     }

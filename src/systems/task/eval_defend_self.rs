@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::resources::combat_behavior::CombatBehavior;
 use crate::resources::task::PartyMode;
 use crate::resources::body::Body;
-use crate::resources::combat::InCombat;
+use crate::resources::combat::{Dead, InCombat};
 use crate::resources::faction::{Faction, FactionRelations};
 use crate::resources::map::GridPosition;
 use crate::resources::task::{Action, AiBrain, Task, TaskEvaluator, TaskSource};
@@ -20,7 +20,7 @@ pub fn defend_self(
         Option<&ThreatTable>,
         &mut AiBrain,
     )>,
-    potential_targets: Query<(Entity, &GridPosition, &Faction, &Body), With<InCombat>>,
+    potential_targets: Query<(Entity, &GridPosition, &Faction, &Body), (With<InCombat>, Without<Dead>)>,
 ) {
     for (entity, grid_pos, faction, behavior, threat_table, mut brain) in &mut query {
         if brain.combat_eval_cooldown != 0 {

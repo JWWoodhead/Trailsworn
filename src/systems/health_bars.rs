@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::resources::body::{Body, BodyTemplates};
+use crate::resources::combat::Dead;
 use crate::resources::map::render_layers;
 use crate::resources::theme::Theme;
 
@@ -22,7 +23,7 @@ const BAR_Y_OFFSET: f32 = 40.0;
 pub fn spawn_health_bars(
     mut commands: Commands,
     theme: Res<Theme>,
-    query: Query<Entity, (With<Body>, Without<HealthBarBackground>)>,
+    query: Query<Entity, (With<Body>, Without<HealthBarBackground>, Without<Dead>)>,
 ) {
     for entity in &query {
         let bg = commands
@@ -79,13 +80,14 @@ pub fn update_health_bars(
     }
 }
 
-/// Remove health bars for dead entities (whose Body entity was despawned).
+/// Remove health bars for dead or despawned entities.
 pub fn cleanup_orphaned_health_bars(
     mut commands: Commands,
     fill_query: Query<(Entity, &HealthBarFill)>,
-    body_query: Query<&Body>,
+    body_query: Query<&Body, Without<Dead>>,
 ) {
     for (fill_entity, fill) in &fill_query {
+        // Despawn health bar if owner is despawned OR dead
         if body_query.get(fill.owner).is_err() {
             commands.entity(fill_entity).despawn();
         }

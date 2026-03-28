@@ -80,6 +80,11 @@ pub fn promote_to_character(
 
     let mut character = generate_character(id, race, role, faction_id, person.birth_year, rng);
 
+    // Use the person's earned traits instead of randomly rolled ones
+    if !person.traits.is_empty() {
+        character.traits = person.traits.clone();
+    }
+
     // Boost renown based on how eventful their life has been
     character.renown += person.life_events.len() as i32 * 3;
 

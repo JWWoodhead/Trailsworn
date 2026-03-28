@@ -66,7 +66,10 @@
       "Bash(cargo tree:*)",
       "Bash(use trailsworn::worldgen::gods::build_god_pool)",
       "Bash(python3:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(sed -i 's|faith: None, devotion: 0,|faith: Vec::new\\(\\),|g' src/worldgen/population/tests.rs)",
+      "Bash(sed -i 's|faith: Some\\(5\\), devotion: 75,|faith: vec![\\(5, 75\\)],|g' src/worldgen/population/tests.rs)",
+      "Bash(sed -i 's|faith: Some\\(5\\), devotion: 25,|faith: vec![\\(5, 25\\)],|g' src/worldgen/population/tests.rs)"
     ]
   }
 }

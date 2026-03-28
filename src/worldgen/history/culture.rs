@@ -219,6 +219,7 @@ mod tests {
             description: "test".into(),
             participants,
             god_participants: vec![],
+            cause: None,
         }
     }
 

@@ -21,7 +21,7 @@ pub use schedule::{advance_eval_timers, assign_task};
 use bevy::prelude::*;
 
 use crate::resources::body::Body;
-use crate::resources::combat::InCombat;
+use crate::resources::combat::{Dead, InCombat};
 use crate::resources::faction::{Faction, FactionRelations};
 use crate::resources::map::GridPosition;
 use crate::resources::threat::ThreatTable;
@@ -35,7 +35,7 @@ pub(super) fn select_target(
     party_mode: Option<&crate::resources::task::PartyMode>,
     threat_table: Option<&ThreatTable>,
     faction_relations: &FactionRelations,
-    potential_targets: &Query<(Entity, &GridPosition, &Faction, &Body), With<InCombat>>,
+    potential_targets: &Query<(Entity, &GridPosition, &Faction, &Body), (With<InCombat>, Without<Dead>)>,
 ) -> Option<Entity> {
     if let Some(table) = threat_table {
         if let Some(highest) = table.highest_threat() {

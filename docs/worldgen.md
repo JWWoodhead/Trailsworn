@@ -122,7 +122,7 @@ Each drawn god has a **drive** (what they want) and **flaw** (how it breaks them
 ```
 Phase 0:  Character aging & death (mortals)
 Phase 1:  God power update — power = f(worshippers), fade check
-Phase 2:  Territory expansion (BFS, ~80 cells/god/year) & terrain shaping
+Phase 2:  Territory expansion (BFS, ~80 cells/god/year)
 Phase 3:  Worship competition — gods compete for settlement patronage
 Phase 4:  Drive-based divine actions — what each god does depends on their drive
 Phase 5-8: Mortal simulation — faction upkeep, settlement economy, characters, events
@@ -132,12 +132,11 @@ Phase 11: Sentiment drift — both faction and divine relations
 ```
 
 ### God Behaviors (`divine/ (territory.rs, worship.rs, drives.rs, conflict.rs, flaws.rs)`)
-- **Territory expansion**: BFS from frontier, terrain-weighted, gods claim ~50% of map
-- **Terrain shaping**: gods reshape zone_type to match their domain, 10% chance of divine terrain scars
+- **Territory expansion**: BFS from frontier, terrain-weighted, gods claim ~50% of map. Territory is ownership tracking only — gods do NOT alter biome/zone types.
 - **Worship**: settlements in god territory may begin worshipping; drive affects conversion rate
 - **Drive actions**: drive determines what gods build (Knowledge→observatories, Perfection→artifacts, Worship→temples, etc.)
 - **Flaw triggers**: pressure accumulates (Jealousy from others' success, Hubris from victories, etc.), triggers at 80+ create narrative events (obsessed god neglects worshippers, jealous god turns on rival)
-- **Divine wars**: hostility-driven, terrain scars from battles
+- **Divine wars**: hostility-driven
 - **Gods fade, not die**: zero worshippers for 20+ years → faded (can't act). Regaining worshippers un-fades them.
 
 ### Divine Creatures (`divine/creatures.rs`)

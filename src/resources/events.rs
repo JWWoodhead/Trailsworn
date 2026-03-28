@@ -54,3 +54,15 @@ pub struct CastInterruptedEvent {
     pub caster: Entity,
     pub ability_id: super::abilities::AbilityId,
 }
+
+/// Fired when healing is applied to an entity.
+#[derive(Message, Clone, Debug)]
+pub struct HealEvent {
+    pub healer: Entity,
+    pub target: Entity,
+    pub amount: f32,
+    /// Set when healing comes from an ability.
+    pub ability_name: Option<String>,
+    /// Ability ID for SFX/VFX lookup.
+    pub ability_id: Option<AbilityId>,
+}

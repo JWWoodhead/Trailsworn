@@ -40,7 +40,7 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `casting::tick_casting` — counts down cast timers, resolves effects on completion. Fires `AbilityLandedEvent` for VFX.
 - `casting::interrupt_casting` — removes `CastingState` if caster takes damage and ability is interruptible
 - `combat::tick_status_effects` — decrements status effect durations
-- `combat::cleanup_dead` — despawns entities whose vital body parts are destroyed
+- `combat::cleanup_dead` — turns dead entities into corpses: inserts `Dead` marker, rotates sprite 90°, greys out, lowers z to floor layer. Removes `InCombat`/`Engaging`/`CurrentTask`/`CastingState`/`MovePath`/`HitFlash`. `Without<Dead>` guards on all targeting queries prevent interacting with corpses.
 
 ## Movement (GameSet::Movement)
 - `movement::movement` — advances `MovePath.progress` each tick. Updates `GridPosition` when arriving at next tile. Swaps in `PendingPath` at tile boundaries (AI only). Applies ease-in/ease-out speed multiplier over the whole path (first 1.5 tiles accelerate, last 1.5 tiles decelerate).
@@ -52,6 +52,7 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `health_bars::update_health_bars` — scales/colors bars based on HP fraction (gold->red from theme)
 - `health_bars::cleanup_orphaned_health_bars` — removes bars for dead entities
 - `floating_text::spawn_damage_numbers` — reads `DamageDealtEvent`/`AttackMissedEvent`, spawns Text2d
+- `floating_text::spawn_heal_numbers` — reads `HealEvent`, spawns green "+N" floating text
 - `floating_text::animate_floating_text` — drifts text up, fades alpha, despawns on expiry
 - `hover_info::update_hover_tooltip` — shows entity stats when mouse hovers over them
 - `selection::update_selection_visuals` — spawns/despawns gold ring sprites on selected entities
@@ -62,13 +63,15 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `ui_panel::update_ui_panel_overlay` — shows "No character selected" overlay when no selection
 - `character_sheet::update_character_sheet` — updates body/stats/resources on Character tab (only when active)
 - `inventory::update_inventory_panel` — updates equipment/grid/weight on Inventory tab (only when active)
-- `ability_bar::update_ability_bar` — hides bar when nothing selected, shows slots when selected
-- `vfx::spawn_combat_effects` — reads `DamageDealtEvent`/`AttackMissedEvent`: inserts `AttackLunge` on attacker, `HitFlash` on target, spawns per-hit particle impact, adds screen trauma, plays audio one-shots
+- `ability_bar::update_ability_bar` — hides bar when nothing selected OR multiple selected, shows slots when exactly one entity selected
+- `vfx::spawn_combat_effects` — reads `DamageDealtEvent`/`AttackMissedEvent`: inserts `AttackLunge` on attacker, `HitFlash` on target, spawns per-hit particle impact, adds screen trauma, plays audio one-shots. For ranged attacks, spawns cosmetic `Projectile` sprite from attacker to target.
 - `vfx::spawn_cast_effects` — reads `AbilityCastEvent`: plays cast audio (data-driven per ability via `cast_sfx`)
 - `vfx::spawn_interrupt_effects` — reads `CastInterruptedEvent`: plays interrupt audio
 - `vfx::spawn_ability_landed_effects` — reads `AbilityLandedEvent`: spawns big particle burst at ability impact position (AoE center), scaled by `AbilityDef.impact_vfx_scale`
+- `vfx::spawn_heal_effects` — reads `HealEvent`: spawns heal particles (`VfxKind::ImpactHeal`) at target, plays `SfxKind::HealLand` audio
 - `vfx::tick_attack_lunge` — advances `AttackLunge.progress`, removes when done
 - `vfx::tick_hit_flash` — ticks `HitFlash.timer`, overrides sprite to white, restores on expiry
+- `vfx::tick_projectiles` — advances cosmetic `Projectile` entities from start to end position, despawns on arrival
 - `vfx::cleanup_despawn_timers` — ticks `DespawnTimer` on effect entities, despawns when expired
 
 ## Render (GameSet::Render)
@@ -114,14 +117,13 @@ Inspired by Rimworld's Job/Toil system. Split into two components:
 
 ### Player commands:
 Player input (right-click, ability hotkeys) injects a `Task` directly into the entity's `CurrentTask` with `TaskSource::Player` and priority 100. No special component — player commands are just high-priority tasks.
-- Right-click ground -> `Task { [MoveToPosition] }`
+- Right-click ground -> `Task { [MoveToPosition] }` (multiple selected entities spread into formation around target tile)
 - Right-click enemy -> `Task { [EngageTarget] }`
 - Ability hotkey -> `Task { [CastAbility] }` (or enters targeting mode)
 
 ### Evaluator loadouts:
 - **AI enemies**: `[Flee, UseAbility, EngageCombat, Idle]` via `AiBrain::enemy()`
-- **Player party**: no `AiBrain` component — driven entirely by player commands
-- **Future NPC allies**: configurable evaluator lists based on `PartyMode`
+- **Player party** (4 members: Warrior, Archer, Mage, Healer): no `AiBrain` component — driven entirely by player commands. All `PlayerControlled`, no auto-abilities.
 
 ### Evaluator priority mapping:
 | Evaluator | Priority | Trigger |

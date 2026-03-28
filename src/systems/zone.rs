@@ -259,9 +259,14 @@ pub fn handle_zone_transition(
         EntryEdge::Center => (map_settings.width / 2, map_settings.height / 2),
     };
 
-    for mut grid_pos in &mut player_query {
-        grid_pos.x = spawn_x;
-        grid_pos.y = spawn_y;
+    // Spread party members so they don't all stack on one tile
+    let offsets: [(i32, i32); 4] = [(0, 0), (1, 0), (0, 1), (1, 1)];
+    let w = map_settings.width as i32;
+    let h = map_settings.height as i32;
+    for (i, mut grid_pos) in player_query.iter_mut().enumerate() {
+        let (dx, dy) = offsets[i % offsets.len()];
+        grid_pos.x = (spawn_x as i32 + dx).clamp(0, w - 1) as u32;
+        grid_pos.y = (spawn_y as i32 + dy).clamp(0, h - 1) as u32;
     }
 
     // Spawn terrain features (lightweight entities, no persistence)

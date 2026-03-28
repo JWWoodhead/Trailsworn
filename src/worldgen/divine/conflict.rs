@@ -11,7 +11,7 @@ use crate::worldgen::history::{EventKind, HistoricEvent};
 use crate::worldgen::world_map::{WorldMap, WorldPos};
 
 fn make_event(year: i32, kind: EventKind, description: String, god_ids: Vec<GodId>) -> HistoricEvent {
-    HistoricEvent { year, kind, description, participants: vec![], god_participants: god_ids }
+    HistoricEvent { year, kind, description, participants: vec![], god_participants: god_ids, cause: None }
 }
 
 pub fn evaluate_divine_war_declared(

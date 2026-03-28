@@ -36,6 +36,8 @@ pub struct HistoricEvent {
     pub participants: Vec<u32>,
     /// God IDs involved in this event.
     pub god_participants: Vec<GodId>,
+    /// Why this event happened (one level of causation).
+    pub cause: Option<population::types::EventCause>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -134,6 +136,8 @@ pub struct WorldHistory {
     pub terrain_scars: Vec<TerrainScar>,
     // Population
     pub people: Vec<population::Person>,
+    /// Active trade routes from the final year of simulation.
+    pub trade_routes: Vec<population::trade::TradeRoute>,
 }
 
 impl WorldHistory {
@@ -297,6 +301,7 @@ pub fn generate_history(
             year: founding_year, kind: EventKind::FactionFounded,
             description: format!("{} was founded in {} by {}", name, region, leader_display),
             participants: vec![faction_id], god_participants: vec![],
+            cause: None,
         });
 
         let sname = settlement_name(&mut rng);
@@ -318,6 +323,7 @@ pub fn generate_history(
             year: founding_year, kind: EventKind::SettlementFounded,
             description: format!("{} founded the settlement of {}", name, sname),
             participants: vec![faction_id], god_participants: vec![],
+            cause: None,
         });
     }
 
@@ -372,6 +378,7 @@ pub fn generate_history(
 
     // --- Unified year-by-year simulation ---
     let mut cross_events: Vec<CrossDomainEvent> = Vec::new();
+    let mut trade_routes: Vec<population::trade::TradeRoute> = Vec::new();
 
     for year in config.start_year..config.start_year + config.num_years {
         let event_count_before = events.len();
@@ -379,15 +386,11 @@ pub fn generate_history(
         // Always runs — bookkeeping
         worship::update_god_power(&mut gods);
 
-        // Phase 2: Territory expansion & terrain shaping
+        // Phase 2: Territory expansion (gods claim territory but don't alter biomes)
         if config.divine_territory {
             territory::evaluate_territory_expansion(
                 year, config.territory_expansion_rate, &mut gods, &mut frontiers,
                 &mut events, &mut world_state, world_map, god_pool, pantheon, &mut rng,
-            );
-            territory::evaluate_terrain_shaping(
-                year, &gods, &mut events, &mut terrain_scars,
-                &world_state, world_map, god_pool, pantheon, &mut next_id, &mut rng,
             );
         }
 
@@ -425,9 +428,18 @@ pub fn generate_history(
             // plague_this_year is set directly by evaluate_plague in world_events
         }
 
+        // Trade between settlements (before population sim so imported food prevents famine)
+        if let Some(ref pop) = pop_sim {
+            let index = population::index::SettlementIndex::build(&pop.people, year);
+            let year_routes = population::trade::settle_trade(
+                &mut settlements, &factions, &pop.people, &index, &world_state, year,
+            );
+            trade_routes = year_routes; // keep last year's routes for WorldHistory
+        }
+
         // Population simulation
         if let Some(ref mut pop) = pop_sim {
-            let newly_notable = pop.advance_year(&mut settlements, year, &mut rng).to_vec();
+            let newly_notable = pop.advance_year(&mut settlements, &gods, year, &mut rng).to_vec();
             for pid in newly_notable {
                 if let Some(person) = pop.person(pid) {
                     let character = population::notable::promote_to_character(
@@ -490,6 +502,7 @@ pub fn generate_history(
         created_races,
         terrain_scars,
         people: pop_sim.map(|p| p.people).unwrap_or_default(),
+        trade_routes,
     }
 }
 
@@ -497,6 +510,7 @@ pub fn generate_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worldgen::population::types::EventCause;
 
     fn test_history(seed: u64) -> WorldHistory {
         test_history_with_config(HistoryConfig::default(), seed)
@@ -678,6 +692,38 @@ mod tests {
         println!("  With life events: {}", with_events);
         println!("  Notable: {}", notable_people);
 
+        // Faith stats
+        use crate::worldgen::population::LifeEventKind as LEK;
+        let faith_strengthened = history.people.iter().flat_map(|p| &p.life_events)
+            .filter(|e| matches!(e.kind, LEK::FaithStrengthened { .. })).count();
+        let faith_shaken = history.people.iter().flat_map(|p| &p.life_events)
+            .filter(|e| matches!(e.kind, LEK::FaithShaken { .. })).count();
+        let converted = history.people.iter().flat_map(|p| &p.life_events)
+            .filter(|e| matches!(e.kind, LEK::ConvertedFaith { .. })).count();
+        let abandoned = history.people.iter().flat_map(|p| &p.life_events)
+            .filter(|e| matches!(e.kind, LEK::AbandonedFaith { .. })).count();
+        let with_faith = history.people.iter()
+            .filter(|p| !p.faith.is_empty() && (p.death_year.is_none() || p.death_year.unwrap() > history.current_year))
+            .count();
+        let avg_devotion: f64 = {
+            let faithful: Vec<_> = history.people.iter()
+                .filter(|p| !p.faith.is_empty() && (p.death_year.is_none() || p.death_year.unwrap() > history.current_year))
+                .collect();
+            if faithful.is_empty() { 0.0 }
+            else { faithful.iter().map(|p| p.faith.iter().map(|(_, d)| *d as f64).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(0.0)).sum::<f64>() / faithful.len() as f64 }
+        };
+        let settlements_with_patron = history.settlements.iter()
+            .filter(|s| s.patron_god.is_some()).count();
+        let total_god_territory: usize = history.gods.iter().map(|g| g.territory.len()).sum();
+        let active_gods = history.gods.iter().filter(|g| g.is_active()).count();
+        let god_powers: Vec<_> = history.gods.iter().map(|g| format!("{}(pow:{},terr:{},wor:{})", g.god_id, g.power, g.territory.len(), g.worshipper_settlements.len())).collect();
+        println!("  Gods: {} active, {} total territory | {}", active_gods, total_god_territory, god_powers.join(", "));
+        println!("  Settlements with patron: {}/{}", settlements_with_patron, history.settlements.len());
+        println!("  With faith: {} (avg devotion: {:.1})", with_faith, avg_devotion);
+        println!("  Faith: {} strengthened, {} shaken, {} converted, {} abandoned",
+            faith_strengthened, faith_shaken, converted, abandoned);
+        println!("  Trade routes: {}", history.trade_routes.len());
+
         // Event type breakdown
         let wars = history.events.iter().filter(|e| e.kind == EventKind::WarDeclared).count();
         let plagues = history.events.iter().filter(|e| e.kind == EventKind::PlagueStruck).count();
@@ -703,6 +749,52 @@ mod tests {
             | EventKind::PlagueStruck))
         {
             println!("  Year {}: {}", e.year, e.description);
+        }
+
+        // Trait distribution across all living people
+        let mut trait_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for p in history.people.iter().filter(|p| p.death_year.is_none() || p.death_year.unwrap() > history.current_year) {
+            for t in &p.traits {
+                *trait_counts.entry(format!("{:?}", t)).or_insert(0) += 1;
+            }
+        }
+        let mut sorted_traits: Vec<_> = trait_counts.into_iter().collect();
+        sorted_traits.sort_by(|a, b| b.1.cmp(&a.1));
+        println!("\n--- Trait Distribution (living population) ---");
+        for (t, count) in &sorted_traits {
+            let pct = *count as f64 / alive as f64 * 100.0;
+            println!("  {:15} {:6} ({:.1}%)", t, count, pct);
+        }
+
+        // Dump notable people with the most life events
+        println!("\n--- Notable Lives (top 10 by events) ---");
+        let mut notables: Vec<_> = history.people.iter()
+            .filter(|p| p.notable && !p.life_events.is_empty())
+            .collect();
+        notables.sort_by(|a, b| b.life_events.len().cmp(&a.life_events.len()));
+        for p in notables.iter().take(10) {
+            let alive = p.death_year.is_none() || p.death_year.unwrap() > history.current_year;
+            let status = if alive { format!("alive, age {}", p.age(history.current_year)) }
+                else { format!("died year {}", p.death_year.unwrap()) };
+            let god_str = if p.faith.is_empty() { "no faith".into() }
+                else { p.faith.iter().map(|(g, d)| format!("god{}:{}", g, d)).collect::<Vec<_>>().join(", ") };
+            let settlement_name = history.settlements.iter()
+                .find(|s| s.id == p.settlement_id)
+                .map(|s| s.name.as_str()).unwrap_or("???");
+            let trait_str = if p.traits.is_empty() { "no traits".into() }
+                else { p.traits.iter().map(|t| format!("{:?}", t)).collect::<Vec<_>>().join(", ") };
+            println!("  Person {} ({:?}, {}) from {} | {} | traits:[{}] | {} events",
+                p.id, p.occupation, status, settlement_name, god_str, trait_str, p.life_events.len());
+            for e in &p.life_events {
+                let cause_str = match &e.cause {
+                    Some(EventCause::Divine { god_id, action }) => format!(" [god {} {:?}]", god_id, action),
+                    Some(EventCause::Conditions { detail, .. }) => format!(" [{}]", detail),
+                    Some(EventCause::Faction { faction_id, detail }) => format!(" [faction {} {}]", faction_id, detail),
+                    Some(EventCause::PersonAction { person_id, role }) => format!(" [person {} {}]", person_id, role),
+                    None => String::new(),
+                };
+                println!("    Year {}: {:?}{}", e.year, e.kind, cause_str);
+            }
         }
     }
 }

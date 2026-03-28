@@ -18,6 +18,10 @@ impl WorldPos {
         Self { x, y }
     }
 
+    pub fn manhattan_distance(self, other: WorldPos) -> i32 {
+        (self.x - other.x).abs() + (self.y - other.y).abs()
+    }
+
     pub fn neighbors(self) -> [WorldPos; 4] {
         [
             WorldPos::new(self.x, self.y + 1),  // N

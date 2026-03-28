@@ -83,15 +83,48 @@ fn death_pass(people: &mut [Person], year: i32, rng: &mut impl Rng) -> Vec<Death
 
         if rng.random::<f64>() < death_chance {
             person.death_year = Some(year);
+
+            // Assign a cause based on age and context
+            let cause = if age >= 70 {
+                DeathCause::OldAge
+            } else if age < 5 {
+                DeathCause::Illness
+            } else if person.sex == Sex::Female && age >= 16 && age <= 42 {
+                // Women of childbearing age — chance it was childbirth
+                if rng.random::<f32>() < 0.3 {
+                    DeathCause::Childbirth
+                } else {
+                    natural_death_cause(person.occupation, rng)
+                }
+            } else {
+                natural_death_cause(person.occupation, rng)
+            };
+
             deaths.push(DeathRecord {
                 person_index: i,
                 person_id: person.id,
-                cause: DeathCause::OldAge,
+                cause,
             });
         }
     }
 
     deaths
+}
+
+/// Generate a contextual death cause for working-age people based on occupation.
+fn natural_death_cause(occupation: super::types::Occupation, rng: &mut impl Rng) -> DeathCause {
+    use super::types::Occupation::*;
+    let roll: f32 = rng.random();
+    match occupation {
+        // Dangerous occupations — higher accident rate
+        Miner | Quarrier => if roll < 0.6 { DeathCause::Accident } else { DeathCause::Illness },
+        Soldier => if roll < 0.5 { DeathCause::Violence } else if roll < 0.8 { DeathCause::Accident } else { DeathCause::Illness },
+        Woodcutter | Hunter => if roll < 0.4 { DeathCause::Accident } else { DeathCause::Illness },
+        // Safer occupations — mostly illness
+        Farmer | Smith | Merchant | Priest | Scholar => {
+            if roll < 0.2 { DeathCause::Accident } else { DeathCause::Illness }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -191,12 +224,23 @@ fn birth_pass(
 
             // Inherit faith from settlement's current patron god
             let settlement = settlements.iter().find(|s| s.id == p.settlement_id);
-            let faith = settlement.and_then(|s| s.patron_god);
-            let devotion = if faith.is_some() { rng.random_range(20..=60) } else { 0 };
+            let faith: Vec<(u32, u8)> = settlement
+                .and_then(|s| s.patron_god)
+                .map(|g| vec![(g, rng.random_range(20..=60))])
+                .unwrap_or_default();
             let zone_type = settlement.and_then(|s| s.zone_type);
 
             // Father is living spouse if present, otherwise unknown
             let father = if has_living_spouse { p.spouse } else { None };
+
+            // Inherit traits from parents
+            let mother_traits = &p.traits;
+            let father_traits: Option<&[crate::worldgen::history::characters::CharacterTrait]> = father
+                .and_then(|fid| people.get((fid - 1) as usize))
+                .map(|f| f.traits.as_slice());
+            let child_traits = super::traits::seed_traits(
+                Some(mother_traits), father_traits, rng,
+            );
 
             let id = *next_person_id;
             *next_person_id += 1;
@@ -212,8 +256,8 @@ fn birth_pass(
                     father,
                     spouse: None,
                     occupation: super::seed::occupation_for_terrain(zone_type, rng),
+                    traits: child_traits,
                     faith,
-                    devotion,
                     life_events: Vec::new(),
                     notable: false,
                 },

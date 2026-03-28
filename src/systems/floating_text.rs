@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::resources::events::{AttackMissedEvent, DamageDealtEvent};
+use crate::resources::events::{AttackMissedEvent, DamageDealtEvent, HealEvent};
 use crate::resources::map::render_layers;
 use crate::resources::theme::Theme;
 
@@ -93,6 +93,40 @@ pub fn spawn_damage_numbers(
                 lifetime: FLOAT_LIFETIME * 0.7,
                 max_lifetime: FLOAT_LIFETIME * 0.7,
                 velocity: Vec2::new(0.0, FLOAT_SPEED * 0.8),
+            },
+        ));
+    }
+}
+
+/// Spawn floating green heal numbers when healing is applied.
+pub fn spawn_heal_numbers(
+    mut commands: Commands,
+    mut heal_events: MessageReader<HealEvent>,
+    transforms: Query<&Transform>,
+) {
+    for event in heal_events.read() {
+        let Ok(target_transform) = transforms.get(event.target) else {
+            continue;
+        };
+        let pos = target_transform.translation;
+        let x_offset = (event.amount * 5.1 % 16.0) - 8.0;
+
+        commands.spawn((
+            Text2d::new(format!("+{:.0}", event.amount)),
+            TextFont {
+                font_size: FONT_SIZE,
+                ..default()
+            },
+            TextColor(Color::srgba(0.3, 1.0, 0.4, 1.0)),
+            Transform::from_translation(Vec3::new(
+                pos.x + x_offset,
+                pos.y + 30.0,
+                render_layers::UI_OVERLAY + 1.0,
+            )),
+            FloatingText {
+                lifetime: FLOAT_LIFETIME,
+                max_lifetime: FLOAT_LIFETIME,
+                velocity: Vec2::new(x_offset * 0.3, FLOAT_SPEED),
             },
         ));
     }

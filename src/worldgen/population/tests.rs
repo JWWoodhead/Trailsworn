@@ -116,8 +116,9 @@ fn seed_faith_from_patron() {
     let mut settlements = vec![s];
     let sim = PopulationSim::new(&settlements, 0, &mut rng());
     for person in &sim.people {
-        assert_eq!(person.faith, Some(5));
-        assert!(person.devotion >= 30 && person.devotion <= 70);
+        assert_eq!(person.primary_god(), Some(5));
+        let dev = person.devotion_to(5);
+        assert!(dev >= 30 && dev <= 70, "devotion {} out of range", dev);
     }
 }
 
@@ -126,8 +127,7 @@ fn seed_no_faith_without_patron() {
     let mut settlements = vec![hamlet(1)];
     let sim = PopulationSim::new(&settlements, 0, &mut rng());
     for person in &sim.people {
-        assert_eq!(person.faith, None);
-        assert_eq!(person.devotion, 0);
+        assert!(person.faith.is_empty());
     }
 }
 
@@ -159,7 +159,7 @@ fn lifecycle_produces_births_and_deaths() {
 
     // Run 10 years
     for year in 0..10 {
-        sim.advance_year(&mut settlements, year, &mut rng());
+        sim.advance_year(&mut settlements, &[], year, &mut rng());
     }
 
     let born = sim.people.len() - initial;
@@ -177,7 +177,7 @@ fn marriage_links_spouses() {
     // Run a few years for new marriages to form (new births reaching adulthood takes too long,
     // but initial unmarried adults should marry)
     for year in 0..5 {
-        sim.advance_year(&mut settlements, year, &mut rng());
+        sim.advance_year(&mut settlements, &[], year, &mut rng());
     }
 
     // Check reciprocal spouse links among living couples
@@ -207,7 +207,7 @@ fn death_generates_lost_spouse_event() {
 
     // Run enough years for some married people to die
     for year in 0..30 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     let lost_spouse_count = sim.people.iter()
@@ -225,7 +225,7 @@ fn birth_generates_child_born_event() {
     let mut sim = PopulationSim::new(&settlements, 0, &mut rng);
 
     for year in 0..5 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     let child_born_count = sim.people.iter()
@@ -244,7 +244,7 @@ fn death_generates_lost_parent_event() {
 
     // Need births first, then parent deaths — run a longer period
     for year in 0..50 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     let lost_parent_count = sim.people.iter()
@@ -262,7 +262,7 @@ fn death_generates_lost_sibling_event() {
     let mut sim = PopulationSim::new(&settlements, 0, &mut rng);
 
     for year in 0..50 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     let lost_sibling_count = sim.people.iter()
@@ -280,7 +280,7 @@ fn marriage_generates_married_to_event() {
     let mut sim = PopulationSim::new(&settlements, 0, &mut rng);
 
     for year in 0..5 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     let married_count = sim.people.iter()
@@ -302,24 +302,24 @@ fn notable_requires_threshold_events() {
     let mut person = Person {
         id: 1, birth_year: 0, death_year: None, settlement_id: 1,
         sex: Sex::Male, mother: None, father: None, spouse: None,
-        occupation: Occupation::Farmer, faith: None, devotion: 0,
+        occupation: Occupation::Farmer, traits: Vec::new(), faith: Vec::new(),
         life_events: Vec::new(), notable: false,
     };
 
     // Normal life events (marriage, children) don't count toward notable threshold
-    person.life_events.push(LifeEvent { year: 10, kind: LifeEventKind::MarriedTo { spouse_id: 2 } });
-    person.life_events.push(LifeEvent { year: 12, kind: LifeEventKind::ChildBorn { child_id: 3 } });
+    person.life_events.push(LifeEvent { year: 10, kind: LifeEventKind::MarriedTo { spouse_id: 2 }, cause: None });
+    person.life_events.push(LifeEvent { year: 12, kind: LifeEventKind::ChildBorn { child_id: 3 }, cause: None });
     assert!(!notable::check_notable(&mut person));
     assert!(!person.notable);
 
     // Loss events count — but need 5 to reach threshold
-    person.life_events.push(LifeEvent { year: 15, kind: LifeEventKind::LostParent { parent_id: 4, cause: DeathCause::OldAge } });
-    person.life_events.push(LifeEvent { year: 18, kind: LifeEventKind::LostParent { parent_id: 5, cause: DeathCause::OldAge } });
-    person.life_events.push(LifeEvent { year: 22, kind: LifeEventKind::LostSibling { sibling_id: 6, cause: DeathCause::War } });
-    person.life_events.push(LifeEvent { year: 25, kind: LifeEventKind::LostSpouse { spouse_id: 2, cause: DeathCause::Plague } });
+    person.life_events.push(LifeEvent { year: 15, kind: LifeEventKind::LostParent { parent_id: 4, cause: DeathCause::OldAge }, cause: None });
+    person.life_events.push(LifeEvent { year: 18, kind: LifeEventKind::LostParent { parent_id: 5, cause: DeathCause::OldAge }, cause: None });
+    person.life_events.push(LifeEvent { year: 22, kind: LifeEventKind::LostSibling { sibling_id: 6, cause: DeathCause::War }, cause: None });
+    person.life_events.push(LifeEvent { year: 25, kind: LifeEventKind::LostSpouse { spouse_id: 2, cause: DeathCause::Plague }, cause: None });
     assert!(!notable::check_notable(&mut person)); // 4 loss events, still under 5
 
-    person.life_events.push(LifeEvent { year: 30, kind: LifeEventKind::LostChild { child_id: 3, cause: DeathCause::War } });
+    person.life_events.push(LifeEvent { year: 30, kind: LifeEventKind::LostChild { child_id: 3, cause: DeathCause::War }, cause: None });
     assert!(notable::check_notable(&mut person)); // 5 loss events — notable
     assert!(person.notable);
 }
@@ -329,13 +329,13 @@ fn notable_only_fires_once() {
     let mut person = Person {
         id: 1, birth_year: 0, death_year: None, settlement_id: 1,
         sex: Sex::Male, mother: None, father: None, spouse: None,
-        occupation: Occupation::Farmer, faith: None, devotion: 0,
+        occupation: Occupation::Farmer, traits: Vec::new(), faith: Vec::new(),
         life_events: vec![
-            LifeEvent { year: 1, kind: LifeEventKind::LostParent { parent_id: 10, cause: DeathCause::OldAge } },
-            LifeEvent { year: 2, kind: LifeEventKind::LostParent { parent_id: 11, cause: DeathCause::OldAge } },
-            LifeEvent { year: 3, kind: LifeEventKind::LostSibling { sibling_id: 12, cause: DeathCause::War } },
-            LifeEvent { year: 4, kind: LifeEventKind::LostSpouse { spouse_id: 13, cause: DeathCause::Plague } },
-            LifeEvent { year: 5, kind: LifeEventKind::LostChild { child_id: 14, cause: DeathCause::Famine } },
+            LifeEvent { year: 1, kind: LifeEventKind::LostParent { parent_id: 10, cause: DeathCause::OldAge }, cause: None },
+            LifeEvent { year: 2, kind: LifeEventKind::LostParent { parent_id: 11, cause: DeathCause::OldAge }, cause: None },
+            LifeEvent { year: 3, kind: LifeEventKind::LostSibling { sibling_id: 12, cause: DeathCause::War }, cause: None },
+            LifeEvent { year: 4, kind: LifeEventKind::LostSpouse { spouse_id: 13, cause: DeathCause::Plague }, cause: None },
+            LifeEvent { year: 5, kind: LifeEventKind::LostChild { child_id: 14, cause: DeathCause::Famine }, cause: None },
         ],
         notable: false,
     };
@@ -352,7 +352,7 @@ fn sim_produces_notables_over_time() {
 
     let mut total_notables = 0;
     for year in 0..100 {
-        let newly = sim.advance_year(&mut settlements, year, &mut rng);
+        let newly = sim.advance_year(&mut settlements, &[], year, &mut rng);
         total_notables += newly.len();
     }
 
@@ -372,11 +372,11 @@ fn promote_produces_valid_character() {
     let person = Person {
         id: 1, birth_year: -20, death_year: None, settlement_id: 1,
         sex: Sex::Female, mother: None, father: None, spouse: None,
-        occupation: Occupation::Soldier, faith: None, devotion: 0,
+        occupation: Occupation::Soldier, traits: Vec::new(), faith: Vec::new(),
         life_events: vec![
-            LifeEvent { year: 5, kind: LifeEventKind::MarriedTo { spouse_id: 2 } },
-            LifeEvent { year: 8, kind: LifeEventKind::ChildBorn { child_id: 3 } },
-            LifeEvent { year: 12, kind: LifeEventKind::LostSpouse { spouse_id: 2, cause: DeathCause::War } },
+            LifeEvent { year: 5, kind: LifeEventKind::MarriedTo { spouse_id: 2 }, cause: None },
+            LifeEvent { year: 8, kind: LifeEventKind::ChildBorn { child_id: 3 }, cause: None },
+            LifeEvent { year: 12, kind: LifeEventKind::LostSpouse { spouse_id: 2, cause: DeathCause::War }, cause: None },
         ],
         notable: true,
     };
@@ -402,13 +402,13 @@ fn promote_soldier_becomes_hero() {
     let person = Person {
         id: 1, birth_year: -30, death_year: None, settlement_id: 1,
         sex: Sex::Male, mother: None, father: None, spouse: None,
-        occupation: Occupation::Soldier, faith: None, devotion: 0,
+        occupation: Occupation::Soldier, traits: Vec::new(), faith: Vec::new(),
         life_events: vec![
-            LifeEvent { year: 5, kind: LifeEventKind::LostParent { parent_id: 10, cause: DeathCause::War } },
-            LifeEvent { year: 8, kind: LifeEventKind::LostParent { parent_id: 11, cause: DeathCause::War } },
-            LifeEvent { year: 10, kind: LifeEventKind::SurvivedWar { enemy_faction_id: 2 } },
-            LifeEvent { year: 12, kind: LifeEventKind::LostSibling { sibling_id: 12, cause: DeathCause::War } },
-            LifeEvent { year: 15, kind: LifeEventKind::LostSpouse { spouse_id: 13, cause: DeathCause::Famine } },
+            LifeEvent { year: 5, kind: LifeEventKind::LostParent { parent_id: 10, cause: DeathCause::War }, cause: None },
+            LifeEvent { year: 8, kind: LifeEventKind::LostParent { parent_id: 11, cause: DeathCause::War }, cause: None },
+            LifeEvent { year: 10, kind: LifeEventKind::SurvivedWar { enemy_faction_id: 2 }, cause: None },
+            LifeEvent { year: 12, kind: LifeEventKind::LostSibling { sibling_id: 12, cause: DeathCause::War }, cause: None },
+            LifeEvent { year: 15, kind: LifeEventKind::LostSpouse { spouse_id: 13, cause: DeathCause::Famine }, cause: None },
         ],
         notable: true,
     };
@@ -453,7 +453,7 @@ fn population_benchmark() {
 
     let mut total_notables = 0;
     for year in 0..100 {
-        let newly = sim.advance_year(&mut settlements, year, &mut rng);
+        let newly = sim.advance_year(&mut settlements, &[], year, &mut rng);
         total_notables += newly.len();
     }
     let elapsed = start.elapsed();
@@ -499,7 +499,7 @@ fn deterministic_with_same_seed() {
         let mut sim = PopulationSim::new(&settlements, 0, &mut rng);
         let mut notables = 0;
         for year in 0..100 {
-            notables += sim.advance_year(&mut settlements, year, &mut rng).len();
+            notables += sim.advance_year(&mut settlements, &[], year, &mut rng).len();
         }
         let total_events: usize = sim.people.iter().map(|p| p.life_events.len()).sum();
         let last_death = sim.people.last().and_then(|p| p.death_year);
@@ -557,7 +557,7 @@ fn grassland_settlement_produces_food_surplus() {
 
     // Run a few years so resources accumulate
     for year in 0..5 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     // Grassland hamlet with ~55% farmers should have food surplus
@@ -603,7 +603,7 @@ fn famine_kills_people_in_desert() {
 
     // Run 20 years — desert food penalty should cause some famine
     for year in 0..20 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     let famine_deaths = sim.people.iter()
@@ -666,7 +666,7 @@ fn war_drafts_soldiers() {
         .filter(|p| p.occupation == Occupation::Soldier)
         .count();
 
-    sim.advance_year(&mut settlements, 0, &mut rng);
+    sim.advance_year(&mut settlements, &[], 0, &mut rng);
 
     let soldiers_after = sim.people.iter()
         .filter(|p| p.is_alive(0) && p.occupation == Occupation::Soldier)
@@ -690,7 +690,7 @@ fn war_kills_soldiers() {
 
     // Run several years of war
     for year in 0..10 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     let war_deaths = sim.people.iter()
@@ -714,12 +714,12 @@ fn war_ended_gives_survived_event() {
 
     // War for 3 years
     for year in 0..3 {
-        sim.advance_year(&mut settlements, year, &mut rng);
+        sim.advance_year(&mut settlements, &[], year, &mut rng);
     }
 
     // War ends
     settlements[0].at_war = false;
-    sim.advance_year(&mut settlements, 3, &mut rng);
+    sim.advance_year(&mut settlements, &[], 3, &mut rng);
 
     let survived = sim.people.iter()
         .filter(|p| p.life_events.iter().any(|e| matches!(e.kind, LifeEventKind::SurvivedWar { .. })))
@@ -740,7 +740,7 @@ fn plague_kills_percentage() {
     let mut sim = PopulationSim::new(&settlements, 0, &mut rng);
 
     let alive_before = sim.living_count(0);
-    sim.advance_year(&mut settlements, 0, &mut rng);
+    sim.advance_year(&mut settlements, &[], 0, &mut rng);
     let alive_after = sim.living_count(0);
 
     let killed = alive_before - alive_after;
@@ -762,12 +762,12 @@ fn plague_is_one_time() {
     let mut rng = rng();
     let mut sim = PopulationSim::new(&settlements, 0, &mut rng);
 
-    sim.advance_year(&mut settlements, 0, &mut rng);
+    sim.advance_year(&mut settlements, &[], 0, &mut rng);
     let alive_after_plague = sim.living_count(0);
 
     // Run 2 more years — no more plague deaths
-    sim.advance_year(&mut settlements, 1, &mut rng);
-    sim.advance_year(&mut settlements, 2, &mut rng);
+    sim.advance_year(&mut settlements, &[], 1, &mut rng);
+    sim.advance_year(&mut settlements, &[], 2, &mut rng);
     let alive_later = sim.living_count(2);
 
     // Population should not continue dropping dramatically (some natural deaths ok)
@@ -818,17 +818,17 @@ fn combat_score_rewards_veterans() {
     let mut veteran = Person {
         id: 1, birth_year: -25, death_year: None, settlement_id: 1,
         sex: Sex::Male, mother: None, father: None, spouse: None,
-        occupation: Occupation::Soldier, faith: None, devotion: 0,
+        occupation: Occupation::Soldier, traits: Vec::new(), faith: Vec::new(),
         life_events: vec![
-            LifeEvent { year: 5, kind: LifeEventKind::SurvivedWar { enemy_faction_id: 2 } },
-            LifeEvent { year: 10, kind: LifeEventKind::SurvivedWar { enemy_faction_id: 3 } },
+            LifeEvent { year: 5, kind: LifeEventKind::SurvivedWar { enemy_faction_id: 2 }, cause: None },
+            LifeEvent { year: 10, kind: LifeEventKind::SurvivedWar { enemy_faction_id: 3 }, cause: None },
         ],
         notable: false,
     };
     let rookie = Person {
         id: 2, birth_year: -20, death_year: None, settlement_id: 1,
         sex: Sex::Male, mother: None, father: None, spouse: None,
-        occupation: Occupation::Soldier, faith: None, devotion: 0,
+        occupation: Occupation::Soldier, traits: Vec::new(), faith: Vec::new(),
         life_events: Vec::new(),
         notable: false,
     };
@@ -838,4 +838,176 @@ fn combat_score_rewards_veterans() {
 
     assert!(vet_score > rookie_score,
         "veteran ({:.1}) should score higher than rookie ({:.1})", vet_score, rookie_score);
+}
+
+// ---------------------------------------------------------------------------
+// Trade
+// ---------------------------------------------------------------------------
+
+#[test]
+fn trade_balances_food_within_faction() {
+    use super::trade;
+    use crate::worldgen::history::state::{ResourceStockpile, WorldState};
+
+    // Two settlements in same faction: one with food surplus, one with deficit
+    let mut surplus_settlement = hamlet(1);
+    surplus_settlement.stockpile = ResourceStockpile { food: 100, timber: 0, ore: 0, leather: 0, stone: 0 };
+    let mut deficit_settlement = hamlet(2);
+    deficit_settlement.stockpile = ResourceStockpile { food: -20, timber: 0, ore: 0, leather: 0, stone: 0 };
+
+    let mut settlements = vec![surplus_settlement, deficit_settlement];
+    let factions = vec![test_faction()]; // owns both settlements
+    let mut factions_with_both = factions;
+    factions_with_both[0].settlements = vec![1, 2];
+
+    // Create people with some merchants
+    let mut rng = rng();
+    let sim = PopulationSim::new(&settlements, 0, &mut rng);
+    let index = super::index::SettlementIndex::build(&sim.people, 0);
+    let world_state = WorldState::default();
+
+    let routes = trade::settle_trade(
+        &mut settlements, &factions_with_both, &sim.people, &index, &world_state, 0,
+    );
+
+    // If there are merchants, trade should have occurred
+    let has_merchants = sim.people.iter().any(|p| p.occupation == Occupation::Merchant);
+    if has_merchants {
+        assert!(settlements[1].stockpile.food > -20,
+            "deficit settlement should receive food via trade, got {}", settlements[1].stockpile.food);
+        assert!(!routes.is_empty(), "should generate trade routes");
+    }
+}
+
+#[test]
+fn no_merchants_no_trade() {
+    use super::trade;
+    use crate::worldgen::history::state::{ResourceStockpile, WorldState};
+
+    let mut surplus = hamlet(1);
+    surplus.stockpile = ResourceStockpile { food: 100, timber: 0, ore: 0, leather: 0, stone: 0 };
+    let mut deficit = hamlet(2);
+    deficit.stockpile = ResourceStockpile { food: -20, timber: 0, ore: 0, leather: 0, stone: 0 };
+
+    let mut settlements = vec![surplus, deficit];
+    let mut faction = test_faction();
+    faction.settlements = vec![1, 2];
+    let factions = vec![faction];
+
+    // Empty people vec — no merchants at all
+    let people: Vec<Person> = Vec::new();
+    let index = super::index::SettlementIndex::build(&people, 0);
+    let world_state = WorldState::default();
+
+    let routes = trade::settle_trade(&mut settlements, &factions, &people, &index, &world_state, 0);
+
+    assert!(routes.is_empty(), "no merchants should mean no trade");
+    assert_eq!(settlements[1].stockpile.food, -20, "deficit should be unchanged without trade");
+}
+
+// ---------------------------------------------------------------------------
+// Faith
+// ---------------------------------------------------------------------------
+
+#[test]
+fn faithless_adopt_settlement_patron() {
+    use super::faith;
+    use crate::worldgen::divine::state::GodState;
+    use crate::worldgen::divine::personality::{DivinePersonality, DivineDrive, DivineFlaw};
+
+    let mut settlement = hamlet(1);
+    settlement.patron_god = Some(5);
+    settlement.prosperity = 80;
+
+    let personality = DivinePersonality { drive: DivineDrive::Worship, flaw: DivineFlaw::Hubris };
+    let god = GodState::new(5, personality);
+    let gods = vec![god];
+
+    let mut people = vec![
+        Person {
+            id: 1, birth_year: -20, death_year: None, settlement_id: 1,
+            sex: Sex::Male, mother: None, father: None, spouse: None,
+            occupation: Occupation::Farmer, traits: Vec::new(), faith: Vec::new(),
+            life_events: Vec::new(), notable: false,
+        },
+    ];
+
+    let index = super::index::SettlementIndex::build(&people, 0);
+    let mut settlements = vec![settlement];
+    faith::evaluate_faith(&mut people, &index, &mut settlements, &gods, 0);
+
+    assert_eq!(people[0].primary_god(), Some(5), "should adopt settlement's patron god");
+    assert!(!people[0].faith.is_empty(), "should have some initial devotion");
+}
+
+#[test]
+fn faith_strengthened_when_prospering() {
+    use super::faith;
+    use crate::worldgen::divine::state::GodState;
+    use crate::worldgen::divine::personality::{DivinePersonality, DivineDrive, DivineFlaw};
+
+    let mut settlement = hamlet(1);
+    settlement.patron_god = Some(5);
+    settlement.prosperity = 90; // prospering
+
+    let personality = DivinePersonality { drive: DivineDrive::Worship, flaw: DivineFlaw::Hubris };
+    let mut god = GodState::new(5, personality);
+    god.champion_name = Some("Hero".into());
+    let gods = vec![god];
+
+    let mut people = vec![
+        Person {
+            id: 1, birth_year: -20, death_year: None, settlement_id: 1,
+            sex: Sex::Male, mother: None, father: None, spouse: None,
+            occupation: Occupation::Farmer, traits: Vec::new(), faith: vec![(5, 75)],
+            life_events: Vec::new(), notable: false,
+        },
+    ];
+
+    let index = super::index::SettlementIndex::build(&people, 0);
+
+    // Run faith for several years to push devotion past 80
+    let mut settlements = vec![settlement];
+    for year in 0..5 {
+        faith::evaluate_faith(&mut people, &index, &mut settlements, &gods, year);
+    }
+
+    assert!(people[0].devotion_to(5) > 80, "devotion should increase past 80 with prosperity");
+    let has_strengthened = people[0].life_events.iter()
+        .any(|e| matches!(e.kind, LifeEventKind::FaithStrengthened { .. }));
+    assert!(has_strengthened, "should have FaithStrengthened event");
+}
+
+#[test]
+fn faith_shaken_when_suffering_under_powerful_god() {
+    use super::faith;
+    use crate::worldgen::divine::state::GodState;
+    use crate::worldgen::divine::personality::{DivinePersonality, DivineDrive, DivineFlaw};
+
+    let mut settlement = hamlet(1);
+    settlement.patron_god = Some(5);
+    settlement.prosperity = 20; // suffering
+
+    let personality = DivinePersonality { drive: DivineDrive::Worship, flaw: DivineFlaw::Hubris };
+    let mut god = GodState::new(5, personality);
+    god.power = 60; // powerful — "you could help but don't"
+    let gods = vec![god];
+
+    let mut people = vec![
+        Person {
+            id: 1, birth_year: -20, death_year: None, settlement_id: 1,
+            sex: Sex::Male, mother: None, father: None, spouse: None,
+            occupation: Occupation::Farmer, traits: Vec::new(), faith: vec![(5, 25)],
+            life_events: Vec::new(), notable: false,
+        },
+    ];
+
+    let index = super::index::SettlementIndex::build(&people, 0);
+    let mut settlements = vec![settlement];
+    faith::evaluate_faith(&mut people, &index, &mut settlements, &gods, 0);
+
+    assert!(people[0].devotion_to(5) < 25, "devotion should decrease when suffering under powerful god");
+    let has_shaken = people[0].life_events.iter()
+        .any(|e| matches!(e.kind, LifeEventKind::FaithShaken { .. }));
+    assert!(has_shaken, "should have FaithShaken event when devotion drops below 20");
 }

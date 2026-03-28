@@ -113,6 +113,7 @@ pub enum CharacterTrait {
     Greedy,
     Brave,
     Cowardly,
+    Skeptical,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -144,6 +144,21 @@ impl ScreenTrauma {
 // Components — spawned as short-lived effect entities
 // ---------------------------------------------------------------------------
 
+/// Cosmetic projectile that flies from start to end position.
+/// Damage has already been applied; this is purely visual.
+#[derive(Component, Clone, Debug)]
+pub struct Projectile {
+    pub start: Vec2,
+    pub end: Vec2,
+    /// Travel speed in pixels per second.
+    pub speed: f32,
+    /// 0.0 to 1.0 animation progress.
+    pub progress: f32,
+}
+
+pub const PROJECTILE_DEFAULT_SPEED: f32 = 400.0;
+pub const PROJECTILE_SIZE: f32 = 4.0;
+
 /// Generic lifetime timer. Entity is despawned when remaining reaches zero.
 #[derive(Component, Clone, Debug)]
 pub struct DespawnTimer {

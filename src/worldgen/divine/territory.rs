@@ -47,6 +47,7 @@ pub fn assign_seats_of_power(
 
         let preferred_zone = terrain_to_zone(god_def.terrain_influence.primary_terrain);
 
+        // First priority: cities and towns (gods center their power on civilization)
         let mut candidates: Vec<WorldPos> = Vec::new();
         for y in 0..world_map.height as i32 {
             for x in 0..world_map.width as i32 {
@@ -55,33 +56,41 @@ pub fn assign_seats_of_power(
                     Some(c) => c,
                     None => continue,
                 };
-                if cell.zone_type == ZoneType::Ocean { continue; }
 
                 let far_enough = used_positions.iter().all(|&used| {
-                    (pos.x - used.x).abs() + (pos.y - used.y).abs() >= min_distance
+                    pos.manhattan_distance(used) >= min_distance
                 });
                 if !far_enough { continue; }
 
-                if cell.zone_type == preferred_zone {
-                    candidates.push(pos);
-                    candidates.push(pos);
-                    candidates.push(pos);
-                } else if cell.zone_type != ZoneType::Mountain {
-                    candidates.push(pos);
+                let is_city = cell.settlement_size == Some(crate::worldgen::world_map::SettlementSize::City);
+                let is_town = cell.settlement_size == Some(crate::worldgen::world_map::SettlementSize::Town);
+
+                if is_city {
+                    // Cities are the strongest candidates
+                    for _ in 0..10 { candidates.push(pos); }
+                } else if is_town {
+                    for _ in 0..5 { candidates.push(pos); }
                 }
             }
         }
 
+        // Fallback: any non-ocean cell if no cities/towns available
         if candidates.is_empty() {
             for y in 0..world_map.height as i32 {
                 for x in 0..world_map.width as i32 {
                     let pos = WorldPos::new(x, y);
                     if let Some(cell) = world_map.get(pos) {
-                        if cell.zone_type != ZoneType::Ocean {
-                            let far_enough = used_positions.iter().all(|&used| {
-                                (pos.x - used.x).abs() + (pos.y - used.y).abs() >= min_distance / 2
-                            });
-                            if far_enough { candidates.push(pos); }
+                        if cell.zone_type == ZoneType::Ocean { continue; }
+                        let far_enough = used_positions.iter().all(|&used| {
+                            pos.manhattan_distance(used) >= min_distance / 2
+                        });
+                        if !far_enough { continue; }
+                        if cell.zone_type == preferred_zone {
+                            candidates.push(pos);
+                            candidates.push(pos);
+                            candidates.push(pos);
+                        } else {
+                            candidates.push(pos);
                         }
                     }
                 }

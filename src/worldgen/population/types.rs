@@ -1,6 +1,7 @@
 //! Core data types for the population simulation.
 
 use crate::worldgen::divine::gods::GodId;
+use crate::worldgen::history::characters::CharacterTrait;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Sex {
@@ -25,6 +26,12 @@ pub enum Occupation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeathCause {
     OldAge,
+    /// Infant or child death (under 5).
+    Illness,
+    /// Working-age accident — mining collapse, logging, drowning, fall.
+    Accident,
+    /// Mother died during or shortly after childbirth.
+    Childbirth,
     Famine,
     War,
     Plague,
@@ -33,10 +40,38 @@ pub enum DeathCause {
     Monster,
 }
 
+/// What divine action caused an event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DivineAction {
+    FlawTriggered,
+    TempleBuilt,
+    ChampionChosen,
+    ArtifactForged,
+    SiteCreated,
+    TerritoryLost,
+    Faded,
+    WorshipClaimed,
+}
+
+/// Why an event happened — one level of causation.
+/// The full causal chain is reconstructed by reading a person's life_events in order.
+#[derive(Clone, Debug)]
+pub enum EventCause {
+    /// A god's action or nature caused this.
+    Divine { god_id: GodId, action: DivineAction },
+    /// A specific person's action caused this.
+    PersonAction { person_id: u32, role: &'static str },
+    /// Settlement conditions caused this.
+    Conditions { settlement_id: u32, detail: &'static str },
+    /// A faction's decision caused this.
+    Faction { faction_id: u32, detail: &'static str },
+}
+
 #[derive(Clone, Debug)]
 pub struct LifeEvent {
     pub year: i32,
     pub kind: LifeEventKind,
+    pub cause: Option<EventCause>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,6 +86,11 @@ pub enum LifeEventKind {
     SurvivedWar { enemy_faction_id: u32 },
     SettlementConquered { new_faction_id: u32 },
     SurvivedPlague,
+    // Faith events
+    FaithStrengthened { god_id: GodId },
+    FaithShaken { god_id: GodId },
+    ConvertedFaith { old_god: Option<GodId>, new_god: GodId },
+    AbandonedFaith { god_id: GodId },
 }
 
 /// A single person in the world.
@@ -65,8 +105,11 @@ pub struct Person {
     pub father: Option<u32>,
     pub spouse: Option<u32>,
     pub occupation: Occupation,
-    pub faith: Option<GodId>,
-    pub devotion: u8,
+    /// Personality traits — seeded at birth (2), earned from life events (up to 5).
+    pub traits: Vec<CharacterTrait>,
+    /// Relationship with each god the person has been exposed to. (god_id, devotion 0-100).
+    /// Most people have 1-2 entries. Primary faith = highest devotion.
+    pub faith: Vec<(GodId, u8)>,
     pub life_events: Vec<LifeEvent>,
     pub notable: bool,
 }
@@ -78,5 +121,30 @@ impl Person {
 
     pub fn age(&self, year: i32) -> i32 {
         year - self.birth_year
+    }
+
+    /// The god this person is most devoted to, if any (devotion > 0).
+    pub fn primary_god(&self) -> Option<GodId> {
+        self.faith.iter()
+            .filter(|(_, d)| *d > 0)
+            .max_by_key(|(_, d)| *d)
+            .map(|(g, _)| *g)
+    }
+
+    /// Get devotion to a specific god (0 if no relationship).
+    pub fn devotion_to(&self, god_id: GodId) -> u8 {
+        self.faith.iter()
+            .find(|(g, _)| *g == god_id)
+            .map(|(_, d)| *d)
+            .unwrap_or(0)
+    }
+
+    /// Set devotion to a specific god, adding the entry if needed.
+    pub fn set_devotion(&mut self, god_id: GodId, devotion: u8) {
+        if let Some(entry) = self.faith.iter_mut().find(|(g, _)| *g == god_id) {
+            entry.1 = devotion;
+        } else if devotion > 0 {
+            self.faith.push((god_id, devotion));
+        }
     }
 }

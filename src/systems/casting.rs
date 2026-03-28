@@ -9,7 +9,7 @@ use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::casting::{calculate_ability_damage, calculate_ability_heal, AoeParams, resolve_aoe_targets};
 use crate::resources::combat::{apply_damage, resolve_hit};
 use crate::resources::damage::EquippedArmor;
-use crate::resources::events::{AbilityCastEvent, AbilityLandedEvent, CastInterruptedEvent, DamageDealtEvent};
+use crate::resources::events::{AbilityCastEvent, AbilityLandedEvent, CastInterruptedEvent, DamageDealtEvent, HealEvent};
 use crate::systems::spawning::EntityName;
 use crate::resources::game_time::GameTime;
 use crate::resources::map::GridPosition;
@@ -61,6 +61,7 @@ pub fn begin_cast(
     status_registry: Res<StatusEffectRegistry>,
     body_templates: Res<BodyTemplates>,
     mut damage_events: MessageWriter<DamageDealtEvent>,
+    mut heal_events: MessageWriter<HealEvent>,
     mut cast_events: MessageWriter<AbilityCastEvent>,
     mut landed_events: MessageWriter<AbilityLandedEvent>,
     mut casters: Query<
@@ -134,6 +135,7 @@ pub fn begin_cast(
                 &body_templates,
                 &status_registry,
                 &mut damage_events,
+                &mut heal_events,
                 &mut targets,
             );
             let impact_pos = resolve_impact_position(&casting.target, caster_pos, &targets);
@@ -156,6 +158,7 @@ pub fn tick_casting(
     status_registry: Res<StatusEffectRegistry>,
     body_templates: Res<BodyTemplates>,
     mut damage_events: MessageWriter<DamageDealtEvent>,
+    mut heal_events: MessageWriter<HealEvent>,
     mut landed_events: MessageWriter<AbilityLandedEvent>,
     mut casters: Query<(
         Entity,
@@ -206,6 +209,7 @@ pub fn tick_casting(
                 &body_templates,
                 &status_registry,
                 &mut damage_events,
+                &mut heal_events,
                 &mut targets,
             );
             let impact_pos = resolve_impact_position(&casting.target, caster_pos, &targets);
@@ -253,6 +257,7 @@ fn resolve_ability_effects(
     body_templates: &BodyTemplates,
     status_registry: &StatusEffectRegistry,
     damage_events: &mut MessageWriter<DamageDealtEvent>,
+    heal_events: &mut MessageWriter<HealEvent>,
     targets: &mut Query<(
         Entity,
         &GridPosition,
@@ -334,7 +339,16 @@ fn resolve_ability_effects(
                             Some(t) => t,
                             None => continue,
                         };
-                        body.heal_distributed(heal_amount, template);
+                        let actual = body.heal_distributed(heal_amount, template);
+                        if actual > 0.0 {
+                            heal_events.write(HealEvent {
+                                healer: caster_entity,
+                                target: target_entity,
+                                amount: actual,
+                                ability_name: Some(ability.name.clone()),
+                                ability_id: Some(ability.id),
+                            });
+                        }
                     }
                 }
                 AbilityEffect::ApplyStatus {

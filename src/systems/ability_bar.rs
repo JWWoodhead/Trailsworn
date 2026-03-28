@@ -281,9 +281,13 @@ pub fn update_ability_bar(
     mut cooldown_overlays: Query<(&CooldownOverlay, &mut Node), (Without<AbilitySlotUi>, Without<AbilityBarRoot>)>,
     targeting_mode: Res<TargetingMode>,
 ) {
-    let selected_data = selected.iter().next();
+    // Hide ability bar when nothing selected or multiple selected (no single context)
+    let selected_data = if selected.iter().count() == 1 {
+        selected.iter().next()
+    } else {
+        None
+    };
 
-    // Hide entire ability bar when nothing is selected
     if let Ok(mut root_node) = root_query.single_mut() {
         root_node.display = if selected_data.is_some() {
             Display::Flex
@@ -373,11 +377,17 @@ pub fn update_ability_bar(
 pub fn update_cast_bar(
     ability_registry: Res<AbilityRegistry>,
     selected: Query<&CastingState, (With<Selected>, With<PlayerControlled>)>,
+    selected_count: Query<(), (With<Selected>, With<PlayerControlled>)>,
     mut cast_root: Query<&mut Node, With<CastBarRoot>>,
     mut cast_fill: Query<&mut Node, (With<CastBarFill>, Without<CastBarRoot>)>,
     mut cast_text: Query<&mut Text, With<CastBarText>>,
 ) {
-    let casting = selected.iter().next();
+    // Hide when multiple selected (no single context)
+    let casting = if selected_count.iter().count() == 1 {
+        selected.iter().next()
+    } else {
+        None
+    };
     let Ok(mut root_node) = cast_root.single_mut() else { return };
 
     match casting {
@@ -421,7 +431,13 @@ pub fn update_resource_bars(
 ) {
     let Ok(mut root_node) = resource_root.single_mut() else { return };
 
-    if let Some((mana, stamina)) = selected.iter().next() {
+    // Hide when multiple selected (no single context)
+    let data = if selected.iter().count() == 1 {
+        selected.iter().next()
+    } else {
+        None
+    };
+    if let Some((mana, stamina)) = data {
         root_node.display = Display::Flex;
 
         let mana_frac = if mana.max > 0.0 { mana.current / mana.max } else { 0.0 };

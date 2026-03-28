@@ -1,12 +1,18 @@
 use bevy::prelude::*;
 use rand::RngExt;
 
+use std::f32::consts::FRAC_PI_2;
+
+use crate::resources::abilities::CastingState;
 use crate::resources::body::{Body, BodyTemplates};
-use crate::resources::task::Engaging;
 use crate::resources::combat::{
-    accuracy_check, apply_damage, calculate_accuracy, calculate_damage, calculate_dodge,
-    resolve_hit,
+    Dead, InCombat, accuracy_check, apply_damage, calculate_accuracy, calculate_damage,
+    calculate_dodge, resolve_hit,
 };
+use crate::resources::map::render_layers;
+use crate::resources::movement::MovePath;
+use crate::resources::task::{CurrentTask, Engaging};
+use crate::resources::vfx::HitFlash;
 use crate::resources::damage::{EquippedArmor, EquippedWeapon};
 use crate::resources::events::{AttackMissedEvent, DamageDealtEvent};
 use crate::resources::game_time::GameTime;
@@ -51,7 +57,7 @@ pub fn auto_attack(
         &Attributes,
         &mut ThreatTable,
         &EntityName,
-    )>,
+    ), Without<Dead>>,
 ) {
     if game_time.ticks_this_frame == 0 {
         return;
@@ -158,23 +164,25 @@ pub fn auto_attack(
     }
 }
 
-/// Remove dead entities from the game. Records zone kills and cleans up
-/// orphaned ItemInstances.
+/// Turn dead entities into corpses. Records zone kills, cleans up equipment,
+/// then leaves the entity as a rotated, greyed-out sprite on the ground.
 pub fn cleanup_dead(
     mut commands: Commands,
     body_templates: Res<BodyTemplates>,
     current_zone: Res<crate::resources::world::CurrentZone>,
     mut zone_cache: ResMut<crate::resources::zone_persistence::ZoneStateCache>,
     mut instance_registry: ResMut<crate::resources::items::ItemInstanceRegistry>,
-    query: Query<(
+    mut query: Query<(
         Entity,
         &Body,
         &EntityName,
+        &mut Sprite,
+        &mut Transform,
         Option<&crate::resources::zone_persistence::ZoneSpawnIndex>,
         Option<&crate::resources::items::Equipment>,
-    )>,
+    ), Without<Dead>>,
 ) {
-    for (entity, body, name, spawn_idx, equipment) in &query {
+    for (entity, body, name, mut sprite, mut transform, spawn_idx, equipment) in &mut query {
         let template = match body_templates.get(&body.template_id) {
             Some(t) => t,
             None => continue,
@@ -196,7 +204,20 @@ pub fn cleanup_dead(
                 }
             }
 
-            commands.entity(entity).despawn();
+            // Turn into a corpse: rotate, grey out, lower to ground layer
+            sprite.color = Color::srgb(0.4, 0.4, 0.4);
+            transform.rotation = Quat::from_rotation_z(FRAC_PI_2);
+            transform.translation.z = render_layers::FLOOR_ITEMS;
+
+            // Disable all combat/movement, mark as dead
+            let mut ec = commands.entity(entity);
+            ec.insert(Dead);
+            ec.remove::<InCombat>();
+            ec.remove::<Engaging>();
+            ec.remove::<CurrentTask>();
+            ec.remove::<CastingState>();
+            ec.remove::<MovePath>();
+            ec.remove::<HitFlash>();
         }
     }
 }

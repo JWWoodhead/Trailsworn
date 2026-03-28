@@ -49,6 +49,7 @@ pub fn apply_plague(
             people[idx].life_events.push(LifeEvent {
                 year,
                 kind: LifeEventKind::SurvivedPlague,
+                cause: None,
             });
         }
     }

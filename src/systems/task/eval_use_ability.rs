@@ -6,8 +6,8 @@ use crate::resources::abilities::{
 use crate::resources::combat_behavior::{CombatBehavior, UseCondition};
 use crate::resources::body::{Body, BodyTemplates};
 use crate::resources::casting::validate_cast;
-use crate::resources::combat::InCombat;
-use crate::resources::faction::{Faction};
+use crate::resources::combat::{Dead, InCombat};
+use crate::resources::faction::{Faction, FactionRelations};
 use crate::resources::map::GridPosition;
 use crate::resources::status_effects::{ActiveStatusEffects, StatusEffectRegistry};
 use crate::resources::task::{Action, AiBrain, Engaging, Task, TaskEvaluator, TaskSource};
@@ -17,8 +17,11 @@ pub fn use_ability(
     ability_registry: Res<AbilityRegistry>,
     body_templates: Res<BodyTemplates>,
     status_registry: Res<StatusEffectRegistry>,
+    faction_relations: Res<FactionRelations>,
     mut query: Query<(
+        Entity,
         &GridPosition,
+        &Faction,
         &CombatBehavior,
         &Body,
         &ActiveStatusEffects,
@@ -28,9 +31,10 @@ pub fn use_ability(
         Option<&Mana>,
         Option<&Stamina>,
     )>,
-    potential_targets: Query<(Entity, &GridPosition, &Faction, &Body), With<InCombat>>,
+    potential_targets: Query<(Entity, &GridPosition, &Faction, &Body), (With<InCombat>, Without<Dead>)>,
+    allies: Query<(Entity, &GridPosition, &Faction, &Body), Without<Dead>>,
 ) {
-    for (grid_pos, behavior, body, status_effects, mut brain, engaging, slots, mana, stamina) in &mut query {
+    for (self_entity, grid_pos, self_faction, behavior, body, status_effects, mut brain, engaging, slots, mana, stamina) in &mut query {
         if brain.combat_eval_cooldown != 0 {
             continue;
         }
@@ -77,9 +81,42 @@ pub fn use_ability(
             let condition_met = match &prio.condition {
                 UseCondition::Always => true,
                 UseCondition::SelfHpBelow(threshold) => self_hp_fraction < *threshold,
-                UseCondition::TargetHpBelow(_) => true,
-                UseCondition::AllyHpBelow(_) => false,
-                UseCondition::EnemiesInRange(_) => false,
+                UseCondition::TargetHpBelow(threshold) => {
+                    potential_targets
+                        .get(engage_target)
+                        .ok()
+                        .and_then(|(_, _, _, target_body)| {
+                            let t = body_templates.get(&target_body.template_id)?;
+                            Some((1.0 - target_body.pain_level(t)) < *threshold)
+                        })
+                        .unwrap_or(false)
+                }
+                UseCondition::AllyHpBelow(threshold) => {
+                    allies.iter().any(|(e, _, f, ally_body)| {
+                        if e == self_entity || f.0 != self_faction.0 {
+                            return false;
+                        }
+                        body_templates
+                            .get(&ally_body.template_id)
+                            .map(|t| (1.0 - ally_body.pain_level(t)) < *threshold)
+                            .unwrap_or(false)
+                    })
+                }
+                UseCondition::EnemiesInRange(min_count) => {
+                    let count = potential_targets
+                        .iter()
+                        .filter(|(e, pos, f, _)| {
+                            *e != self_entity
+                                && faction_relations.is_hostile(self_faction.0, f.0)
+                                && {
+                                    let dx = grid_pos.x.abs_diff(pos.x);
+                                    let dy = grid_pos.y.abs_diff(pos.y);
+                                    (dx * dx + dy * dy) <= (behavior.aggro_range as u32).pow(2)
+                                }
+                        })
+                        .count() as u32;
+                    count >= *min_count
+                }
             };
             if !condition_met {
                 continue;
@@ -102,8 +139,31 @@ pub fn use_ability(
 
             let cast_target = match ability.target_type {
                 TargetType::SelfOnly => CastTarget::SelfCast,
-                TargetType::SingleEnemy | TargetType::SingleAlly => {
-                    CastTarget::Entity(engage_target)
+                TargetType::SingleEnemy => CastTarget::Entity(engage_target),
+                TargetType::SingleAlly => {
+                    // Find the most wounded ally (including self) within ability range
+                    let best_ally = allies
+                        .iter()
+                        .filter(|(_, _, f, _)| f.0 == self_faction.0)
+                        .filter_map(|(e, ally_pos, _, ally_body)| {
+                            let t = body_templates.get(&ally_body.template_id)?;
+                            let pain = ally_body.pain_level(t);
+                            if pain <= 0.0 {
+                                return None;
+                            }
+                            let dx = grid_pos.x as f32 - ally_pos.x as f32;
+                            let dy = grid_pos.y as f32 - ally_pos.y as f32;
+                            let dist = (dx * dx + dy * dy).sqrt();
+                            if dist > ability.range {
+                                return None;
+                            }
+                            Some((e, pain))
+                        })
+                        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                    match best_ally {
+                        Some((ally_entity, _)) => CastTarget::Entity(ally_entity),
+                        None => continue,
+                    }
                 }
                 TargetType::CircleAoE => CastTarget::Position {
                     x: target_pos.x as f32,

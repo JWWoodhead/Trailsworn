@@ -10,7 +10,7 @@ use trailsworn::resources::affixes::AffixRegistry;
 use trailsworn::resources::item_defs::register_starter_items;
 use trailsworn::resources::items::{ItemInstanceRegistry, ItemRegistry};
 use trailsworn::resources::body::{humanoid_template, BodyTemplates};
-use trailsworn::resources::events::{AbilityCastEvent, AbilityLandedEvent, AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent};
+use trailsworn::resources::events::{AbilityCastEvent, AbilityLandedEvent, AttackMissedEvent, CastInterruptedEvent, DamageDealtEvent, HealEvent};
 use trailsworn::resources::faction::{Disposition, FactionRelations};
 use trailsworn::resources::game_state::{GameSet, GameState};
 use trailsworn::resources::game_time::GameTime;
@@ -82,8 +82,23 @@ fn main() {
 
     // Generate world map
     let mut world_map = generate_world_map(256, 256, world_seed);
+
+    // Build god pool and draw this run's pantheon
+    let god_pool = trailsworn::worldgen::divine::build_god_pool();
+    let mut pantheon_rng = rand::rngs::StdRng::seed_from_u64(world_seed);
+    let drawn_pantheon = god_pool.draw_pantheon(6, &mut pantheon_rng);
+
+    // Generate unified history — gods and mortals intertwined
+    // NOTE: This can overwrite zone types via divine territory shaping and
+    // settlement placement, so biome search must happen AFTER this.
+    let history_config = trailsworn::worldgen::history::HistoryConfig::default();
+    let world_history = trailsworn::worldgen::history::generate_history(
+        &history_config, &mut world_map, &god_pool, &drawn_pantheon,
+        world_seed.wrapping_add(1000),
+    );
+
+    // Resolve spawn position (after history, which can change zone types)
     let spawn_pos = if let Some(target_biome) = biome_override {
-        // Search for the nearest zone of the requested biome type
         let default_pos = world_map.spawn_pos;
         let mut best = None;
         let mut best_dist = i32::MAX;
@@ -111,18 +126,6 @@ fn main() {
         world_map.spawn_pos
     };
     let current_zone = CurrentZone::new(world_seed, spawn_pos);
-
-    // Build god pool and draw this run's pantheon
-    let god_pool = trailsworn::worldgen::divine::build_god_pool();
-    let mut pantheon_rng = rand::rngs::StdRng::seed_from_u64(world_seed);
-    let drawn_pantheon = god_pool.draw_pantheon(6, &mut pantheon_rng);
-
-    // Generate unified history — gods and mortals intertwined
-    let history_config = trailsworn::worldgen::history::HistoryConfig::default();
-    let world_history = trailsworn::worldgen::history::generate_history(
-        &history_config, &mut world_map, &god_pool, &drawn_pantheon,
-        world_seed.wrapping_add(1000),
-    );
 
     // Generate the starting zone's tile world
     let start_ctx = world_map.zone_context(spawn_pos).unwrap();
@@ -191,6 +194,7 @@ fn main() {
     .add_message::<AbilityLandedEvent>()
     .add_message::<CastInterruptedEvent>()
     .add_message::<AbilityCastEvent>()
+    .add_message::<HealEvent>()
     .add_message::<ZoneTransitionEvent>()
     // System set ordering
     .configure_sets(
@@ -300,6 +304,7 @@ fn main() {
                 cast_bars::update_cast_bars,
                 cast_bars::cleanup_cast_bars,
                 floating_text::spawn_damage_numbers,
+                floating_text::spawn_heal_numbers,
                 floating_text::animate_floating_text,
                 hover_info::update_hover_tooltip,
                 selection::update_selection_visuals,
@@ -325,8 +330,10 @@ fn main() {
                 vfx::spawn_cast_effects,
                 vfx::spawn_interrupt_effects,
                 vfx::spawn_ability_landed_effects,
+                vfx::spawn_heal_effects,
                 vfx::tick_attack_lunge,
                 vfx::tick_hit_flash,
+                vfx::tick_projectiles,
                 vfx::cleanup_despawn_timers,
             )
                 .in_set(GameSet::Ui),

@@ -141,12 +141,10 @@ pub fn seed_population(
                 father: None,
                 spouse: None,
                 occupation: occupation_for_terrain(settlement.zone_type, rng),
-                faith: settlement.patron_god,
-                devotion: if settlement.patron_god.is_some() {
-                    rng.random_range(30..=70)
-                } else {
-                    0
-                },
+                traits: super::traits::seed_traits(None, None, rng),
+                faith: settlement.patron_god
+                    .map(|g| vec![(g, rng.random_range(30..=70))])
+                    .unwrap_or_default(),
                 life_events: Vec::new(),
                 notable: false,
             });

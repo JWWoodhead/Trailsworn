@@ -2,12 +2,15 @@
 //! Notable characters emerge from accumulated experiences.
 
 pub mod events;
+pub mod faith;
 pub mod index;
 pub mod lifecycle;
 pub mod notable;
 pub mod plague;
 pub mod resources;
 pub mod seed;
+pub mod trade;
+pub mod traits;
 pub mod types;
 pub mod war;
 
@@ -15,6 +18,7 @@ pub use types::{DeathCause, LifeEvent, LifeEventKind, Occupation, Person, Sex};
 
 use rand::Rng;
 
+use crate::worldgen::divine::state::GodState;
 use crate::worldgen::history::state::SettlementState;
 
 use index::SettlementIndex;
@@ -52,11 +56,12 @@ impl PopulationSim {
         }
     }
 
-    /// Advance one year: lifecycle, war, plague, resources, famine, events, notable check.
+    /// Advance one year: lifecycle, war, plague, faith, resources, famine, events, notable check.
     /// Mutates settlement stockpiles in place. Returns person IDs that became notable this year.
     pub fn advance_year(
         &mut self,
         settlements: &mut [SettlementState],
+        gods: &[GodState],
         year: i32,
         rng: &mut impl Rng,
     ) -> &[u32] {
@@ -114,6 +119,9 @@ impl PopulationSim {
         // Rebuild index after war/plague deaths
         let index = SettlementIndex::build(&self.people, year);
 
+        // Faith evaluation (before resources — faith affects stories, not economics)
+        faith::evaluate_faith(&mut self.people, &index, settlements, gods, year);
+
         // Occupation rebalancing (before resource computation)
         for settlement in settlements.iter() {
             if settlement.destroyed_year.is_some() { continue; }
@@ -122,6 +130,19 @@ impl PopulationSim {
 
         // Resource production, consumption, famine
         self.process_resources(settlements, &index, year);
+
+        // Trait evaluation — process this year's events to evolve personalities
+        for person in self.people.iter_mut() {
+            if person.death_year.is_some() { continue; }
+            // Only evaluate events from this year
+            let year_events: Vec<_> = person.life_events.iter()
+                .filter(|e| e.year == year)
+                .cloned()
+                .collect();
+            for event in &year_events {
+                traits::evaluate_trait_change(person, event, rng);
+            }
+        }
 
         // Reset generation counts every 25 years
         if year - self.notable_gen_start >= 25 {
@@ -246,6 +267,7 @@ impl PopulationSim {
                     self.people[sidx].life_events.push(LifeEvt {
                         year,
                         kind: LifeEvtKind::LostSpouse { spouse_id: dead_id, cause },
+                        cause: None,
                     });
                 }
             }
@@ -255,6 +277,7 @@ impl PopulationSim {
                     self.people[pidx].life_events.push(LifeEvt {
                         year,
                         kind: LifeEvtKind::LostChild { child_id: dead_id, cause },
+                        cause: None,
                     });
                 }
             }
@@ -265,6 +288,7 @@ impl PopulationSim {
                     p.life_events.push(LifeEvt {
                         year,
                         kind: LifeEvtKind::LostParent { parent_id: dead_id, cause },
+                        cause: None,
                     });
                 }
             }

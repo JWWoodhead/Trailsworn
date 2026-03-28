@@ -74,7 +74,9 @@ Colors in `resources/theme.rs`:
 - **Attribute bonuses from equipment not applied** (needs `EffectiveAttributes` refactor)
 - **No equip/unequip from UI**
 - **No save/load** (`StableId` infrastructure ready, serialization not built)
-- **UseCondition gaps**: `AllyHpBelow` and `EnemiesInRange` evaluator conditions are stubbed
+- **Z-sort order**: player always renders in front of trees/scatter objects
+- **No line of sight blocking**: ranged attacks/vision go through walls and obstacles
+- **Pathfinding ignores scatter**: obstacles from scatter decoration not registered as impassable in pathfinding
 - **Terrain feature sprites**: forest has real sprites, other biomes still use placeholder colored squares
 - **Terrain textures**: 5 of 9 still flat color (Sand, Snow, Swamp, Water, Mountain)
 - **Terrain texture shimmer**: no mipmaps on terrain array texture — causes aliasing/shimmer when zoomed out. Fix: generate mip chain in `gen_terrain_array` + enable trilinear filtering (do once art/textures are finalized)

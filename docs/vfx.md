@@ -43,6 +43,14 @@ Cast interrupted
   → CastInterruptedEvent
     → spawn_interrupt_effects:
         - Audio (SfxKind::CastInterrupt)
+
+Healing applied (ability resolution)
+  → HealEvent
+    → spawn_heal_numbers:
+        - Green "+N" floating text at target
+    → spawn_heal_effects:
+        - Particle burst (AbilityDef.impact_vfx → VfxKind::ImpactHeal fallback)
+        - Audio (AbilityDef.impact_sfx → SfxKind::HealLand fallback)
 ```
 
 ## Particle Effect Design
@@ -79,10 +87,10 @@ Ability-specific overrides use 2-3x more particles and wider spread than generic
 | `resources/particles.rs` | `VfxKind` enum, `ParticleAssets` registry |
 | `resources/particle_defs.rs` | `EffectAsset` builder functions, `setup_particle_effects` |
 | `resources/audio.rs` | `SfxKind` enum, `AudioAssets` registry |
-| `resources/vfx.rs` | `AttackLunge`, `HitFlash`, `ScreenTrauma`, `DespawnTimer`, `ImpactKind` |
-| `systems/vfx.rs` | All spawn + tick systems for combat feedback |
+| `resources/vfx.rs` | `AttackLunge`, `HitFlash`, `Projectile`, `ScreenTrauma`, `DespawnTimer`, `ImpactKind` |
+| `systems/vfx.rs` | All spawn + tick systems for combat feedback (damage, heal, projectiles) |
 | `systems/audio.rs` | `setup_audio` startup system |
-| `resources/events.rs` | `DamageDealtEvent`, `AbilityCastEvent`, `AbilityLandedEvent`, `CastInterruptedEvent` |
+| `resources/events.rs` | `DamageDealtEvent`, `AttackMissedEvent`, `AbilityCastEvent`, `AbilityLandedEvent`, `CastInterruptedEvent`, `HealEvent` |
 
 ## bevy_hanabi Notes
 
