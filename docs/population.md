@@ -209,47 +209,69 @@ Divine events that affect settlement devotion (handled by `CrossDomainEvent` in 
 
 ## Implementation Phases
 
-### Phase 1: Population Fabric
-- Expand Person struct with occupation, faith, devotion, life_events
-- Wire population sim into `generate_history`
-- Family events generate LifeEvents for kin
-- Simple notable threshold (3+ significant events)
-- **Replaces** current `generate_character` for background population
-- **Keeps** Character struct for promoted notables
+### Phase 1: Population Fabric — COMPLETE
+- [x] Person struct with occupation, faith, devotion, life_events, notable flag
+- [x] PopulationSim wired into `generate_history` yearly loop
+- [x] Family events: ChildBorn, MarriedTo, LostParent/Spouse/Child/Sibling with DeathCause
+- [x] Notable promotion: 4+ significant life events → promoted to Character
+- [x] Per-settlement cap: max 3 notables per settlement per 25-year generation
+- [x] Person → Character bridge via `promote_to_character()` (creates Character from Person data)
+- [x] Seeded population: mixed ages (30% children, 55% adults, 15% elderly)
+- [x] Remarriage: widowed people can remarry
+- [x] Unmarried fertility: 50% of married rate
+- [x] Parent→children index for O(1) kin lookups (built per year)
+- [x] Performance: ~2s for 14k people over 100 years (debug mode)
 
-### Phase 2: War & Plague Hooks
-- War drafts people, active wars kill soldiers each year
-- War resolution creates SurvivedWar events
-- Plague/monster kills fraction of settlement population
-- DeathCause cascades to family events
-- Settlement conquest events for all residents
+### Phase 1b: Resources & Occupations — COMPLETE
+- [x] 10 occupations: Farmer, Woodcutter, Miner, Hunter, Quarrier, Soldier, Smith, Merchant, Priest, Scholar
+- [x] 5 resources: Food, Timber, Ore, Leather, Stone
+- [x] Terrain-aware occupation assignment (forest → woodcutters, mountain → miners, etc.)
+- [x] Per-worker production with terrain modifiers (grassland +50% food, mountain +50% ore, etc.)
+- [x] Per-person consumption (food per person, timber terrain-scaled, ore per smith, leather per soldier)
+- [x] Resource stockpiles on SettlementState with food spoilage (30%/year) and caps
+- [x] Famine: food deficit kills infants/elderly first, generates LostFamily events with DeathCause::Famine
+- [x] Occupation rebalancing: non-essential workers switch to Farmer when food is critical
+- [x] Timber consumption terrain-aware (forest 0.5, grassland 0.2, mountain/desert 0.1)
+
+### Phase 2: War & Plague Hooks — COMPLETE
+- [x] Combat score: per-soldier effectiveness (age, veteran bonus, equipment)
+- [x] Faction military power: aggregated from real soldier combat scores
+- [x] War drafting: settlements at war draft non-soldiers to Soldier (20% target), DraftedToWar events
+- [x] War casualties: ~3% of soldiers die yearly, weakest first, DeathCause::War
+- [x] War ended: SurvivedWar events for drafted soldiers, soldiers stay drafted permanently
+- [x] Plague: condition-driven (overcrowding, famine, war, low prosperity), not purely random
+- [x] Plague pulse: one-time 10-15% population kill, destroys 50% food stockpile, SurvivedPlague events
+- [x] Settlement flags: `at_war` and `plague_this_year` bridge world_events → population sim
 
 ### Phase 3: Faith System
-- Personal faith/devotion on every person
-- Faith gain/loss conditions (deterministic, not random)
-- FaithShaken as intermediate state
-- `evaluate_faith_impact()` after cross-domain event application
-- Divine flaws connect to individual stories
+- [ ] Personal faith/devotion on every person (fields exist, not yet evaluated)
+- [ ] Faith gain/loss conditions (deterministic, not random)
+- [ ] FaithShaken as intermediate state
+- [ ] `evaluate_faith_impact()` after cross-domain event application
+- [ ] Divine flaws connect to individual stories
 
 ### Phase 4: Status & Occupation
-- Occupation assignment and change
-- RoseToProminence / LostPosition tracking
-- Exile and migration mechanics
-- Settlement-level roles (head priest, garrison commander)
+- [ ] RoseToProminence / LostPosition tracking
+- [ ] Exile and migration mechanics
+- [ ] Settlement-level roles (head priest, garrison commander)
 
 ### Phase 5: Narrative Grammar Integration
-- Grammar state machines (Propp, Shakespeare, Dostoevsky)
-- Notable promotion via grammar entry detection
-- Characters progress through narrative beats
-- The payoff: memorable stories emerge from infrastructure
+- [ ] Grammar state machines (Propp, Shakespeare, Dostoevsky)
+- [ ] Notable promotion via grammar entry detection
+- [ ] Characters progress through narrative beats
 
 ---
 
+## Resolved Questions
+
+- **Sibling detection**: Parent→children HashMap built once per year. O(n) build, O(1) lookup per death.
+- **Notable cap**: 3 per settlement per 25-year generation. Prevents notable spam.
+- **Person → Character bridge**: `promote_to_character()` creates a new Character with a new global ID. Person stays in population vec. Role derived from occupation.
+- **Occupation distribution**: Terrain-weighted tables in `seed.rs`. Forest = 30% farmer + 25% woodcutter + 15% hunter. Mountain = 25% farmer + 20% miner + 15% quarrier. Cities = diverse mix.
+
 ## Open Questions
 
-- **Sibling detection**: Scan all people for shared parents is O(n). Cache `children: Vec<u32>` on Person or build family index?
-- **Notable cap**: 1-3 per settlement per generation as soft cap?
+- **Trade**: settlements with resource surplus should export to deficit settlements. Needed to fix non-food resource deficits long-term.
 - **Dead person compaction**: Compact dead non-notable people whose children are also dead?
-- **Person → Character bridge**: How does promotion work? Copy? Upgrade in place? Linked structs?
-- **Occupation distribution**: Hamlet = almost all farmers. City = specialization. What ratios?
 - **Migration frequency**: Rare (marriage, exile, post-war) to preserve settlement identity?
+- **Villain/narrative roles**: Character roles are currently occupation-based. Narrative roles (villain, tragic hero) need a deeper system.

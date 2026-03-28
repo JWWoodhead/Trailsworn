@@ -147,12 +147,24 @@ Phase 11: Sentiment drift — both faction and divine relations
 - **Emissary**: appears to mortals as signs (Phoenix, Thunderbird, Night Stalker, etc.)
 - **Companion**: accompanies the god (Fire Drake, Crystal Spirit, Dark Raven, etc.)
 
-### Mortal Simulation
-- **Faction gauges**: military_strength, wealth, stability (1-100). Patron god influences behavior.
+### Mortal Simulation (`history/world_events.rs`)
+- **Faction gauges**: military_strength (backed by real soldiers), wealth, stability (1-100). Patron god influences behavior.
 - **Prerequisite-based events**: 17 mortal event types + 14 divine event types (31 total)
 - **Character system**: 27 traits, 8 ambitions, roles, epithets, race-specific lifespans
-- **Settlements**: ~70 on map with size tiers, patron god, devotion level
+- **Settlements**: ~70-80 on map with size tiers, patron god, devotion level, resource stockpiles
 - **Cultural accumulation**: values/taboos from event patterns
+- **Condition-driven plague**: base 0.5% chance, boosted by overcrowding (cities +2%), famine (+3%), war (+1.5%), low prosperity (+1%). One-time kill pulse, not recurring.
+
+### Population Simulation (`population/`)
+Person-level simulation of every individual (~28k initial, ~40k+ over 100 years). See [docs/population.md](population.md) for full design.
+
+- **10 occupations**: Farmer, Woodcutter, Miner, Hunter, Quarrier, Soldier, Smith, Merchant, Priest, Scholar
+- **5 resources**: Food, Timber, Ore, Leather, Stone — produced by workers, modified by terrain
+- **Yearly lifecycle**: death (age-based mortality), marriage (same-settlement, remarriage allowed), birth (married 12%/unmarried 6% base rate)
+- **Life events**: ChildBorn, MarriedTo, LostParent/Spouse/Child/Sibling, DraftedToWar, SurvivedWar, SurvivedPlague, SettlementConquered
+- **War integration**: settlements at war draft soldiers, 3% yearly casualty rate, combat score (age + veteran bonus + equipment)
+- **Famine**: food deficit kills infants/elderly first. Occupation rebalancing prevents death spirals.
+- **Notable promotion**: 4+ significant life events → promoted to Character (capped 3 per settlement per 25-year generation)
 
 ### Divine Terrain Overlay (`divine/terrain_scars.rs`)
 8 overlay types (not new TerrainType variants — metadata for future rendering):
@@ -170,9 +182,9 @@ Lava, Ice, ScorchedEarth, HallowedGround, Shadowlands, DeepWild, Blight, Crystal
 - Faction names (8 types x pattern templates)
 - Region names
 
-## God Pool (`worldgen/gods.rs`) + God Systems (`worldgen/divine/`)
+## God Pool (`worldgen/divine/gods.rs`)
 
-### Archetypes (`gods.rs`)
+### Archetypes
 8 god archetypes (Fire, Frost, Storm, Holy, Shadow, Nature, Necromancy, Arcane), growing to ~25.
 - **Fixed per archetype**: domain (MagicSchool), terrain influence, gift to mortals, 5 spells (data only), Propp tendencies
 - **GodPool** resource: holds all archetypes, `draw_pantheon(6, rng)` selects and randomizes

@@ -165,11 +165,20 @@ A Cruel nature god teaches agriculture through survival-of-the-fittest. A Wise n
 - [x] Divine artifacts, sites, races, terrain scars
 - [x] World map UI — legend, settlement icons, zoom/pan, clickable zones
 
+- [x] Population simulation — person-level lifecycle (birth/death/marriage), 10 occupations, family life events
+- [x] Settlement resources — 5 resources (Food/Timber/Ore/Leather/Stone), terrain-aware production, stockpiles with spoilage
+- [x] War hooks — real soldier drafting, combat scoring, yearly casualties, SurvivedWar events
+- [x] Plague hooks — condition-driven (overcrowding, famine, war), one-time population kill pulse
+- [x] Famine system — food deficit kills infants/elderly, occupation rebalancing prevents spirals
+- [x] Notable promotion — eventful people become Characters (capped per settlement per generation)
+
 ### Planned
 - [ ] God influence modifiers on mortal event evaluation (holy war, divine intervention, schisms)
 - [ ] Patron god → faction culture pipeline (doctrine → values/taboos)
 - [ ] Narrative grammar state machines (Propp/Shakespeare/Dostoevsky)
-- [ ] Population model (demographics, migration, growth)
+- [ ] Personal faith system (faith gain/loss conditions, FaithShaken, divine flaws → individual stories)
+- [ ] Trade between settlements (surplus/deficit matching, trade routes)
+- [ ] Migration (marriage, exile, post-war displacement)
 - [ ] World map borders, trade routes
 - [ ] Ruins/sites from divine history visible in gameplay zones
 - [ ] Lore delivery (texts, NPC knowledge, environmental storytelling)
