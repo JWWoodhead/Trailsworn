@@ -1,7 +1,7 @@
 use rand::{Rng, RngExt};
 
 use crate::resources::magic::MagicSchool;
-use crate::worldgen::gods::GodId;
+use super::gods::GodId;
 
 /// A god-forged artifact from the divine era.
 #[derive(Clone, Debug)]

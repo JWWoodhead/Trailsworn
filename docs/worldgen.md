@@ -102,7 +102,7 @@ Spawned as `TerrainFeatureEntity` + `ZoneEntity` on `TERRAIN_FEATURES` layer (z=
 - `handle_zone_transition`: builds `ZoneGenContext` from world map (includes river entry/width), generates zone via `generate_zone_with_context`, snapshots entities, repositions player
 - `rendering::update_terrain_map`: detects `TileWorld` change and rebuilds the terrain map GPU texture
 
-## History Generation (`worldgen/history/` + `worldgen/divine_era/`)
+## History Generation (`worldgen/history/` + `worldgen/divine/`)
 
 Unified simulation where gods and mortal factions coexist in the same 100-year timeline. Gods influence mortal events through worship, drives, and flaws. Called from `main.rs` with world map and pantheon.
 
@@ -111,7 +111,7 @@ Unified simulation where gods and mortal factions coexist in the same 100-year t
 - 10 phases per year, processing both divine and mortal actors
 - `WorldHistory` output contains factions, characters, settlements, events, gods, divine sites/artifacts/races, terrain scars
 
-### God Personality System (`divine_era/personality.rs`)
+### God Personality System (`divine/personality.rs`)
 Each drawn god has a **drive** (what they want) and **flaw** (how it breaks them), rolled from domain weights + trait modifiers:
 - **10 Drives**: Knowledge, Dominion, Worship, Perfection, Justice, Love, Freedom, Legacy, Vindication, Supremacy
 - **10 Flaws**: Hubris, Jealousy, Obsession, Cruelty, Blindness, Isolation, Betrayal, Sacrifice, Rigidity, Hollowness
@@ -131,7 +131,7 @@ Phase 10: Flaw pressure & triggers — reactive narrative events from god flaws
 Phase 11: Sentiment drift — both faction and divine relations
 ```
 
-### God Behaviors (`divine_era/behavior.rs`)
+### God Behaviors (`divine/ (territory.rs, worship.rs, drives.rs, conflict.rs, flaws.rs)`)
 - **Territory expansion**: BFS from frontier, terrain-weighted, gods claim ~50% of map
 - **Terrain shaping**: gods reshape zone_type to match their domain, 10% chance of divine terrain scars
 - **Worship**: settlements in god territory may begin worshipping; drive affects conversion rate
@@ -140,7 +140,7 @@ Phase 11: Sentiment drift — both faction and divine relations
 - **Divine wars**: hostility-driven, terrain scars from battles
 - **Gods fade, not die**: zero worshippers for 20+ years → faded (can't act). Regaining worshippers un-fades them.
 
-### Divine Creatures (`divine_era/creatures.rs`)
+### Divine Creatures (`divine/creatures.rs`)
 4 creatures per domain (32 total), each with a role:
 - **Guardian**: guards sacred sites (Salamander, Ice Wyrm, Solar Lion, etc.)
 - **Warrior**: fights in divine wars (Forge Golem, Frost Giant, Griffin, etc.)
@@ -154,7 +154,7 @@ Phase 11: Sentiment drift — both faction and divine relations
 - **Settlements**: ~70 on map with size tiers, patron god, devotion level
 - **Cultural accumulation**: values/taboos from event patterns
 
-### Divine Terrain Overlay (`divine_era/terrain_scars.rs`)
+### Divine Terrain Overlay (`divine/terrain_scars.rs`)
 8 overlay types (not new TerrainType variants — metadata for future rendering):
 Lava, Ice, ScorchedEarth, HallowedGround, Shadowlands, DeepWild, Blight, Crystal
 
@@ -170,7 +170,7 @@ Lava, Ice, ScorchedEarth, HallowedGround, Shadowlands, DeepWild, Blight, Crystal
 - Faction names (8 types x pattern templates)
 - Region names
 
-## God Pool (`worldgen/gods.rs`) + God Systems (`worldgen/divine_era/`)
+## God Pool (`worldgen/gods.rs`) + God Systems (`worldgen/divine/`)
 
 ### Archetypes (`gods.rs`)
 8 god archetypes (Fire, Frost, Storm, Holy, Shadow, Nature, Necromancy, Arcane), growing to ~25.
@@ -193,10 +193,10 @@ Gods never truly die — they fade when they have no worshippers:
 - **Worship competition**: gods compete for settlement patronage based on territory and drive
 
 ### God-Created Content
-- **Divine artifacts** (`divine_era/artifacts.rs`): named weapons/armor/implements/keys/vessels with domain-themed name generation
-- **Divine sites** (`divine_era/sites.rs`): temples, forges, observatories, necropolises, sacred groves, etc. per domain
-- **Created races** (`divine_era/races.rs`): god-flavored race templates (e.g., Fire→Forgeborn Dwarves, Nature→Rootborn Elves)
-- **Mythical creatures** (`divine_era/creatures.rs`): 4 per domain with roles (guardian/warrior/emissary/companion)
+- **Divine artifacts** (`divine/artifacts.rs`): named weapons/armor/implements/keys/vessels with domain-themed name generation
+- **Divine sites** (`divine/sites.rs`): temples, forges, observatories, necropolises, sacred groves, etc. per domain
+- **Created races** (`divine/races.rs`): god-flavored race templates (e.g., Fire→Forgeborn Dwarves, Nature→Rootborn Elves)
+- **Mythical creatures** (`divine/creatures.rs`): 4 per domain with roles (guardian/warrior/emissary/companion)
 
 ## Noise Utilities (`worldgen/noise_util.rs`)
 - `NoiseLayer`: wrapper around `Fbm<Perlin>` with configurable frequency/octaves

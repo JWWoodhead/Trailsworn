@@ -1,7 +1,7 @@
 use rand::{Rng, RngExt, SeedableRng};
 
-use super::divine_era::DivineTerrainType;
-use super::gods::GodId;
+use super::divine::DivineTerrainType;
+use super::divine::gods::GodId;
 use super::names;
 use super::noise_util::NoiseLayer;
 use super::zone::{ZoneGenContext, ZoneType};

@@ -1,4 +1,4 @@
-use crate::worldgen::gods::GodId;
+use super::gods::GodId;
 use crate::worldgen::world_map::WorldPos;
 
 use super::terrain_scars::DivineTerrainType;

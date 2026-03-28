@@ -111,7 +111,7 @@ fn main() {
     let current_zone = CurrentZone::new(world_seed, spawn_pos);
 
     // Build god pool and draw this run's pantheon
-    let god_pool = trailsworn::worldgen::gods::build_god_pool();
+    let god_pool = trailsworn::worldgen::divine::build_god_pool();
     let mut pantheon_rng = rand::rngs::StdRng::seed_from_u64(world_seed);
     let drawn_pantheon = god_pool.draw_pantheon(6, &mut pantheon_rng);
 
