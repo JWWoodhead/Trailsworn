@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::worldgen::gods::{GodId, GodRelationship};
+use super::gods::{GodId, GodRelationship};
 use crate::worldgen::names::Race;
 use crate::worldgen::world_map::WorldPos;
 

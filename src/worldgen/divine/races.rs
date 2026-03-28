@@ -2,7 +2,7 @@ use rand::{Rng, RngExt};
 
 use crate::resources::magic::MagicSchool;
 use crate::terrain::TerrainType;
-use crate::worldgen::gods::{GodDef, GodId};
+use super::gods::{GodDef, GodId};
 use crate::worldgen::history::characters::CharacterTrait;
 use crate::worldgen::names::Race;
 use crate::worldgen::world_map::WorldPos;
@@ -161,7 +161,7 @@ mod tests {
             trait_modifiers: vec![(CharacterTrait::Warlike, 15.0)],
             trait_blocklist: vec![],
             aspect_description: String::new(),
-            terrain_influence: crate::worldgen::gods::TerrainInfluence {
+            terrain_influence: crate::worldgen::divine::gods::TerrainInfluence {
                 primary_terrain: TerrainType::Stone,
                 secondary_terrain: Some(TerrainType::Sand),
                 future_terrain: Some("Lava".into()),

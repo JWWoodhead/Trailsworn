@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
-use crate::worldgen::divine_era::state::{DivineRelationMatrix, DivineWar, DivinePact};
-use crate::worldgen::gods::GodId;
+use crate::worldgen::divine::state::{DivineRelationMatrix, DivineWar, DivinePact};
+use crate::worldgen::divine::gods::GodId;
 use crate::worldgen::names::{FactionType, Race};
 use crate::worldgen::world_map::WorldPos;
+use crate::worldgen::zone::ZoneType;
 
 /// Pairwise faction sentiment. Range -100 (blood feud) to +100 (sworn brothers).
 #[derive(Clone, Debug, Default)]
@@ -183,6 +184,16 @@ pub struct Treaty {
     pub formed_year: i32,
 }
 
+/// Per-settlement resource stockpile. Values can go negative (unmet demand).
+#[derive(Clone, Debug, Default)]
+pub struct ResourceStockpile {
+    pub food: i32,
+    pub timber: i32,
+    pub ore: i32,
+    pub leather: i32,
+    pub stone: i32,
+}
+
 /// The settlement's mutable simulation state.
 #[derive(Clone, Debug)]
 pub struct SettlementState {
@@ -201,6 +212,14 @@ pub struct SettlementState {
     pub devotion: u32,
     /// World map position.
     pub world_pos: Option<WorldPos>,
+    /// Terrain type at this settlement's location.
+    pub zone_type: Option<ZoneType>,
+    /// Resource stockpile.
+    pub stockpile: ResourceStockpile,
+    /// Owner faction is currently at war (set each year by history loop).
+    pub at_war: bool,
+    /// Hit by plague this year (one-time pulse, cleared after population processes it).
+    pub plague_this_year: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

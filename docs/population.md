@@ -170,7 +170,7 @@ A person becomes notable when their accumulated `life_events` match a **narrativ
 
 ### Divine Events → Life Events
 
-| Existing Function (`divine_era/behavior.rs`) | Life Events Generated |
+| Existing Function (`divine/ (territory.rs, worship.rs, drives.rs, conflict.rs, flaws.rs)`) | Life Events Generated |
 |---|---|
 | `evaluate_worship` — establishment (~line 355) | `GainedFaith` for settlement residents. |
 | `evaluate_worship` — conversion (~line 383) | `FaithShaken`/`LostFaith` (condition-based). `GainedFaith` for converts. |
