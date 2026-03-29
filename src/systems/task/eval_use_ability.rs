@@ -4,11 +4,11 @@ use crate::resources::abilities::{
     AbilityRegistry, AbilitySlots, CastTarget, Mana, Stamina, TargetType,
 };
 use crate::resources::combat_behavior::{CombatBehavior, UseCondition};
-use crate::resources::body::{Body, BodyTemplates};
+use crate::resources::body::{Body, BodyTemplates, Health};
 use crate::resources::casting::validate_cast;
 use crate::resources::combat::{Dead, InCombat};
 use crate::resources::faction::{Faction, FactionRelations};
-use crate::resources::map::GridPosition;
+use crate::resources::map::{GridPosition, TileWorld};
 use crate::resources::status_effects::{ActiveStatusEffects, StatusEffectRegistry};
 use crate::resources::task::{Action, AiBrain, Engaging, Task, TaskEvaluator, TaskSource};
 
@@ -17,6 +17,7 @@ pub fn use_ability(
     ability_registry: Res<AbilityRegistry>,
     body_templates: Res<BodyTemplates>,
     status_registry: Res<StatusEffectRegistry>,
+    tile_world: Res<TileWorld>,
     faction_relations: Res<FactionRelations>,
     mut query: Query<(
         Entity,
@@ -24,6 +25,7 @@ pub fn use_ability(
         &Faction,
         &CombatBehavior,
         &Body,
+        &Health,
         &ActiveStatusEffects,
         &mut AiBrain,
         Option<&Engaging>,
@@ -31,10 +33,10 @@ pub fn use_ability(
         Option<&Mana>,
         Option<&Stamina>,
     )>,
-    potential_targets: Query<(Entity, &GridPosition, &Faction, &Body), (With<InCombat>, Without<Dead>)>,
-    allies: Query<(Entity, &GridPosition, &Faction, &Body), Without<Dead>>,
+    potential_targets: Query<(Entity, &GridPosition, &Faction, &Body, &Health), (With<InCombat>, Without<Dead>)>,
+    allies: Query<(Entity, &GridPosition, &Faction, &Body, &Health), Without<Dead>>,
 ) {
-    for (self_entity, grid_pos, self_faction, behavior, body, status_effects, mut brain, engaging, slots, mana, stamina) in &mut query {
+    for (self_entity, grid_pos, self_faction, behavior, body, health, status_effects, mut brain, engaging, slots, mana, stamina) in &mut query {
         if brain.combat_eval_cooldown != 0 {
             continue;
         }
@@ -64,15 +66,15 @@ pub fn use_ability(
         };
 
         let target_pos = match potential_targets.get(engage_target) {
-            Ok((_, pos, _, _)) => pos,
+            Ok((_, pos, _, _, _)) => pos,
             Err(_) => continue,
         };
 
-        let template = match body_templates.get(&body.template_id) {
+        let _template = match body_templates.get(&body.template_id) {
             Some(t) => t,
             None => continue,
         };
-        let self_hp_fraction = 1.0 - body.pain_level(template);
+        let self_hp_fraction = health.fraction();
 
         let mut priorities = behavior.ability_priorities.clone();
         priorities.sort_by(|a, b| b.priority.cmp(&a.priority));
@@ -85,27 +87,21 @@ pub fn use_ability(
                     potential_targets
                         .get(engage_target)
                         .ok()
-                        .and_then(|(_, _, _, target_body)| {
-                            let t = body_templates.get(&target_body.template_id)?;
-                            Some((1.0 - target_body.pain_level(t)) < *threshold)
-                        })
+                        .map(|(_, _, _, _, target_hp)| target_hp.fraction() < *threshold)
                         .unwrap_or(false)
                 }
                 UseCondition::AllyHpBelow(threshold) => {
-                    allies.iter().any(|(e, _, f, ally_body)| {
+                    allies.iter().any(|(e, _, f, _, ally_hp)| {
                         if e == self_entity || f.0 != self_faction.0 {
                             return false;
                         }
-                        body_templates
-                            .get(&ally_body.template_id)
-                            .map(|t| (1.0 - ally_body.pain_level(t)) < *threshold)
-                            .unwrap_or(false)
+                        ally_hp.fraction() < *threshold
                     })
                 }
                 UseCondition::EnemiesInRange(min_count) => {
                     let count = potential_targets
                         .iter()
-                        .filter(|(e, pos, f, _)| {
+                        .filter(|(e, pos, f, _, _)| {
                             *e != self_entity
                                 && faction_relations.is_hostile(self_faction.0, f.0)
                                 && {
@@ -128,9 +124,10 @@ pub fn use_ability(
             };
 
             let target_pos_tuple = Some((target_pos.x, target_pos.y));
+            let los_data = Some((tile_world.width, tile_world.blocks_los.as_slice()));
             if validate_cast(
                 ability, slots, prio.slot_index, mana_ref, stamina_ref, &cc_flags,
-                (grid_pos.x, grid_pos.y), target_pos_tuple,
+                (grid_pos.x, grid_pos.y), target_pos_tuple, los_data,
             )
             .is_err()
             {
@@ -144,11 +141,10 @@ pub fn use_ability(
                     // Find the most wounded ally (including self) within ability range
                     let best_ally = allies
                         .iter()
-                        .filter(|(_, _, f, _)| f.0 == self_faction.0)
-                        .filter_map(|(e, ally_pos, _, ally_body)| {
-                            let t = body_templates.get(&ally_body.template_id)?;
-                            let pain = ally_body.pain_level(t);
-                            if pain <= 0.0 {
+                        .filter(|(_, _, f, _, _)| f.0 == self_faction.0)
+                        .filter_map(|(e, ally_pos, _, _, ally_hp)| {
+                            let damage = ally_hp.max - ally_hp.current;
+                            if damage <= 0.0 {
                                 return None;
                             }
                             let dx = grid_pos.x as f32 - ally_pos.x as f32;
@@ -157,7 +153,7 @@ pub fn use_ability(
                             if dist > ability.range {
                                 return None;
                             }
-                            Some((e, pain))
+                            Some((e, damage))
                         })
                         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
                     match best_ally {

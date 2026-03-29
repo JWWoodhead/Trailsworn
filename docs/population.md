@@ -243,22 +243,70 @@ Divine events that affect settlement devotion (handled by `CrossDomainEvent` in 
 - [x] Plague pulse: one-time 10-15% population kill, destroys 50% food stockpile, SurvivedPlague events
 - [x] Settlement flags: `at_war` and `plague_this_year` bridge world_events → population sim
 
-### Phase 3: Faith System
-- [ ] Personal faith/devotion on every person (fields exist, not yet evaluated)
-- [ ] Faith gain/loss conditions (deterministic, not random)
-- [ ] FaithShaken as intermediate state
-- [ ] `evaluate_faith_impact()` after cross-domain event application
-- [ ] Divine flaws connect to individual stories
+### Phase 3: Faith System — COMPLETE
+- [x] Polytheistic faith: `faith: Vec<(GodId, u8)>` — relationships with multiple gods
+- [x] Helper methods: `primary_god()`, `devotion_to(god_id)`, `set_devotion(god_id, devotion)`
+- [x] Settlement patronage derived from population: god with highest aggregate devotion among residents becomes patron
+- [x] Faithless people passively adopt settlement patron (community assimilation)
+- [x] Devotion increases: settlement prospering under patron (+3), god has champion (+2)
+- [x] Devotion decreases: suffering while god is powerful (-5), plague under patron (-8), god faded (-10)
+- [x] FaithStrengthened/FaithShaken events at threshold crossings (80/20)
+- [x] ConvertedFaith when low devotion + different patron, AbandonedFaith when god fades
+- [x] Non-patron god devotion drifts down slowly (community pressure)
 
-### Phase 4: Status & Occupation
-- [ ] RoseToProminence / LostPosition tracking
-- [ ] Exile and migration mechanics
-- [ ] Settlement-level roles (head priest, garrison commander)
+### Phase 3b: Causal Events — COMPLETE
+- [x] `EventCause` enum on every event: Divine, PersonAction, Conditions, Faction
+- [x] `DivineAction` enum: FlawTriggered, TempleBuilt, ChampionChosen, ArtifactForged, etc.
+- [x] `cause: Option<EventCause>` on both LifeEvent and HistoricEvent
+- [x] Full causal chain readable from person's life_events in chronological order
 
-### Phase 5: Narrative Grammar Integration
-- [ ] Grammar state machines (Propp, Shakespeare, Dostoevsky)
-- [ ] Notable promotion via grammar entry detection
-- [ ] Characters progress through narrative beats
+### Phase 3c: Person Traits — COMPLETE
+- [x] 28 traits (existing 27 CharacterTrait + new Skeptical), reused from Character system
+- [x] Seeded at birth: 2 traits, 50% chance to inherit each parent trait, rest random
+- [x] Opposing pairs: Brave↔Cowardly, Warlike↔Peaceful, Devout↔Skeptical, etc. (10 pairs)
+- [x] Traits earned deterministically from life events — existing traits determine reaction:
+  - Child death to war + Peaceful parent → becomes Warlike (revenge)
+  - Child death to plague + Devout → loses Devout (faith shaken)
+  - Child death + Ambitious → becomes PowerHungry (channels grief into control)
+  - Survived war (first) → Brave. Survived 2+ wars + Brave → Warlike
+  - Lost family to war + Cruel → becomes Ruthless
+  - Drafted + Peaceful → becomes Cowardly. Drafted + Loyal → becomes Brave
+  - Settlement conquered + Loyal → Ambitious. Conquered + Cunning/Greedy → Treacherous
+  - Abandoned faith → Skeptical
+- [x] Max 5 traits per person
+- [x] Reclusive people don't remarry
+- [x] Promoted Characters inherit earned traits instead of random rolls
+
+### Phase 3d: Death Causes — COMPLETE
+- [x] Contextual death causes replace blanket "OldAge" for non-elderly
+- [x] Age < 5: Illness (infant/child mortality)
+- [x] Women 16-42: 30% chance Childbirth
+- [x] Working age: occupation-based (Miner/Quarrier → 60% Accident, Soldier → 50% Violence, etc.)
+- [x] Age 70+: OldAge (the only legitimate use)
+
+### Phase 3e: Trade — COMPLETE
+- [x] Intra-faction trade: settlements in same faction share surplus, limited by merchant count
+- [x] Allied trade at 50% capacity, treaty trade at 30%
+- [x] Distance-scaled efficiency (Manhattan distance, max range 100 cells)
+- [x] Each Merchant enables 10 units of trade throughput per year
+- [x] TradeRoute struct stored on WorldHistory for future gameplay caravans
+
+### Phase 3f: Happiness & Migration — COMPLETE
+- [x] `happiness: u8` (0-100) on every person, starts at 50
+- [x] Yearly evaluation: prosperity, food, spouse, faith alignment, trait fit vs settlement conditions
+- [x] Positive: prospering (+3), food surplus (+2), spouse (+2), faith aligned (+2), trait fit (+2)
+- [x] Negative: struggling (-5), food deficit (-3), war (-3), child death (-10), spouse death (-8), faith mismatch (-3)
+- [x] Drift toward 50 by 1/year (natural adaptation)
+- [x] Migration: happiness < 20 triggers search for better settlement
+- [x] Family migration: spouse + minor children (<16) move together. Both spouses must be unhappy.
+- [x] Destination scoring: prosperity, food surplus, faith match, trait fit, distance
+- [x] Migrated life event with causal EventCause
+
+### Phase 4: Narrative Grammar
+- [ ] Narrative function detection from life event sequences (see [docs/narrative.md](narrative.md))
+- [ ] Character arc classification (Journey/Descent/Test)
+- [ ] Interpersonal conflict — rivalries, betrayals, power struggles between individuals
+- [ ] Exile as faction/leader decision (distinct from voluntary migration)
 
 ---
 
@@ -266,12 +314,19 @@ Divine events that affect settlement devotion (handled by `CrossDomainEvent` in 
 
 - **Sibling detection**: Parent→children HashMap built once per year. O(n) build, O(1) lookup per death.
 - **Notable cap**: 3 per settlement per 25-year generation. Prevents notable spam.
-- **Person → Character bridge**: `promote_to_character()` creates a new Character with a new global ID. Person stays in population vec. Role derived from occupation.
-- **Occupation distribution**: Terrain-weighted tables in `seed.rs`. Forest = 30% farmer + 25% woodcutter + 15% hunter. Mountain = 25% farmer + 20% miner + 15% quarrier. Cities = diverse mix.
+- **Person → Character bridge**: `promote_to_character()` copies earned traits (not random rolls). Role derived from occupation.
+- **Occupation distribution**: Terrain-weighted tables in `seed.rs`. Forest = 30% farmer + 25% woodcutter + 15% hunter.
+- **Trade**: Merchant-driven, distance-scaled, intra-faction + allied/treaty.
+- **Migration**: Happiness-driven, family-based. Destination scored by conditions + trait/faith fit.
+- **Trait changes**: Deterministic, existing-trait-dependent. No random rolls in trait evaluation.
+- **Faith model**: Polytheistic — people have relationships with multiple gods. Settlement patron derived from population.
+- **Death causes**: Contextual by age and occupation. OldAge only for 70+.
 
 ## Open Questions
 
-- **Trade**: settlements with resource surplus should export to deficit settlements. Needed to fix non-food resource deficits long-term.
 - **Dead person compaction**: Compact dead non-notable people whose children are also dead?
-- **Migration frequency**: Rare (marriage, exile, post-war) to preserve settlement identity?
-- **Villain/narrative roles**: Character roles are currently occupation-based. Narrative roles (villain, tragic hero) need a deeper system.
+- **Interpersonal relationships**: Rivalries, mentors, friendships between specific people
+- **Settlement roles**: Head priest, garrison commander, merchant guild leader
+- **Positive trait triggers**: Currently most trait changes come from negative events. Need positive triggers (acts of courage, leadership, discovery) for Brave, Wise, Charismatic, etc.
+- **Devout/Fanatical earning**: Currently only seeded. Need specific positive divine experiences to earn them.
+- **World stability**: The simulation is too peaceful — most settlements prosper, everyone is happy. Need more sources of conflict for interesting stories to emerge.

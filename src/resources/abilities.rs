@@ -18,6 +18,7 @@ pub enum CastError {
     NotEnoughMana,
     NotEnoughStamina,
     OutOfRange,
+    NoLineOfSight,
     Silenced,
     AbilityNotFound,
 }

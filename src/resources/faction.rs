@@ -52,4 +52,8 @@ impl FactionRelations {
     pub fn is_hostile(&self, a: FactionId, b: FactionId) -> bool {
         self.get(a, b) == Disposition::Hostile
     }
+
+    pub fn is_friendly(&self, a: FactionId, b: FactionId) -> bool {
+        self.get(a, b) == Disposition::Friendly
+    }
 }

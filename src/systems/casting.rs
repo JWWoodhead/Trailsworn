@@ -5,7 +5,7 @@ use crate::resources::abilities::{
     AbilityDef, AbilityEffect, AbilityRegistry, AbilitySlots, CastTarget, CastingState, Mana,
     Stamina, TargetType,
 };
-use crate::resources::body::{Body, BodyTemplates};
+use crate::resources::body::{Body, BodyTemplates, Health};
 use crate::resources::casting::{calculate_ability_damage, calculate_ability_heal, AoeParams, resolve_aoe_targets};
 use crate::resources::combat::{apply_damage, resolve_hit};
 use crate::resources::damage::EquippedArmor;
@@ -83,6 +83,7 @@ pub fn begin_cast(
         &EquippedArmor,
         &mut ActiveStatusEffects,
         &mut ThreatTable,
+        &mut Health,
     )>,
     names: Query<&EntityName>,
 ) {
@@ -173,6 +174,7 @@ pub fn tick_casting(
         &EquippedArmor,
         &mut ActiveStatusEffects,
         &mut ThreatTable,
+        &mut Health,
     )>,
 ) {
     if game_time.ticks_this_frame == 0 {
@@ -265,6 +267,7 @@ fn resolve_ability_effects(
         &EquippedArmor,
         &mut ActiveStatusEffects,
         &mut ThreatTable,
+        &mut Health,
     )>,
 ) {
     let target_entities = resolve_cast_targets(caster_entity, ability, cast_target, caster_pos, targets);
@@ -288,7 +291,7 @@ fn resolve_ability_effects(
                         continue;
                     }
 
-                    if let Ok((_, _, mut body, armor, _, mut threat_table)) =
+                    if let Ok((_, _, mut body, armor, _, mut threat_table, mut health)) =
                         targets.get_mut(target_entity)
                     {
                         let template = match body_templates.get(&body.template_id) {
@@ -323,6 +326,7 @@ fn resolve_ability_effects(
                                 });
 
                                 threat_table.add_threat(caster_entity, result.damage_dealt);
+                                health.take_damage(result.damage_dealt);
                             }
                             crate::resources::combat::HitResult::Miss => {}
                         }
@@ -334,12 +338,13 @@ fn resolve_ability_effects(
                         continue;
                     }
 
-                    if let Ok((_, _, mut body, _, _, _)) = targets.get_mut(target_entity) {
+                    if let Ok((_, _, mut body, _, _, _, mut health)) = targets.get_mut(target_entity) {
                         let template = match body_templates.get(&body.template_id) {
                             Some(t) => t,
                             None => continue,
                         };
                         let actual = body.heal_distributed(heal_amount, template);
+                        health.heal(heal_amount);
                         if actual > 0.0 {
                             heal_events.write(HealEvent {
                                 healer: caster_entity,
@@ -359,13 +364,13 @@ fn resolve_ability_effects(
                     let mut rng = rand::rng();
                     let roll: f32 = rng.random();
                     if roll < *chance {
-                        if let Ok((_, _, _, _, mut effects, _)) = targets.get_mut(target_entity) {
+                        if let Ok((_, _, _, _, mut effects, _, _)) = targets.get_mut(target_entity) {
                             effects.apply(*status_id, *duration_ticks, Some(caster_entity), status_registry);
                         }
                     }
                 }
                 AbilityEffect::GenerateThreat { amount } => {
-                    if let Ok((_, _, _, _, _, mut threat_table)) = targets.get_mut(target_entity) {
+                    if let Ok((_, _, _, _, _, mut threat_table, _)) = targets.get_mut(target_entity) {
                         threat_table.add_threat(caster_entity, *amount);
                     }
                 }
@@ -390,6 +395,7 @@ fn resolve_cast_targets(
         &EquippedArmor,
         &mut ActiveStatusEffects,
         &mut ThreatTable,
+        &mut Health,
     )>,
 ) -> Vec<Entity> {
     match &ability.target_type {
@@ -404,7 +410,7 @@ fn resolve_cast_targets(
             let target_pos = match cast_target {
                 CastTarget::Position { x, y } => (*x, *y),
                 CastTarget::Entity(e) => {
-                    if let Ok((_, pos, _, _, _, _)) = targets.get(*e) {
+                    if let Ok((_, pos, _, _, _, _, _)) = targets.get(*e) {
                         (pos.x as f32, pos.y as f32)
                     } else {
                         return Vec::new();
@@ -421,7 +427,7 @@ fn resolve_cast_targets(
             let mut candidate_entities: Vec<Entity> = Vec::new();
             let mut candidate_positions: Vec<(f32, f32)> = Vec::new();
 
-            for (entity, pos, _, _, _, _) in targets.iter() {
+            for (entity, pos, _, _, _, _, _) in targets.iter() {
                 candidate_entities.push(entity);
                 candidate_positions.push((pos.x as f32, pos.y as f32));
             }
@@ -461,6 +467,7 @@ fn resolve_impact_position(
         &EquippedArmor,
         &mut ActiveStatusEffects,
         &mut ThreatTable,
+        &mut Health,
     )>,
 ) -> (f32, f32) {
     match cast_target {
@@ -468,7 +475,7 @@ fn resolve_impact_position(
         CastTarget::Position { x, y } => (*x, *y),
         CastTarget::Direction { dx, dy } => (caster_pos.x as f32 + dx, caster_pos.y as f32 + dy),
         CastTarget::Entity(e) => {
-            if let Ok((_, pos, _, _, _, _)) = targets.get(*e) {
+            if let Ok((_, pos, _, _, _, _, _)) = targets.get(*e) {
                 (pos.x as f32, pos.y as f32)
             } else {
                 (caster_pos.x as f32, caster_pos.y as f32)

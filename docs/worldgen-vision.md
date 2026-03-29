@@ -171,15 +171,23 @@ A Cruel nature god teaches agriculture through survival-of-the-fittest. A Wise n
 - [x] Plague hooks — condition-driven (overcrowding, famine, war), one-time population kill pulse
 - [x] Famine system — food deficit kills infants/elderly, occupation rebalancing prevents spirals
 - [x] Notable promotion — eventful people become Characters (capped per settlement per generation)
+- [x] Polytheistic faith — people have relationships with multiple gods, settlement patron derived from population
+- [x] Causal events — every event carries `EventCause`, full narrative chain from life_events chronology
+- [x] Person traits — 28 traits seeded at birth (2), earned deterministically from life events, opposing pairs
+- [x] Contextual death causes — Illness/Accident/Childbirth/Violence by age and occupation, OldAge only for 70+
+- [x] Trade — merchant-driven resource sharing, distance-scaled, intra-faction + allied/treaty
+- [x] Happiness & migration — happiness from conditions/traits/faith, unhappy families migrate to better settlements
+- [x] God seats of power on cities/towns — fixes god fade before worship could be established
+- [x] Narrative function reference — 39 functions from Propp/Shakespeare/Dostoevsky (see [docs/narrative.md](narrative.md))
 
 ### Planned
 - [ ] God influence modifiers on mortal event evaluation (holy war, divine intervention, schisms)
 - [ ] Patron god → faction culture pipeline (doctrine → values/taboos)
-- [ ] Narrative grammar state machines (Propp/Shakespeare/Dostoevsky)
-- [ ] Personal faith system (faith gain/loss conditions, FaithShaken, divine flaws → individual stories)
-- [ ] Trade between settlements (surplus/deficit matching, trade routes)
-- [ ] Migration (marriage, exile, post-war displacement)
-- [ ] World map borders, trade routes
+- [ ] Narrative function detection from life event sequences
+- [ ] Interpersonal conflict — rivalries, betrayals, power struggles between individuals
+- [ ] Positive trait triggers — acts of courage, leadership, discovery (currently most triggers are negative)
+- [ ] Exile as faction decision (distinct from voluntary migration)
+- [ ] World map borders, trade routes (visual)
 - [ ] Ruins/sites from divine history visible in gameplay zones
 - [ ] Lore delivery (texts, NPC knowledge, environmental storytelling)
 - [ ] Quest generation tied to divine history

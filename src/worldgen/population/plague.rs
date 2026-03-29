@@ -40,6 +40,7 @@ pub fn apply_plague(
     let mut dead_ids = Vec::new();
     for &(idx, _) in victims.iter().take(kill_count) {
         people[idx].death_year = Some(year);
+        people[idx].death_cause = Some(DeathCause::Plague);
         dead_ids.push(people[idx].id);
     }
 

@@ -1,3 +1,5 @@
+use crate::pathfinding::has_line_of_sight;
+
 use super::abilities::{AbilityDef, AbilityEffect, AbilitySlots, CastError, Mana, Stamina, StatScaling, TargetType};
 use super::stats::{AttributeChoice, Attributes};
 use super::status_effects::CcFlags;
@@ -12,6 +14,7 @@ pub fn validate_cast(
     cc_flags: &CcFlags,
     caster_pos: (u32, u32),
     target_pos: Option<(u32, u32)>,
+    los_data: Option<(u32, &[bool])>,
 ) -> Result<(), CastError> {
     // Slot must be valid and contain this ability
     if slot_index >= slots.abilities.len() || slots.abilities[slot_index] != ability.id {
@@ -44,6 +47,15 @@ pub fn validate_cast(
             let dist = (dx * dx + dy * dy).sqrt();
             if dist > ability.range {
                 return Err(CastError::OutOfRange);
+            }
+
+            // LOS check for ranged abilities (range > 2.0)
+            if ability.range > 2.0 {
+                if let Some((width, blocks_los)) = los_data {
+                    if !has_line_of_sight(caster_pos, target, width, blocks_los) {
+                        return Err(CastError::NoLineOfSight);
+                    }
+                }
             }
         }
     }
@@ -230,7 +242,7 @@ mod tests {
         let slots = AbilitySlots::new(vec![1]);
         let mana = Mana::new(100.0);
         let stamina = Stamina::new(100.0);
-        let result = validate_cast(&ability, &slots, 0, &mana, &stamina, &default_cc(), (0, 0), Some((3, 4)));
+        let result = validate_cast(&ability, &slots, 0, &mana, &stamina, &default_cc(), (0, 0), Some((3, 4)), None);
         assert!(result.is_ok());
     }
 
@@ -238,7 +250,7 @@ mod tests {
     fn validate_cast_rejects_invalid_slot() {
         let ability = test_ability(1, 0, 0, 5.0, TargetType::SelfOnly);
         let slots = AbilitySlots::new(vec![1]);
-        let result = validate_cast(&ability, &slots, 5, &Mana::new(100.0), &Stamina::new(100.0), &default_cc(), (0, 0), None);
+        let result = validate_cast(&ability, &slots, 5, &Mana::new(100.0), &Stamina::new(100.0), &default_cc(), (0, 0), None, None);
         assert_eq!(result, Err(CastError::InvalidSlot));
     }
 
@@ -247,21 +259,21 @@ mod tests {
         let ability = test_ability(1, 0, 0, 5.0, TargetType::SelfOnly);
         let mut slots = AbilitySlots::new(vec![1]);
         slots.start_cooldown(0, 30);
-        let result = validate_cast(&ability, &slots, 0, &Mana::new(100.0), &Stamina::new(100.0), &default_cc(), (0, 0), None);
+        let result = validate_cast(&ability, &slots, 0, &Mana::new(100.0), &Stamina::new(100.0), &default_cc(), (0, 0), None, None);
         assert_eq!(result, Err(CastError::OnCooldown));
     }
 
     #[test]
     fn validate_cast_rejects_insufficient_mana() {
         let ability = test_ability(1, 50, 0, 5.0, TargetType::SelfOnly);
-        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(10.0), &Stamina::new(100.0), &default_cc(), (0, 0), None);
+        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(10.0), &Stamina::new(100.0), &default_cc(), (0, 0), None, None);
         assert_eq!(result, Err(CastError::NotEnoughMana));
     }
 
     #[test]
     fn validate_cast_rejects_insufficient_stamina() {
         let ability = test_ability(1, 0, 50, 5.0, TargetType::SelfOnly);
-        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(100.0), &Stamina::new(10.0), &default_cc(), (0, 0), None);
+        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(100.0), &Stamina::new(10.0), &default_cc(), (0, 0), None, None);
         assert_eq!(result, Err(CastError::NotEnoughStamina));
     }
 
@@ -269,7 +281,7 @@ mod tests {
     fn validate_cast_rejects_silenced() {
         let ability = test_ability(1, 0, 0, 5.0, TargetType::SelfOnly);
         let cc = CcFlags { silenced: true, ..Default::default() };
-        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(100.0), &Stamina::new(100.0), &cc, (0, 0), None);
+        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(100.0), &Stamina::new(100.0), &cc, (0, 0), None, None);
         assert_eq!(result, Err(CastError::Silenced));
     }
 
@@ -277,7 +289,7 @@ mod tests {
     fn validate_cast_rejects_out_of_range() {
         let ability = test_ability(1, 0, 0, 3.0, TargetType::SingleEnemy);
         // Distance: sqrt(10^2 + 10^2) = ~14.1, way beyond range 3.0
-        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(100.0), &Stamina::new(100.0), &default_cc(), (0, 0), Some((10, 10)));
+        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(100.0), &Stamina::new(100.0), &default_cc(), (0, 0), Some((10, 10)), None);
         assert_eq!(result, Err(CastError::OutOfRange));
     }
 
@@ -285,7 +297,7 @@ mod tests {
     fn validate_cast_self_only_skips_range() {
         let ability = test_ability(1, 0, 0, 0.0, TargetType::SelfOnly);
         // Range is 0 but SelfOnly skips range check
-        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(100.0), &Stamina::new(100.0), &default_cc(), (0, 0), None);
+        let result = validate_cast(&ability, &AbilitySlots::new(vec![1]), 0, &Mana::new(100.0), &Stamina::new(100.0), &default_cc(), (0, 0), None, None);
         assert!(result.is_ok());
     }
 

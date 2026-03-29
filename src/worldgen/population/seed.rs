@@ -5,6 +5,8 @@ use rand::{Rng, RngExt};
 use crate::worldgen::history::state::{PopulationClass, SettlementState};
 use crate::worldgen::zone::ZoneType;
 
+use crate::worldgen::names::Race;
+
 use super::types::{Occupation, Person, Sex};
 
 /// Convert PopulationClass to an approximate headcount.
@@ -13,8 +15,7 @@ fn headcount(class: PopulationClass) -> u32 {
         PopulationClass::Hamlet => 30,
         PopulationClass::Village => 120,
         PopulationClass::Town => 500,
-        PopulationClass::City => 2000,
-        PopulationClass::Capital => 5000,
+        PopulationClass::City => 3000,
     }
 }
 
@@ -108,6 +109,7 @@ pub fn occupation_for_terrain(zone_type: Option<ZoneType>, rng: &mut impl Rng) -
 /// Returns `(people, next_person_id)`.
 pub fn seed_population(
     settlements: &[SettlementState],
+    factions: &[crate::worldgen::history::state::FactionState],
     start_year: i32,
     rng: &mut impl Rng,
 ) -> (Vec<Person>, u32) {
@@ -135,13 +137,20 @@ pub fn seed_population(
                 id: next_id,
                 birth_year: start_year - age,
                 death_year: None,
+                death_cause: None,
                 settlement_id: settlement.id,
                 sex,
+                race: factions.iter()
+                    .find(|f| f.id == settlement.owner_faction)
+                    .map(|f| f.race)
+                    .unwrap_or(Race::Human),
+                secondary_race: None,
                 mother: None,
                 father: None,
                 spouse: None,
                 occupation: occupation_for_terrain(settlement.zone_type, rng),
                 traits: super::traits::seed_traits(None, None, rng),
+                happiness: 50, prophet_of: None, years_as_outlier: 0,
                 faith: settlement.patron_god
                     .map(|g| vec![(g, rng.random_range(30..=70))])
                     .unwrap_or_default(),

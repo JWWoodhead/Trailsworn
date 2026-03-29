@@ -147,6 +147,12 @@ pub fn update_stockpile(
     stockpile.leather += production.leather - consumption.leather;
     stockpile.stone += production.stone - consumption.stone;
 
+    // Clamp non-food resources to 0 (food can go negative to trigger famine)
+    stockpile.timber = stockpile.timber.max(0);
+    stockpile.ore = stockpile.ore.max(0);
+    stockpile.leather = stockpile.leather.max(0);
+    stockpile.stone = stockpile.stone.max(0);
+
     cap_stockpile(stockpile, living_count);
 
     // Return famine deficit

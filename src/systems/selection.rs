@@ -8,10 +8,12 @@ use crate::resources::casting::validate_cast;
 use crate::resources::damage::EquippedWeapon;
 use crate::resources::faction::{Faction, FactionRelations};
 use crate::resources::input::{Action, ActionState};
-use crate::resources::map::{CursorPosition, GridPosition, MapSettings, TileWorld, render_layers};
+use crate::resources::map::{CursorPosition, GridPosition, MapSettings, TileWorld};
+use crate::resources::movement::MovePath;
 use crate::resources::selection::{DragSelection, Selected, TargetingMode};
 use crate::resources::status_effects::{ActiveStatusEffects, StatusEffectRegistry};
-use crate::resources::task::{self, CurrentTask, Engaging, Task, TaskSource};
+use crate::resources::task::{self, CurrentTask, Task, TaskSource};
+use crate::resources::task::Engaging;
 use crate::systems::camera::MainCamera;
 use crate::systems::spawning::PlayerControlled;
 
@@ -203,7 +205,7 @@ pub fn right_click_command(
         (Entity, &Faction, &EquippedWeapon),
         With<Selected>,
     >,
-    target_query: Query<(Entity, &GridPosition, &Faction), Without<PlayerControlled>>,
+    target_query: Query<(Entity, &GridPosition, &Faction), (Without<PlayerControlled>, Without<crate::resources::combat::Dead>)>,
     ui_interactions: Query<&Interaction, With<Node>>,
 ) {
     if !actions.just_pressed(Action::Command) {
@@ -225,12 +227,12 @@ pub fn right_click_command(
 
     let target_tile = (tile_x as u32, tile_y as u32);
 
-    // Check if there's a hostile entity at the clicked tile
+    // Check if there's an attackable (non-friendly) entity at the clicked tile
     let mut hostile_target = None;
     for (target_entity, target_pos, target_faction) in &target_query {
         if target_pos.x as i32 == tile_x && target_pos.y as i32 == tile_y {
             for (_, selected_faction, _) in &selected_query {
-                if faction_relations.is_hostile(selected_faction.0, target_faction.0) {
+                if !faction_relations.is_friendly(selected_faction.0, target_faction.0) {
                     hostile_target = Some(target_entity);
                     break;
                 }
@@ -326,7 +328,7 @@ pub fn update_selection_visuals(
                     custom_size: Some(Vec2::new(60.0, 60.0)),
                     ..default()
                 },
-                Transform::from_translation(Vec3::new(0.0, 0.0, render_layers::ENTITIES - 0.1)),
+                Transform::from_translation(Vec3::new(0.0, 0.0, -0.01)),
                 SelectionRing { owner: entity },
             ))
             .id();
@@ -428,7 +430,7 @@ pub fn ability_input(
 
             // Validate cast prerequisites (cooldown, resources, CC)
             let cc_flags = status_effects.combined_cc_flags(&status_registry);
-            if validate_cast(ability, slots, slot_index, mana, stamina, &cc_flags, (0, 0), None).is_err() {
+            if validate_cast(ability, slots, slot_index, mana, stamina, &cc_flags, (0, 0), None, None).is_err() {
                 continue;
             }
 
@@ -486,6 +488,95 @@ pub fn ability_input(
         }
 
         break; // Only process one ability key per frame
+    }
+}
+
+/// Select a party member by index using F1-F4 hotkeys.
+pub fn party_hotkey_select(
+    actions: Res<ActionState>,
+    mut commands: Commands,
+    currently_selected: Query<Entity, With<Selected>>,
+    party_members: Query<Entity, (With<PlayerControlled>, Without<crate::resources::combat::Dead>)>,
+) {
+    let hotkeys = [
+        Action::SelectPartyMember1,
+        Action::SelectPartyMember2,
+        Action::SelectPartyMember3,
+        Action::SelectPartyMember4,
+    ];
+
+    let mut target_index = None;
+    for (i, action) in hotkeys.iter().enumerate() {
+        if actions.just_pressed(*action) {
+            target_index = Some(i);
+            break;
+        }
+    }
+    let Some(idx) = target_index else { return };
+
+    // Get the Nth party member (iteration order is deterministic per spawn order)
+    let Some(target_entity) = party_members.iter().nth(idx) else { return };
+
+    // Deselect all, select target
+    for entity in &currently_selected {
+        commands.entity(entity).remove::<Selected>();
+    }
+    commands.entity(target_entity).insert(Selected);
+}
+
+/// Draw a line from each selected entity to its engage target.
+pub fn draw_engage_lines(
+    mut gizmos: Gizmos,
+    time: Res<Time>,
+    selected: Query<(&Transform, &Engaging), With<Selected>>,
+    targets: Query<&Transform, Without<Selected>>,
+) {
+    let pulse = 0.3 + 0.2 * (time.elapsed_secs() * 4.0).sin();
+    let color = Color::srgba(1.0, 0.3, 0.2, pulse);
+
+    for (attacker_tf, engaging) in &selected {
+        let Ok(target_tf) = targets.get(engaging.target) else { continue };
+        let a = attacker_tf.translation.truncate();
+        let b = target_tf.translation.truncate();
+        gizmos.line_2d(a, b, color);
+
+        // Small crosshair on the target
+        let s = 6.0;
+        gizmos.line_2d(b + Vec2::new(-s, 0.0), b + Vec2::new(s, 0.0), color);
+        gizmos.line_2d(b + Vec2::new(0.0, -s), b + Vec2::new(0.0, s), color);
+    }
+}
+
+/// Draw movement path lines and destination circles for selected entities.
+pub fn draw_move_preview(
+    map_settings: Res<MapSettings>,
+    time: Res<Time>,
+    mut gizmos: Gizmos,
+    query: Query<(&GridPosition, &MovePath, &Sprite), With<Selected>>,
+) {
+    let ts = map_settings.tile_size;
+    let line_color = Color::srgba(1.0, 1.0, 1.0, 0.15);
+
+    // Pulsing alpha for destination circle
+    let pulse = 0.2 + 0.15 * (time.elapsed_secs() * 3.0).sin();
+
+    for (grid_pos, path, sprite) in &query {
+        // Draw path line from current position to each waypoint
+        let mut prev = grid_pos.to_world(ts);
+        for i in (path.current_index + 1)..path.waypoints.len() {
+            let wp = path.waypoints[i];
+            let next = Vec2::new(wp.0 as f32 * ts, wp.1 as f32 * ts);
+            gizmos.line_2d(prev, next, line_color);
+            prev = next;
+        }
+
+        // Draw pulsing circle at destination using the entity's tint color
+        if let Some(dest) = path.destination() {
+            let dest_pos = Vec2::new(dest.0 as f32 * ts, dest.1 as f32 * ts);
+            let base_color = sprite.color.to_srgba();
+            let circle_color = Color::srgba(base_color.red, base_color.green, base_color.blue, pulse);
+            gizmos.circle_2d(Isometry2d::from_translation(dest_pos), ts * 0.4, circle_color);
+        }
     }
 }
 

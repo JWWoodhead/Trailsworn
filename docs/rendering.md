@@ -44,7 +44,7 @@ Textures tile seamlessly across the map: `world_uv = (world_tile + local_uv) / t
 Tile coordinates are derived from `in.world_position.xy / tile_size`. World Y increases northward/upward. `local_uv = fract(world_pos / tile_size)` where `local_uv.y = 0` is the **bottom** of the tile. Vertical neighbor offset matches world Y: `v_offset = (0, v_dir)`.
 
 ## Y-sorted Depth Ordering
-`sync_transforms` computes z from y-position: `z = base_layer + (1.0 - world_y / map_height_px) * 0.999`. Entities lower on screen (south) render in front of entities higher on screen (north).
+`sync_transforms` computes z from y-position: `z = base_layer + (1.0 - world_y / map_height_px) * 0.999`. Entities lower on screen (south) render in front of entities higher on screen (north). Terrain features and entities share the same `WORLD_OBJECTS` base layer so they interleave properly — characters walking north of a tree render behind it.
 
 ## TerrainMaterial (`resources/terrain_material.rs`)
 Bind group 2 (Material2d convention):
@@ -74,13 +74,12 @@ Bind group 2 (Material2d convention):
 
 ## Render Layers (`resources/map.rs`)
 ```
-TERRAIN: 0.0          — terrain quad
-TERRAIN_OVERLAY: 0.5  — (reserved)
-TERRAIN_FEATURES: 1.0 — y-sorted terrain feature sprites (trees, rocks, bushes)
-FLOOR_ITEMS: 2.0      — dropped items
-ENTITIES: 3.0-3.999   — y-sorted characters
-PROJECTILES: 4.0
-UI_OVERLAY: 5.0
+TERRAIN: 0.0          — terrain quad (shader-rendered)
+TERRAIN_OVERLAY: 0.5  — blend overlays
+FLOOR_ITEMS: 0.9      — corpses, ground loot (below living things)
+WORLD_OBJECTS: 1.0    — features AND entities, y-sorted together
+PROJECTILES: 4.0      — cosmetic arrows/spell bolts
+UI_OVERLAY: 5.0       — health bars, cast bars, floating text
 ```
 
 ## Pathfinding (`pathfinding/`)
@@ -93,6 +92,12 @@ Ported from Metropolis project. Pure algorithms, no Bevy.
 - Per-tile walk cost (0.0 = impassable, >0 = multiplier)
 - Expansion limit (5000 default)
 - Bounded variant for HPA* intra-cluster paths
+
+### Line of Sight (`los.rs`):
+- Bresenham line algorithm, excludes start and end tiles
+- `has_line_of_sight(from, to, width, blocks_los) -> bool`
+- Used by `auto_attack` (ranged weapons only) and `validate_cast` (ranged abilities, range > 2.0)
+- `TileWorld.blocks_los` populated from: mountain terrain, cave walls, features with `blocks_los: true` (currently only large boulders)
 
 ### HPA* (`hpa.rs`):
 - Hierarchical Pathfinding A* with configurable cluster size (default 10)

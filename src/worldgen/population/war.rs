@@ -8,10 +8,10 @@ use super::index::SettlementIndex;
 use super::types::*;
 
 /// Per-soldier combat effectiveness score.
-pub fn combat_score(person: &Person, settlement: &SettlementState) -> f32 {
+pub fn combat_score(person: &Person, settlement: &SettlementState, year: i32) -> f32 {
     if person.occupation != Occupation::Soldier { return 0.0; }
 
-    let age = person.age(0); // placeholder — caller should use current year
+    let age = person.age(year);
     combat_score_at_age(person, age, settlement)
 }
 
@@ -135,6 +135,7 @@ pub fn apply_war_effects(
     let casualties = ((soldiers.len() as f32 * 0.03).ceil() as usize).max(if soldiers.is_empty() { 0 } else { 1 });
     for &(idx, _) in soldiers.iter().take(casualties) {
         people[idx].death_year = Some(year);
+        people[idx].death_cause = Some(DeathCause::War);
         dead_ids.push(people[idx].id);
     }
 

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::pathfinding::astar_tile_grid;
+use crate::resources::combat::Dead;
 use crate::resources::movement::RepathTimer;
 use crate::resources::game_time::{GameTime, TICK_DURATION};
 use crate::resources::map::{GridPosition, MapSettings, TileWorld};
@@ -12,7 +13,7 @@ pub fn movement(
     mut commands: Commands,
     game_time: Res<GameTime>,
     tile_world: Res<TileWorld>,
-    mut query: Query<(Entity, &mut MovePath, &mut GridPosition, &MovementSpeed, &mut FacingDirection, Option<&PendingPath>)>,
+    mut query: Query<(Entity, &mut MovePath, &mut GridPosition, &MovementSpeed, &mut FacingDirection, Option<&PendingPath>), Without<Dead>>,
 ) {
     let ticks = game_time.ticks_this_frame;
     if ticks == 0 {
@@ -122,7 +123,7 @@ pub fn sync_transforms(
         transform.translation.x = pos.x;
         transform.translation.y = pos.y;
         transform.translation.z = crate::resources::map::render_layers::y_sorted_z(
-            pos.y, map_height_px, crate::resources::map::render_layers::ENTITIES,
+            pos.y, map_height_px, crate::resources::map::render_layers::WORLD_OBJECTS,
         );
     }
 }

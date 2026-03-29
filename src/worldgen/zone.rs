@@ -468,8 +468,6 @@ fn scatter_features(
     let place_prob = (target_density as f64 / candidates as f64).min(1.0);
 
     let mut features = Vec::with_capacity(target_density as usize);
-    let mut blocking_count = 0u32;
-    let max_blocking = target_density / 10; // Cap blocking features at ~10%
 
     for gy in (margin..(h - margin)).step_by(stride as usize) {
         for gx in (margin..(w - margin)).step_by(stride as usize) {
@@ -530,11 +528,6 @@ fn scatter_features(
 
             let Some(def) = registry.get(selected_id) else { continue };
 
-            // Cap blocking features
-            if def.blocks_movement && blocking_count >= max_blocking {
-                continue;
-            }
-
             // Don't block a tile if it would isolate neighbors
             if def.blocks_movement {
                 let mut walkable_neighbors = 0u32;
@@ -551,7 +544,6 @@ fn scatter_features(
                 if walkable_neighbors < 3 {
                     continue;
                 }
-                blocking_count += 1;
             }
 
             // Apply blocking effects to tile_world

@@ -20,6 +20,7 @@ use crate::resources::items::{Equipment, EquipSlot, ItemInstanceRegistry, ItemRe
 use crate::resources::map::{GridPosition, MapSettings, TerrainFeatureEntity, render_layers};
 use crate::resources::movement::{FacingDirection, MovementSpeed, PathOffset};
 use crate::resources::stats::{Attributes, CharacterLevel};
+use crate::resources::body::Health;
 use crate::resources::status_effects::ActiveStatusEffects;
 use crate::resources::threat::ThreatTable;
 use crate::resources::world::{CurrentZone, EntryEdge, ZoneTransitionEvent};
@@ -61,9 +62,9 @@ pub fn spawn_starting_zone(
     // Spawn features
     for feature in &data.features {
         let Some(def) = feature_registry.get(feature.kind) else { continue };
-        let world_x = feature.x as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
-        let world_y = feature.y as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
-        let z = render_layers::y_sorted_z(world_y, map_height_px, render_layers::TERRAIN_FEATURES);
+        let world_x = feature.x as f32 * map_settings.tile_size;
+        let world_y = feature.y as f32 * map_settings.tile_size;
+        let z = render_layers::y_sorted_z(world_y, map_height_px, render_layers::WORLD_OBJECTS);
 
         let (image, color, custom_size, y_offset) = if let Some(sprite_path) = def.sprite {
             let size = map_settings.tile_size * def.scale;
@@ -113,8 +114,8 @@ pub fn spawn_starting_zone(
                 spawn_index += creature_count;
             }
             PoiKind::CaveEntrance => {
-                let world_x = poi.x as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
-                let world_y = poi.y as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+                let world_x = poi.x as f32 * map_settings.tile_size;
+                let world_y = poi.y as f32 * map_settings.tile_size;
                 commands.spawn((
                     Name::new("Cave Entrance"), ZoneEntity, DespawnOnExit(GameState::Playing),
                     Sprite {
@@ -122,7 +123,10 @@ pub fn spawn_starting_zone(
                         custom_size: Some(Vec2::new(map_settings.tile_size * 2.0, map_settings.tile_size * 2.0)),
                         ..default()
                     },
-                    Transform::from_translation(Vec3::new(world_x, world_y, render_layers::TERRAIN_FEATURES)),
+                    Transform::from_translation(Vec3::new(
+                        world_x, world_y,
+                        render_layers::y_sorted_z(world_y, map_height_px, render_layers::WORLD_OBJECTS),
+                    )),
                     GridPosition::new(poi.x, poi.y),
                 ));
             }
@@ -274,9 +278,9 @@ pub fn handle_zone_transition(
     let map_height_px = map_settings.height as f32 * map_settings.tile_size;
     for feature in &zone_data.features {
         let Some(def) = feature_registry.get(feature.kind) else { continue };
-        let world_x = feature.x as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
-        let world_y = feature.y as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
-        let z = render_layers::y_sorted_z(world_y, map_height_px, render_layers::TERRAIN_FEATURES);
+        let world_x = feature.x as f32 * map_settings.tile_size;
+        let world_y = feature.y as f32 * map_settings.tile_size;
+        let z = render_layers::y_sorted_z(world_y, map_height_px, render_layers::WORLD_OBJECTS);
 
         let (image, color, custom_size, y_offset) = if let Some(sprite_path) = def.sprite {
             let size = map_settings.tile_size * def.scale;
@@ -345,8 +349,8 @@ pub fn handle_zone_transition(
                 spawn_index += creature_count;
             }
             PoiKind::CaveEntrance => {
-                let world_x = poi.x as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
-                let world_y = poi.y as f32 * map_settings.tile_size + map_settings.tile_size * 0.5;
+                let world_x = poi.x as f32 * map_settings.tile_size;
+                let world_y = poi.y as f32 * map_settings.tile_size;
                 commands.spawn((
                     Name::new("Cave Entrance"),
                     ZoneEntity,
@@ -363,7 +367,7 @@ pub fn handle_zone_transition(
                     Transform::from_translation(Vec3::new(
                         world_x,
                         world_y,
-                        render_layers::TERRAIN_FEATURES,
+                        render_layers::y_sorted_z(world_y, map_height_px, render_layers::WORLD_OBJECTS),
                     )),
                     GridPosition::new(poi.x, poi.y),
                 ));
@@ -536,6 +540,7 @@ pub fn spawn_enemy_camp(
         // Set ability_priorities on the behavior (couldn't pass through constructor due to borrow)
         let mut behavior = behavior;
         behavior.ability_priorities = ability_priorities;
+        let max_hp = 50.0 + attributes.toughness as f32 * 10.0;
 
         // Weapon instance: reuse from snapshot or create fresh
         let weapon_instance_id = if let Some(entity_snap) = alive_override {
@@ -608,7 +613,7 @@ pub fn spawn_enemy_camp(
             Transform::from_translation(Vec3::new(
                 world_pos.x,
                 world_pos.y,
-                render_layers::ENTITIES,
+                render_layers::WORLD_OBJECTS,
             )),
             grid_pos,
             MovementSpeed::default(),
@@ -628,6 +633,7 @@ pub fn spawn_enemy_camp(
             mana,
             stamina,
             ActiveStatusEffects::default(),
+            Health::new(max_hp),
             ThreatTable::default(),
             crate::resources::abilities::AbilitySlots::new(abilities),
         ));
@@ -701,6 +707,7 @@ fn spawn_wildlife_group(
         // Wildlife: basic melee, no special abilities, high flee threshold
         let weapon_item_id = ITEM_KNOBWOOD_CLUB; // placeholder "claws/bite"
         let attributes = Attributes { strength: 5, agility: 5, toughness: 4, ..Default::default() };
+        let wildlife_max_hp = 50.0 + attributes.toughness as f32 * 10.0;
         let mut behavior = CombatBehavior::melee_enemy(vec![]);
         behavior.flee_hp_threshold = 0.40; // Wildlife flees sooner
 
@@ -768,7 +775,7 @@ fn spawn_wildlife_group(
             Transform::from_translation(Vec3::new(
                 world_pos.x,
                 world_pos.y,
-                render_layers::ENTITIES,
+                render_layers::WORLD_OBJECTS,
             )),
             grid_pos,
             MovementSpeed::default(),
@@ -788,6 +795,7 @@ fn spawn_wildlife_group(
             mana,
             stamina,
             ActiveStatusEffects::default(),
+            Health::new(wildlife_max_hp),
             ThreatTable::default(),
             crate::resources::abilities::AbilitySlots::new(vec![]),
         ));

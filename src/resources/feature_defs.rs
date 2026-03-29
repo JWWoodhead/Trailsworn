@@ -155,7 +155,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // ---- Grassland ----
     reg.register(FeatureDef {
         id: FEATURE_BOULDER_SMALL, name: "Fieldstone",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.50, 0.50, 0.48, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Grassland, 10)],
@@ -171,7 +171,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_BUSH, name: "Hedge Bush",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.30, 0.50, 0.25, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Grassland, 20)],
@@ -179,7 +179,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_LONE_TREE, name: "Lone Tree",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.30, 0.55, 0.20, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Grassland, 15)],
@@ -187,7 +187,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_TALL_GRASS, name: "Tall Grass",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.45, 0.60, 0.30, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Grassland, 30)],
@@ -195,7 +195,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_WILDFLOWERS, name: "Wildflowers",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.60, 0.50, 0.70, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Grassland, 20)],
@@ -206,7 +206,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // Big trees
     reg.register(FeatureDef {
         id: FEATURE_OAK_TREE, name: "Oak Tree",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.20, 0.50, 0.15, 1.0],
         sprite: Some("features/scenery1.png"), scale: 1.5,
         biome_weights: &[(Forest, 18)],
@@ -214,7 +214,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_PINE_TREE, name: "Pine Tree",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.15, 0.40, 0.15, 1.0],
         sprite: Some("features/scenery2.png"), scale: 1.5,
         biome_weights: &[(Forest, 14)],
@@ -223,7 +223,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // Small trees
     reg.register(FeatureDef {
         id: FEATURE_FOREST_SMALL_TREE_A, name: "Small Tree",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.25, 0.48, 0.18, 1.0],
         sprite: Some("features/scenery26.png"), scale: 1.0,
         biome_weights: &[(Forest, 12)],
@@ -231,7 +231,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_FOREST_SMALL_TREE_B, name: "Small Tree",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.22, 0.45, 0.16, 1.0],
         sprite: Some("features/scenery27.png"), scale: 1.0,
         biome_weights: &[(Forest, 10)],
@@ -239,7 +239,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_FOREST_SMALL_TREE_C, name: "Small Tree",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.28, 0.50, 0.20, 1.0],
         sprite: Some("features/scenery28.png"), scale: 1.0,
         biome_weights: &[(Forest, 8)],
@@ -248,7 +248,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // Rocks
     reg.register(FeatureDef {
         id: FEATURE_FOREST_ROCK_A, name: "Forest Rock",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.50, 0.48, 0.45, 1.0],
         sprite: Some("features/scenery44.png"), scale: 0.7,
         biome_weights: &[(Forest, 4)],
@@ -256,7 +256,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_FOREST_ROCK_B, name: "Rock Pile",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.48, 0.45, 0.42, 1.0],
         sprite: Some("features/scenery45.png"), scale: 0.7,
         biome_weights: &[(Forest, 3)],
@@ -272,7 +272,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_FOREST_ROCK_D, name: "Flat Rock",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.50, 0.47, 0.44, 1.0],
         sprite: Some("features/scenery47.png"), scale: 0.6,
         biome_weights: &[(Forest, 3)],
@@ -281,7 +281,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // Bushes
     reg.register(FeatureDef {
         id: FEATURE_FOREST_BUSH_A, name: "Bush",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.30, 0.50, 0.25, 1.0],
         sprite: Some("features/scenery57.png"), scale: 0.8,
         biome_weights: &[(Forest, 8)],
@@ -289,7 +289,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_FOREST_BUSH_B, name: "Bush Cluster",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.28, 0.48, 0.22, 1.0],
         sprite: Some("features/scenery58.png"), scale: 0.8,
         biome_weights: &[(Forest, 6)],
@@ -297,7 +297,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_FOREST_BUSH_C, name: "Small Bush",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.32, 0.52, 0.26, 1.0],
         sprite: Some("features/scenery59.png"), scale: 0.7,
         biome_weights: &[(Forest, 6)],
@@ -305,7 +305,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_FOREST_BUSH_D, name: "Low Hedge",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.26, 0.46, 0.20, 1.0],
         sprite: Some("features/scenery60.png"), scale: 0.7,
         biome_weights: &[(Forest, 5)],
@@ -323,7 +323,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_RUBBLE_PILE, name: "Rubble Pile",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.55, 0.52, 0.50, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Mountain, 35)],
@@ -331,7 +331,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_DEAD_TREE_ALPINE, name: "Dead Tree (Alpine)",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.35, 0.30, 0.20, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Mountain, 15)],
@@ -341,7 +341,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // ---- Desert ----
     reg.register(FeatureDef {
         id: FEATURE_CACTUS, name: "Cactus",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.30, 0.50, 0.20, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Desert, 25)],
@@ -349,7 +349,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_DESERT_SCRUB, name: "Desert Scrub",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.55, 0.50, 0.30, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Desert, 30)],
@@ -357,7 +357,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_BLEACHED_BONES, name: "Bleached Bones",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.85, 0.82, 0.75, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Desert, 15)],
@@ -365,7 +365,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_SAND_WORN_ROCK, name: "Sand-Worn Rock",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.60, 0.55, 0.45, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Desert, 20)],
@@ -375,7 +375,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // ---- Tundra ----
     reg.register(FeatureDef {
         id: FEATURE_SNOW_PINE, name: "Snow Pine",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.25, 0.45, 0.30, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Tundra, 25)],
@@ -383,7 +383,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_ICE_CHUNK, name: "Ice Chunk",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.70, 0.80, 0.90, 0.85],
         sprite: None, scale: 1.0,
         biome_weights: &[(Tundra, 30)],
@@ -391,7 +391,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_FROZEN_DEAD_TREE, name: "Frozen Dead Tree",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.35, 0.30, 0.20, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Tundra, 20)],
@@ -401,7 +401,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // ---- Swamp ----
     reg.register(FeatureDef {
         id: FEATURE_SWAMP_TREE, name: "Swamp Tree",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.25, 0.35, 0.15, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Swamp, 25)],
@@ -409,7 +409,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_REED_CLUSTER, name: "Reed Cluster",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.40, 0.50, 0.30, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Swamp, 25)],
@@ -417,7 +417,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_HANGING_MOSS, name: "Hanging Moss",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.30, 0.45, 0.25, 0.9],
         sprite: None, scale: 1.0,
         biome_weights: &[(Swamp, 15)],
@@ -427,7 +427,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     // ---- Coast ----
     reg.register(FeatureDef {
         id: FEATURE_DRIFTWOOD, name: "Driftwood",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.55, 0.48, 0.38, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Coast, 25)],
@@ -435,7 +435,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_BEACH_GRASS, name: "Beach Grass",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.50, 0.60, 0.35, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Coast, 25)],
@@ -443,7 +443,7 @@ pub fn register_features(reg: &mut FeatureRegistry) {
     });
     reg.register(FeatureDef {
         id: FEATURE_TIDAL_ROCK, name: "Tidal Rock",
-        blocks_movement: false, blocks_los: false,
+        blocks_movement: true, blocks_los: false,
         placeholder_color: [0.45, 0.47, 0.50, 1.0],
         sprite: None, scale: 1.0,
         biome_weights: &[(Coast, 20)],

@@ -64,6 +64,9 @@ Colors in `resources/theme.rs`:
 - [docs/rendering.md](docs/rendering.md) — Terrain shader, blending, UV conventions, render layers, pathfinding algorithms
 - [docs/extension-guide.md](docs/extension-guide.md) — How to add items, affixes, damage types, equip slots, components (with save categorization)
 - [docs/vfx.md](docs/vfx.md) — Combat feedback: VFX particles, audio, micro-animations, and how to add new effects
+- [docs/population.md](docs/population.md) — Population simulation: lifecycle, resources, faith, traits, happiness, migration
+- [docs/narrative.md](docs/narrative.md) — 39 narrative functions (Propp/Shakespeare/Dostoevsky) for emergent storytelling
+- [docs/faction-rework.md](docs/faction-rework.md) — Faction system rework plan: population-connected, type-specific, emergent formation
 
 ## Known Issues
 
@@ -74,9 +77,8 @@ Colors in `resources/theme.rs`:
 - **Attribute bonuses from equipment not applied** (needs `EffectiveAttributes` refactor)
 - **No equip/unequip from UI**
 - **No save/load** (`StableId` infrastructure ready, serialization not built)
-- **Z-sort order**: player always renders in front of trees/scatter objects
-- **No line of sight blocking**: ranged attacks/vision go through walls and obstacles
-- **Pathfinding ignores scatter**: obstacles from scatter decoration not registered as impassable in pathfinding
+- **No party portraits UI**: no status display for multiple party members
+- **No camera follow**: camera is fully manual (WASD/edge scroll)
 - **Terrain feature sprites**: forest has real sprites, other biomes still use placeholder colored squares
 - **Terrain textures**: 5 of 9 still flat color (Sand, Snow, Swamp, Water, Mountain)
 - **Terrain texture shimmer**: no mipmaps on terrain array texture — causes aliasing/shimmer when zoomed out. Fix: generate mip chain in `gen_terrain_array` + enable trilinear filtering (do once art/textures are finalized)
@@ -95,4 +97,4 @@ cargo run --example gen_terrain_array  # Regenerate terrain texture array
 cargo run --example gen_blend_texture  # Regenerate terrain blend weight texture
 ```
 
-Runtime debug toggles: F1=grid, F2=pathing, F3=aggro, F4=AI state, F5=profiling
+Runtime debug toggles: F1=grid, F2=pathing, F3=aggro, F4=AI state, F5=profiling, F6=obstacles

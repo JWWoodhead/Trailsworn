@@ -144,6 +144,23 @@ impl FactionState {
         self.dissolved_year.is_none() || self.dissolved_year.unwrap() > year
     }
 
+    /// Update gauges from population-derived stats. Factions not in the stats
+    /// map (e.g. just spawned, no settlements yet) keep their current values.
+    pub fn update_from_stats(&mut self, stats: &crate::worldgen::population::faction_stats::FactionStats) {
+        if let Some(m) = stats.military(self.id) {
+            self.military_strength = m;
+        }
+        if let Some(w) = stats.wealth(self.id) {
+            self.wealth = w;
+        }
+        if let Some(s) = stats.stability(self.id) {
+            self.stability = s;
+        }
+        if let Some(g) = stats.patron_god(self.id) {
+            self.patron_god = Some(g);
+        }
+    }
+
     /// Initial gauge values based on faction type.
     /// Initial gauge values (military, wealth, stability) based on faction type.
     pub fn initialize_gauges(faction_type: FactionType) -> (u32, u32, u32) {
@@ -220,6 +237,10 @@ pub struct SettlementState {
     pub at_war: bool,
     /// Hit by plague this year (one-time pulse, cleared after population processes it).
     pub plague_this_year: bool,
+    /// Conquered this year — new faction took over (set by world_events, cleared after population processes).
+    pub conquered_this_year: bool,
+    /// Dominant race among living residents (computed yearly from population).
+    pub dominant_race: Option<Race>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -228,7 +249,6 @@ pub enum PopulationClass {
     Village,
     Town,
     City,
-    Capital,
 }
 
 impl PopulationClass {
@@ -237,8 +257,7 @@ impl PopulationClass {
             Self::Hamlet => Self::Village,
             Self::Village => Self::Town,
             Self::Town => Self::City,
-            Self::City => Self::Capital,
-            Self::Capital => Self::Capital,
+            Self::City => Self::City,
         }
     }
 
@@ -248,7 +267,6 @@ impl PopulationClass {
             Self::Village => Self::Hamlet,
             Self::Town => Self::Village,
             Self::City => Self::Town,
-            Self::Capital => Self::City,
         }
     }
 }
@@ -415,7 +433,7 @@ mod tests {
     #[test]
     fn population_class_grow_shrink() {
         assert_eq!(PopulationClass::Hamlet.grow(), PopulationClass::Village);
-        assert_eq!(PopulationClass::Capital.grow(), PopulationClass::Capital);
+        assert_eq!(PopulationClass::City.grow(), PopulationClass::City);
         assert_eq!(PopulationClass::Village.shrink(), PopulationClass::Hamlet);
         assert_eq!(PopulationClass::Hamlet.shrink(), PopulationClass::Hamlet);
     }

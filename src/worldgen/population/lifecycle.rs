@@ -85,7 +85,7 @@ fn death_pass(people: &mut [Person], year: i32, rng: &mut impl Rng) -> Vec<Death
             person.death_year = Some(year);
 
             // Assign a cause based on age and context
-            let cause = if age >= 70 {
+            let cause: DeathCause = if age >= 70 {
                 DeathCause::OldAge
             } else if age < 5 {
                 DeathCause::Illness
@@ -99,6 +99,8 @@ fn death_pass(people: &mut [Person], year: i32, rng: &mut impl Rng) -> Vec<Death
             } else {
                 natural_death_cause(person.occupation, rng)
             };
+
+            person.death_cause = Some(cause);
 
             deaths.push(DeathRecord {
                 person_index: i,
@@ -141,9 +143,10 @@ fn marriage_pass(
     let mut eligible_males: HashMap<u32, Vec<usize>> = HashMap::new();
     let mut eligible_females: HashMap<u32, Vec<usize>> = HashMap::new();
 
-    // We need to check all settlements that have residents
     for (i, person) in people.iter().enumerate() {
         if !person.is_alive(year) { continue; }
+        // Reclusive people don't seek marriage
+        if person.traits.contains(&crate::worldgen::history::characters::CharacterTrait::Reclusive) { continue; }
         // Eligible if never married or widowed (spouse is dead)
         if let Some(spouse_id) = person.spouse {
             let sidx = (spouse_id - 1) as usize;
@@ -160,15 +163,30 @@ fn marriage_pass(
     }
 
     let mut records = Vec::new();
+    let purist = crate::worldgen::history::characters::CharacterTrait::Purist;
     for (sid, males) in &eligible_males {
         if let Some(females) = eligible_females.get(sid) {
+            let mut used_females: Vec<bool> = vec![false; females.len()];
             let pairs = males.len().min(females.len());
             let marriages = (pairs as f32 * 0.30) as usize;
-            for i in 0..marriages.min(males.len()).min(females.len()) {
-                records.push(MarriageRecord {
-                    male_index: males[i],
-                    female_index: females[i],
-                });
+            let mut matched = 0;
+            for &mi in males {
+                if matched >= marriages { break; }
+                let m_is_purist = people[mi].traits.contains(&purist);
+                // Find a compatible female
+                for (fi, &female_idx) in females.iter().enumerate() {
+                    if used_females[fi] { continue; }
+                    // Purist preference: skip different race
+                    if m_is_purist && people[female_idx].race != people[mi].race { continue; }
+                    if people[female_idx].traits.contains(&purist) && people[female_idx].race != people[mi].race { continue; }
+                    records.push(MarriageRecord {
+                        male_index: mi,
+                        female_index: female_idx,
+                    });
+                    used_females[fi] = true;
+                    matched += 1;
+                    break;
+                }
             }
         }
     }
@@ -250,13 +268,25 @@ fn birth_pass(
                     id,
                     birth_year: year,
                     death_year: None,
+                    death_cause: None,
                     settlement_id: p.settlement_id,
                     sex,
+                    race: p.race, // mother's race
+                    secondary_race: {
+                        let father_race = father
+                            .and_then(|fid| people.get((fid - 1) as usize))
+                            .map(|f| f.race);
+                        match father_race {
+                            Some(fr) if fr != p.race => Some(fr),
+                            _ => None,
+                        }
+                    },
                     mother: Some(p.id),
                     father,
                     spouse: None,
                     occupation: super::seed::occupation_for_terrain(zone_type, rng),
                     traits: child_traits,
+                    happiness: 50, prophet_of: None, years_as_outlier: 0,
                     faith,
                     life_events: Vec::new(),
                     notable: false,

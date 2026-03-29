@@ -39,9 +39,14 @@ pub fn evaluate_faith(
             if !person.is_alive(year) { continue; }
 
             // If settlement has a patron and person has no relationship with them, start one
+            // But don't re-adopt a god the person has already abandoned
             if let Some(patron_god) = patron {
                 if person.devotion_to(patron_god) == 0 {
-                    person.set_devotion(patron_god, 15); // community exposure
+                    let already_abandoned = person.life_events.iter()
+                        .any(|e| matches!(&e.kind, LifeEventKind::AbandonedFaith { god_id } if *god_id == patron_god));
+                    if !already_abandoned {
+                        person.set_devotion(patron_god, 15); // community exposure
+                    }
                 }
             }
 
@@ -86,43 +91,58 @@ pub fn evaluate_faith(
                     new_devotion = new_devotion.saturating_sub(10);
                 }
 
-                // Not the patron — slow drift down (community pressure toward patron)
-                if !is_patron && patron.is_some() {
-                    new_devotion = new_devotion.saturating_sub(1);
-                }
+                // No unconditional non-patron drift — people hold their faith
+                // unless there's active pressure (prophet, conditions, fading)
 
                 new_devotion = new_devotion.min(100);
 
-                // Generate events on threshold crossings
+                // Determine the contextual cause for any faith decrease
+                let decrease_cause = if faded {
+                    Some(EventCause::Divine { god_id, action: DivineAction::Faded })
+                } else if plague {
+                    Some(EventCause::Divine { god_id, action: DivineAction::FlawTriggered })
+                } else if !is_patron && prosperity < 30 {
+                    Some(EventCause::Conditions { settlement_id, detail: "suffering while god is powerful" })
+                } else {
+                    None
+                };
+
+                // Generate events on threshold crossings (each fires ONCE per god)
                 if old_devotion <= 80 && new_devotion > 80 {
-                    person.life_events.push(LifeEvent {
-                        year,
-                        kind: LifeEventKind::FaithStrengthened { god_id },
-                        cause: Some(EventCause::Conditions {
-                            settlement_id,
-                            detail: "settlement prospering under patron",
-                        }),
-                    });
+                    let already_strengthened = person.life_events.iter()
+                        .any(|e| matches!(&e.kind, LifeEventKind::FaithStrengthened { god_id: g } if *g == god_id));
+                    if !already_strengthened {
+                        person.life_events.push(LifeEvent {
+                            year,
+                            kind: LifeEventKind::FaithStrengthened { god_id },
+                            cause: Some(EventCause::Conditions {
+                                settlement_id,
+                                detail: "settlement prospering under patron",
+                            }),
+                        });
+                    }
                 }
                 if old_devotion > 20 && new_devotion <= 20 && new_devotion > 0 {
-                    person.life_events.push(LifeEvent {
-                        year,
-                        kind: LifeEventKind::FaithShaken { god_id },
-                        cause: if faded {
-                            Some(EventCause::Divine { god_id, action: DivineAction::Faded })
-                        } else if plague {
-                            Some(EventCause::Divine { god_id, action: DivineAction::FlawTriggered })
-                        } else {
-                            Some(EventCause::Conditions { settlement_id, detail: "suffering while god is powerful" })
-                        },
-                    });
+                    let already_shaken = person.life_events.iter()
+                        .any(|e| matches!(&e.kind, LifeEventKind::FaithShaken { god_id: g } if *g == god_id));
+                    if !already_shaken {
+                        person.life_events.push(LifeEvent {
+                            year,
+                            kind: LifeEventKind::FaithShaken { god_id },
+                            cause: decrease_cause.clone(),
+                        });
+                    }
                 }
                 if old_devotion > 0 && new_devotion == 0 {
-                    person.life_events.push(LifeEvent {
-                        year,
-                        kind: LifeEventKind::AbandonedFaith { god_id },
-                        cause: Some(EventCause::Divine { god_id, action: DivineAction::Faded }),
-                    });
+                    let already_abandoned = person.life_events.iter()
+                        .any(|e| matches!(&e.kind, LifeEventKind::AbandonedFaith { god_id: g } if *g == god_id));
+                    if !already_abandoned {
+                        person.life_events.push(LifeEvent {
+                            year,
+                            kind: LifeEventKind::AbandonedFaith { god_id },
+                            cause: decrease_cause,
+                        });
+                    }
                 }
 
                 person.set_devotion(god_id, new_devotion);
@@ -144,15 +164,40 @@ pub fn evaluate_faith(
             }
         }
 
+        // --- Derive dominant race from population ---
+        let mut race_counts: std::collections::HashMap<crate::worldgen::names::Race, u32> = std::collections::HashMap::new();
+        for &idx in index.residents(settlement_id) {
+            let person = &people[idx];
+            if !person.is_alive(year) { continue; }
+            *race_counts.entry(person.race).or_insert(0) += 1;
+        }
+
         let settlement = &mut settlements[si];
+
+        // Patron hysteresis — incumbent god keeps patronage unless challenger
+        // exceeds their total devotion by 10%. Prevents oscillation.
+        let current_patron_total = settlement.patron_god
+            .and_then(|pg| god_totals.get(&pg))
+            .map(|(total, _)| *total)
+            .unwrap_or(0);
+
         if let Some((&best_god, &(total_dev, count))) = god_totals.iter()
             .max_by_key(|(_, (total, _))| *total)
         {
-            settlement.patron_god = Some(best_god);
+            let is_incumbent = settlement.patron_god == Some(best_god);
+            let exceeds_threshold = total_dev > (current_patron_total as f32 * 1.1) as u32;
+
+            if is_incumbent || exceeds_threshold || settlement.patron_god.is_none() {
+                settlement.patron_god = Some(best_god);
+            }
             settlement.devotion = (total_dev / count).min(100);
         } else {
             settlement.patron_god = None;
             settlement.devotion = 0;
         }
+
+        settlement.dominant_race = race_counts.into_iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(race, _)| race);
     }
 }

@@ -6,7 +6,7 @@ use crate::resources::combat_behavior::{CombatBehavior, CombatRole};
 use crate::resources::equipment_bonuses::EquipmentBonuses;
 use crate::resources::movement::RepathTimer;
 use crate::resources::task::PartyMode;
-use crate::resources::body::{Body, BodyTemplates};
+use crate::resources::body::{Body, BodyTemplates, Health};
 use crate::resources::combat::InCombat;
 use crate::resources::items::{
     Equipment, EquipSlot, Inventory, ItemId, ItemInstance, ItemInstanceId,
@@ -198,7 +198,7 @@ pub fn spawn_player(
             Transform::from_translation(Vec3::new(
                 world_pos.x,
                 world_pos.y,
-                render_layers::ENTITIES,
+                render_layers::WORLD_OBJECTS,
             )),
             grid_pos,
             MovementSpeed::default(),
@@ -208,6 +208,7 @@ pub fn spawn_player(
             EntityName(member.name.into()),
         ));
 
+        let max_hp = 50.0 + member.attrs.toughness as f32 * 10.0;
         entity_commands.insert((
             Body::from_template(template),
             member.attrs,
@@ -219,6 +220,7 @@ pub fn spawn_player(
             Stamina::new(member.stamina),
             ActiveStatusEffects::default(),
             ThreatTable::default(),
+            Health::new(max_hp),
             CombatBehavior::party_member(member.role, member.attack_range),
             AbilitySlots::new(member.abilities),
         ));

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::resources::body::{Body, BodyTemplates};
+use crate::resources::body::{Body, BodyTemplates, Health};
 use crate::resources::damage::EquippedWeapon;
 use crate::resources::map::CursorPosition;
 use crate::resources::stats::Attributes;
@@ -42,11 +42,12 @@ pub fn setup_hover_tooltip(mut commands: Commands, theme: Res<Theme>) {
 /// Update the hover tooltip based on what entity the cursor is over.
 pub fn update_hover_tooltip(
     cursor: Res<CursorPosition>,
-    body_templates: Res<BodyTemplates>,
+    _body_templates: Res<BodyTemplates>,
     entities: Query<(
         &crate::resources::map::GridPosition,
         &EntityName,
         &Body,
+        &Health,
         &Attributes,
         Option<&EquippedWeapon>,
     )>,
@@ -60,9 +61,9 @@ pub fn update_hover_tooltip(
 
     // Find entity at this tile
     let mut found = None;
-    for (grid_pos, name, body, attrs, weapon) in &entities {
+    for (grid_pos, name, body, health, attrs, weapon) in &entities {
         if grid_pos.x as i32 == tile_x && grid_pos.y as i32 == tile_y {
-            found = Some((name, body, attrs, weapon));
+            found = Some((name, body, health, attrs, weapon));
             break;
         }
     }
@@ -72,13 +73,8 @@ pub fn update_hover_tooltip(
     };
 
     match found {
-        Some((name, body, attrs, weapon)) => {
-            let template = match body_templates.get(&body.template_id) {
-                Some(t) => t,
-                None => return,
-            };
-
-            let hp_fraction = 1.0 - body.pain_level(template);
+        Some((name, _body, health, attrs, weapon)) => {
+            let hp_fraction = health.fraction();
             let hp_pct = (hp_fraction * 100.0).round();
 
             let weapon_str = weapon

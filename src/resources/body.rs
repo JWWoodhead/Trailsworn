@@ -220,6 +220,43 @@ impl Body {
     }
 }
 
+/// Simple hit point pool. Damage reduces current, death at zero.
+#[derive(Component, Clone, Debug)]
+pub struct Health {
+    pub current: f32,
+    pub max: f32,
+}
+
+impl Health {
+    pub fn new(max: f32) -> Self {
+        Self { current: max, max }
+    }
+
+    /// Apply damage. Returns actual damage dealt (capped at current HP).
+    pub fn take_damage(&mut self, amount: f32) -> f32 {
+        let actual = amount.min(self.current);
+        self.current -= actual;
+        actual
+    }
+
+    /// Heal. Returns actual healing done (capped at missing HP).
+    pub fn heal(&mut self, amount: f32) -> f32 {
+        let actual = amount.min(self.max - self.current);
+        self.current += actual;
+        actual
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.current <= 0.0
+    }
+
+    /// Health fraction for display (1.0 = full, 0.0 = dead).
+    pub fn fraction(&self) -> f32 {
+        if self.max <= 0.0 { return 0.0; }
+        (self.current / self.max).clamp(0.0, 1.0)
+    }
+}
+
 /// Registry of all body templates, keyed by name.
 #[derive(Resource, Default)]
 pub struct BodyTemplates {

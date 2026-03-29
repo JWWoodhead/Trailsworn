@@ -4,6 +4,7 @@
 use rand::{Rng, RngExt};
 
 use crate::worldgen::names::{FactionType, Race, faction_name, full_name, settlement_name};
+use crate::worldgen::population::faction_stats::FactionStats;
 use crate::worldgen::population_table::PopTable;
 
 use super::artifacts::*;
@@ -23,6 +24,7 @@ pub(super) fn simulate_year(
     next_id: &mut u32,
     faction_type_table: &PopTable<FactionType>,
     race_table: &PopTable<Race>,
+    faction_stats: Option<&FactionStats>,
     rng: &mut impl Rng,
 ) {
     let living: Vec<u32> = factions.iter().filter(|f| f.is_alive(year)).map(|f| f.id).collect();
@@ -99,63 +101,64 @@ pub(super) fn simulate_year(
     // Snapshot for cross-references during upkeep
     let factions_snapshot: Vec<FactionState> = factions.clone();
 
-    // Phase 1: Faction upkeep
+    // Phase 1: Faction upkeep — gauges derived from population, sentiment from proximity/faith
     for faction in factions.iter_mut() {
         if !faction.is_alive(year) { continue; }
 
-        // Wars drain military strength heavily
-        let wars = world_state.war_count(faction.id);
-        if wars > 0 {
-            faction.military_strength = faction.military_strength.saturating_sub(5 * wars as u32);
-            faction.wealth = faction.wealth.saturating_sub(4 * wars as u32);
-            faction.stability = faction.stability.saturating_sub(2);
+        // Update gauges from real population data (military, wealth, stability, patron god)
+        if let Some(stats) = faction_stats {
+            faction.update_from_stats(stats);
         }
 
-        // Standing army costs wealth (only large armies are expensive)
-        if faction.military_strength > 50 {
-            let upkeep = (faction.military_strength - 50) / 25; // 0-1 per year
-            faction.wealth = faction.wealth.saturating_sub(upkeep);
-        }
-
-        // Treaties add small wealth
-        let treaties = world_state.active_treaties.iter()
-            .filter(|t| t.faction_a == faction.id || t.faction_b == faction.id)
-            .count();
-        if treaties > 0 {
-            faction.wealth = (faction.wealth + 1).min(80); // cap lower for organic feel
-        }
-
-        // Military regenerates slowly (1 per settlement, max 2/year)
-        let regen = (faction.settlements.len() as u32).min(2);
-        faction.military_strength = (faction.military_strength + regen).min(80);
-
-        // Wealth from settlements (primary income)
-        let settlement_income = (faction.settlements.len() as u32 * 2).min(8);
-        faction.wealth = (faction.wealth + settlement_income).min(90);
-
-        // Stability drifts toward 50
-        if faction.stability > 50 { faction.stability -= 1; }
-        else if faction.stability < 50 { faction.stability += 1; }
-
-        // Territorial friction: factions sharing a region with rivals get sentiment pushed down
+        // Territorial & religious friction between factions
         for other in &living {
             if *other == faction.id { continue; }
             if let Some(other_f) = factions_snapshot.iter().find(|f| f.id == *other) {
+                // Same region — proximity breeds friction
                 if other_f.home_region == faction.home_region {
-                    // Proximity breeds friction — push sentiment slightly negative each year
+                    world_state.relations.modify(faction.id, *other, -2);
+                }
+                // Both have settlements — competing for resources and influence
+                if !faction.settlements.is_empty() && !other_f.settlements.is_empty() {
                     world_state.relations.modify(faction.id, *other, -1);
+                }
+                // God-based sentiment
+                if let (Some(our_god), Some(their_god)) = (faction.patron_god, other_f.patron_god) {
+                    if our_god == their_god {
+                        world_state.relations.modify(faction.id, *other, 2);
+                    } else {
+                        let divine_sentiment = world_state.divine_relations.get(our_god, their_god);
+                        if divine_sentiment < -30 {
+                            world_state.relations.modify(faction.id, *other, -3);
+                        } else if divine_sentiment > 30 {
+                            world_state.relations.modify(faction.id, *other, 1);
+                        }
+                    }
                 }
             }
         }
     }
 
-    // Phase 2: Settlement upkeep
+    // Phase 2: Settlement upkeep — prosperity requires ongoing investment
     for settlement in settlements.iter_mut() {
         if settlement.destroyed_year.is_some() { continue; }
-        // Prosperity from peace
-        if world_state.war_count(settlement.owner_faction) == 0 {
+
+        // Base maintenance cost — things decay without effort
+        settlement.prosperity = settlement.prosperity.saturating_sub(1);
+        // Larger settlements cost more to maintain
+        match settlement.population_class {
+            PopulationClass::City => settlement.prosperity = settlement.prosperity.saturating_sub(1),
+            _ => {}
+        }
+
+        // Prosperity from real conditions (not just "peace")
+        if settlement.stockpile.food > 0 {
+            settlement.prosperity = (settlement.prosperity + 2).min(100);
+        }
+        if settlement.stockpile.timber > 0 && settlement.stockpile.stone > 0 {
             settlement.prosperity = (settlement.prosperity + 1).min(100);
         }
+
         // Growth check
         if settlement.prosperity > 70 && rng.random::<f32>() < 0.05 {
             settlement.population_class = settlement.population_class.grow();
@@ -192,8 +195,7 @@ pub(super) fn simulate_year(
     }
 
     // Phase 3b: Random friction — border disputes, rivalries, incidents
-    // This ensures tensions can build even without explicit events
-    if living.len() >= 2 && rng.random::<f32>() < 0.30 {
+    if living.len() >= 2 && rng.random::<f32>() < 0.40 {
         let a = living[rng.random_range(0..living.len())];
         let b_candidates: Vec<u32> = living.iter().copied().filter(|&x| x != a).collect();
         if !b_candidates.is_empty() {
@@ -232,42 +234,51 @@ fn evaluate_war_declared(
     world_state: &mut WorldState, living: &[u32], rng: &mut impl Rng,
 ) {
     if living.len() < 2 { return; }
-    let Some((a, b, sentiment)) = world_state.relations.most_hostile_pair(living) else { return };
-    if sentiment >= -20 { return; } // lowered threshold
-    if world_state.at_war(a, b) { return; }
-    if world_state.war_count(a) > 1 || world_state.war_count(b) > 1 { return; }
 
-    let aggressor_mil = factions.iter().find(|f| f.id == a).map(|f| f.military_strength).unwrap_or(0);
-    if aggressor_mil < 10 { return; } // lowered threshold
+    // Check ALL hostile pairs, not just the worst — multiple wars can start per year
+    let mut hostile_pairs: Vec<(u32, u32, i32)> = Vec::new();
+    for (i, &a) in living.iter().enumerate() {
+        for &b in &living[i+1..] {
+            let sentiment = world_state.relations.get(a, b);
+            if sentiment < -15 {
+                hostile_pairs.push((a, b, sentiment));
+            }
+        }
+    }
+    hostile_pairs.sort_by_key(|(_, _, s)| *s); // most hostile first
 
-    // Base probability + character modifiers
-    let hostility_bonus = ((-sentiment - 20) as f32 * 0.8).min(40.0);
-    let mut prob = 20.0 + hostility_bonus;
+    for (a, b, sentiment) in hostile_pairs {
+        if world_state.at_war(a, b) { continue; }
+        if world_state.war_count(a) > 1 || world_state.war_count(b) > 1 { continue; }
 
-    // Leader traits modify war probability
-    if leader_has_trait(a, CharacterTrait::Warlike, factions, characters) { prob += 20.0; }
-    if leader_has_trait(a, CharacterTrait::Ambitious, factions, characters) { prob += 10.0; }
-    if leader_has_trait(a, CharacterTrait::Peaceful, factions, characters) { prob -= 25.0; }
-    if leader_has_trait(a, CharacterTrait::Diplomatic, factions, characters) { prob -= 15.0; }
-    // Warlike general pushing for war
-    if faction_has_member_with_trait(a, CharacterTrait::Warlike, characters, year) { prob += 5.0; }
+        let aggressor_mil = factions.iter().find(|f| f.id == a).map(|f| f.military_strength).unwrap_or(0);
+        if aggressor_mil < 10 { continue; }
 
-    let prob = (prob / 100.0).clamp(0.02, 0.60);
-    if rng.random::<f32>() >= prob { return; }
+        let hostility_bonus = ((-sentiment - 15) as f32 * 0.8).min(40.0);
+        let mut prob = 15.0 + hostility_bonus;
 
-    // Declare war
-    world_state.active_wars.push(War { aggressor: a, defender: b, start_year: year });
-    world_state.relations.modify(a, b, -20);
+        if leader_has_trait(a, CharacterTrait::Warlike, factions, characters) { prob += 20.0; }
+        if leader_has_trait(a, CharacterTrait::Ambitious, factions, characters) { prob += 10.0; }
+        if leader_has_trait(a, CharacterTrait::Peaceful, factions, characters) { prob -= 25.0; }
+        if leader_has_trait(a, CharacterTrait::Diplomatic, factions, characters) { prob -= 15.0; }
+        if faction_has_member_with_trait(a, CharacterTrait::Warlike, characters, year) { prob += 5.0; }
 
-    let fa = faction_name_by_id(factions, a);
-    let fb = faction_name_by_id(factions, b);
-    events.push(HistoricEvent {
-        year, kind: EventKind::WarDeclared,
-        description: format!("{} declared war on {}", fa, fb),
-        participants: vec![a, b],
+        let prob = (prob / 100.0).clamp(0.02, 0.60);
+        if rng.random::<f32>() >= prob { continue; }
+
+        world_state.active_wars.push(War { aggressor: a, defender: b, start_year: year });
+        world_state.relations.modify(a, b, -20);
+
+        let fa = faction_name_by_id(factions, a);
+        let fb = faction_name_by_id(factions, b);
+        events.push(HistoricEvent {
+            year, kind: EventKind::WarDeclared,
+            description: format!("{} declared war on {}", fa, fb),
+            participants: vec![a, b],
             god_participants: vec![],
             cause: None,
-    });
+        });
+    }
 }
 
 fn evaluate_war_ended(
@@ -306,30 +317,32 @@ fn evaluate_war_ended(
         let fw = faction_name_by_id(factions, winner);
         let fl = faction_name_by_id(factions, loser);
 
-        // Consequences
-        if let Some(w) = factions.iter_mut().find(|f| f.id == winner) {
-            w.military_strength = w.military_strength.saturating_sub(10);
-            w.wealth = (w.wealth + 10).min(100);
-        }
-        if let Some(l) = factions.iter_mut().find(|f| f.id == loser) {
-            l.military_strength = l.military_strength.saturating_sub(20);
-            l.stability = l.stability.saturating_sub(15);
-        }
+        // War consequences flow through population: soldier deaths reduce military,
+        // conquest reduces prosperity/food, and happiness drops reduce stability.
+        // No direct gauge manipulation needed — values are derived from population.
 
-        // Settlement conquest: winner may take a settlement from loser
+        // Settlement conquest: winner takes 1-2 settlements from loser
         let loser_settlements: Vec<u32> = settlements.iter()
             .filter(|s| s.owner_faction == loser && s.destroyed_year.is_none())
             .map(|s| s.id)
             .collect();
-        if !loser_settlements.is_empty() && rng.random::<f32>() < 0.4 {
-            let target_sid = loser_settlements[rng.random_range(0..loser_settlements.len())];
+        // Conquest is likely (60%) and can take multiple settlements
+        let num_conquests = if loser_settlements.is_empty() { 0 }
+            else if rng.random::<f32>() < 0.6 {
+                1 + if loser_settlements.len() > 2 && rng.random::<f32>() < 0.3 { 1 } else { 0 }
+            } else { 0 };
+
+        for i in 0..num_conquests.min(loser_settlements.len()) {
+            let target_sid = loser_settlements[i];
             if let Some(s) = settlements.iter_mut().find(|s| s.id == target_sid) {
                 let old_name = s.name.clone();
                 s.owner_faction = winner;
-                s.prosperity = s.prosperity.saturating_sub(20);
+                s.prosperity = s.prosperity.saturating_sub(30);
                 s.population_class = s.population_class.shrink();
+                s.conquered_this_year = true;
+                // Mark food destruction from conquest
+                s.stockpile.food = s.stockpile.food / 2;
 
-                // Update faction settlement lists
                 if let Some(l) = factions.iter_mut().find(|f| f.id == loser) {
                     l.settlements.retain(|&sid| sid != target_sid);
                 }
@@ -402,11 +415,6 @@ fn evaluate_betrayal(
                 c.epithet = Some("the Betrayer".into());
             }
             c.renown += 5; // infamy is still fame
-        }
-
-        // Victim faction loses stability
-        if let Some(f) = factions.iter_mut().find(|f| f.id == victim_faction) {
-            f.stability = f.stability.saturating_sub(10);
         }
 
         events.push(HistoricEvent {
@@ -587,7 +595,6 @@ fn evaluate_leader_changed(
                 if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
                     f.leader_id = Some(uid);
                     f.leader_name = name.clone();
-                    if is_coup { f.stability = f.stability.saturating_sub(15); }
                 }
                 name
             } else {
@@ -626,7 +633,7 @@ fn evaluate_leader_changed(
 }
 
 fn evaluate_plague(
-    year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
+    year: i32, _factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
     events: &mut Vec<HistoricEvent>, _regions: &[String], rng: &mut impl Rng,
     world_state: &WorldState,
 ) {
@@ -643,7 +650,6 @@ fn evaluate_plague(
 
             // Overcrowding — only large settlements are vulnerable
             match s.population_class {
-                PopulationClass::Capital => plague_chance += 0.008,
                 PopulationClass::City => plague_chance += 0.005,
                 PopulationClass::Town => plague_chance += 0.002,
                 _ => {} // hamlets/villages rarely get plague
@@ -676,11 +682,6 @@ fn evaluate_plague(
     }
 
     if any_plague {
-        for &fid in &affected_factions {
-            if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
-                f.stability = f.stability.saturating_sub(10);
-            }
-        }
         events.push(HistoricEvent {
             year, kind: EventKind::PlagueStruck,
             description: "Plague struck settlements across the realm".into(),
@@ -815,12 +816,12 @@ fn evaluate_settlement_founded(
         owner_faction: fid, destroyed_year: None, region,
         population_class: PopulationClass::Hamlet, prosperity: 40, defenses: 20,
         patron_god: None, devotion: 0, world_pos: None,
-        zone_type: None, stockpile: ResourceStockpile::default(), at_war: false, plague_this_year: false,
+        zone_type: None, stockpile: ResourceStockpile::default(), at_war: false, plague_this_year: false, conquered_this_year: false,
+        dominant_race: None,
     });
 
     if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
         f.settlements.push(sid);
-        f.wealth = f.wealth.saturating_sub(10); // costs money to found
     }
 
     events.push(HistoricEvent {
@@ -885,7 +886,7 @@ fn evaluate_faction_dissolved(
         };
         // Dissolve if very weak, or lost all settlements
         let no_settlements = f.settlements.is_empty();
-        let critically_weak = f.military_strength < 10 && f.stability < 20 && f.wealth < 15;
+        let critically_weak = f.military_strength < 5 && f.stability < 25 && f.wealth < 5;
         if no_settlements || critically_weak {
             let prob = if no_settlements { 0.50 } else { 0.25 };
             if rng.random::<f32>() < prob {

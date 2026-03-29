@@ -25,7 +25,7 @@ use trailsworn::resources::world::{CurrentZone, ZoneTransitionEvent};
 use trailsworn::resources::vfx::ScreenTrauma;
 use trailsworn::systems::{
     ability_bar, audio, camera, cast_bars, casting, character_sheet, combat, debug, equipment, floating_text, game_time,
-    health_bars, hover_info, hud, inventory, movement, profiling, rendering, selection, spawning, task, ui_panel, vfx, world_map_ui, zone,
+    health_bars, hover_info, hud, inventory, movement, party_panel, profiling, rendering, selection, spawning, task, ui_panel, vfx, world_map_ui, zone,
 };
 use rand::SeedableRng;
 use trailsworn::worldgen::world_map::generate_world_map;
@@ -220,6 +220,7 @@ fn main() {
             spawning::spawn_player,
             hover_info::setup_hover_tooltip,
             hud::setup_hud,
+            party_panel::setup_party_panel,
             ability_bar::setup_ability_bar,
             ui_panel::setup_ui_panel,
             world_map_ui::setup_world_map_ui,
@@ -249,6 +250,7 @@ fn main() {
                 world_map_ui::world_map_zoom.after(world_map_ui::toggle_world_map),
                 world_map_ui::world_map_pan.after(world_map_ui::toggle_world_map),
                 world_map_ui::world_map_click.after(world_map_ui::toggle_world_map),
+                selection::party_hotkey_select.after(input::process_input),
             )
                 .in_set(GameSet::Input),
             // Tick
@@ -307,7 +309,12 @@ fn main() {
                 floating_text::spawn_heal_numbers,
                 floating_text::animate_floating_text,
                 hover_info::update_hover_tooltip,
+                party_panel::sync_party_portraits,
+                party_panel::update_party_portraits,
+                party_panel::click_party_portrait,
                 selection::update_selection_visuals,
+                selection::draw_move_preview,
+                selection::draw_engage_lines,
                 selection::draw_drag_box,
             )
                 .in_set(GameSet::Ui),
@@ -359,6 +366,7 @@ fn main() {
                 debug::draw_pathing,
                 debug::draw_aggro_radius,
                 debug::draw_ai_state,
+                debug::draw_obstacles,
                 profiling::frame_profiler,
                 profiling::entity_counter,
             )

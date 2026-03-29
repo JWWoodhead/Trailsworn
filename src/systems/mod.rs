@@ -14,6 +14,7 @@ pub mod hover_info;
 pub mod hud;
 pub mod inventory;
 pub mod movement;
+pub mod party_panel;
 pub mod profiling;
 pub mod rendering;
 pub mod selection;

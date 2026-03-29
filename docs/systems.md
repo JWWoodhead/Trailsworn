@@ -33,7 +33,7 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 ## Combat (GameSet::Combat)
 - `equipment::sync_equipment` — derives `EquippedWeapon`/`EquippedArmor`/`EquipmentBonuses` from `Equipment` component's `ItemInstanceId` references. Bakes weapon affixes into `WeaponDef`, builds armor pieces, syncs `Mana.max`/`Stamina.max` from bonuses. Runs on `Changed<Equipment>`.
 - `combat::tick_weapon_cooldowns` — decrements weapon cooldown per tick
-- `combat::auto_attack` — entities with an `Engaging` marker attack their target when in range and weapon ready. Fires `DamageDealtEvent` / `AttackMissedEvent`.
+- `combat::auto_attack` — entities with an `Engaging` marker attack their target when in range and weapon ready. Ranged weapons require line of sight (Bresenham check via `has_line_of_sight`). Fires `DamageDealtEvent` / `AttackMissedEvent`.
 - `casting::tick_ability_cooldowns` — decrements per-slot ability cooldowns
 - `casting::regenerate_resources` — mana/stamina regen per tick
 - `casting::begin_cast` — processes newly-added `CastingState`: spends resources, starts cooldowns, resolves instant casts. Fires `AbilityLandedEvent` for VFX.
@@ -84,11 +84,12 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `identity::cleanup_stable_ids` — removes despawned entities from registry
 
 ## Debug (only when `--debug` is passed)
-- `debug::debug_key_toggles` — F1-F5 toggle individual debug visualizations
+- `debug::debug_key_toggles` — F1-F6 toggle individual debug visualizations
 - `debug::draw_grid` — tile grid lines
 - `debug::draw_pathing` — blue lines showing entity movement paths
 - `debug::draw_aggro_radius` — red circles showing detection range
 - `debug::draw_ai_state` — colored dots showing current task action (idle/engaging/fleeing)
+- `debug::draw_obstacles` — red outlines on impassable tiles (water, mountains, blocking features)
 - `profiling::frame_profiler` — FPS and frame time (F5 to toggle)
 - `profiling::entity_counter` — total entity count breakdown
 

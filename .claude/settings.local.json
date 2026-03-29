@@ -69,7 +69,11 @@
       "Bash(cd:*)",
       "Bash(sed -i 's|faith: None, devotion: 0,|faith: Vec::new\\(\\),|g' src/worldgen/population/tests.rs)",
       "Bash(sed -i 's|faith: Some\\(5\\), devotion: 75,|faith: vec![\\(5, 75\\)],|g' src/worldgen/population/tests.rs)",
-      "Bash(sed -i 's|faith: Some\\(5\\), devotion: 25,|faith: vec![\\(5, 25\\)],|g' src/worldgen/population/tests.rs)"
+      "Bash(sed -i 's|faith: Some\\(5\\), devotion: 25,|faith: vec![\\(5, 25\\)],|g' src/worldgen/population/tests.rs)",
+      "Bash(sed -i 's|let to_zone = |let _to_zone = |' src/worldgen/population/migration.rs)",
+      "Bash(sed -i 's|let same_faction = |let _same_faction = |' src/worldgen/population/migration.rs)",
+      "Bash(for i:*)",
+      "Bash(do echo:*)"
     ]
   }
 }

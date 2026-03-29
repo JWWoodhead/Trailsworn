@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::resources::body::{Body, BodyTemplates};
+use crate::resources::body::{Body, Health};
 use crate::resources::combat::Dead;
 use crate::resources::map::render_layers;
 use crate::resources::theme::Theme;
@@ -58,20 +58,15 @@ pub fn spawn_health_bars(
 /// Update health bar fill width and color based on current HP.
 pub fn update_health_bars(
     theme: Res<Theme>,
-    body_templates: Res<BodyTemplates>,
-    body_query: Query<&Body>,
+    health_query: Query<&Health>,
     mut fill_query: Query<(&HealthBarFill, &mut Sprite, &mut Transform)>,
 ) {
     for (fill, mut sprite, mut transform) in &mut fill_query {
-        let Ok(body) = body_query.get(fill.owner) else {
+        let Ok(health) = health_query.get(fill.owner) else {
             continue;
         };
-        let template = match body_templates.get(&body.template_id) {
-            Some(t) => t,
-            None => continue,
-        };
 
-        let hp_fraction = (1.0 - body.pain_level(template)).clamp(0.0, 1.0);
+        let hp_fraction = health.fraction();
 
         let fill_width = BAR_WIDTH * hp_fraction;
         sprite.custom_size = Some(Vec2::new(fill_width, BAR_HEIGHT));

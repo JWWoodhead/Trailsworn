@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::resources::combat_behavior::CombatBehavior;
 use crate::resources::task::{Action, CurrentTask};
-use crate::resources::map::{GridPosition, MapSettings};
+use crate::resources::map::{GridPosition, MapSettings, TileWorld};
 use crate::resources::movement::MovePath;
 use crate::systems::spawning::EntityName;
 
@@ -14,6 +14,7 @@ pub struct DebugFlags {
     pub aggro_radius: bool,
     pub ai_state: bool,
     pub profiling: bool,
+    pub obstacles: bool,
 }
 
 impl DebugFlags {
@@ -30,6 +31,7 @@ impl DebugFlags {
             aggro_radius: false,
             ai_state: false,
             profiling: false,
+            obstacles: false,
         };
 
         for flag in flags_str.split(',') {
@@ -40,12 +42,14 @@ impl DebugFlags {
                     flags.aggro_radius = true;
                     flags.ai_state = true;
                     flags.profiling = true;
+                    flags.obstacles = true;
                 }
                 "grid" => flags.grid = true,
                 "pathing" | "path" => flags.pathing = true,
                 "aggro" | "aggro_radius" => flags.aggro_radius = true,
                 "ai" | "ai_state" => flags.ai_state = true,
                 "profiling" | "perf" => flags.profiling = true,
+                "obstacles" | "obs" => flags.obstacles = true,
                 _ => eprintln!("Unknown debug flag: {flag}"),
             }
         }
@@ -54,7 +58,7 @@ impl DebugFlags {
     }
 
     pub fn any_active(&self) -> bool {
-        self.grid || self.pathing || self.aggro_radius || self.ai_state || self.profiling
+        self.grid || self.pathing || self.aggro_radius || self.ai_state || self.profiling || self.obstacles
     }
 }
 
@@ -78,6 +82,9 @@ pub fn debug_key_toggles(
     }
     if actions.just_pressed(Action::DebugProfiling) {
         flags.profiling = !flags.profiling;
+    }
+    if actions.just_pressed(Action::DebugObstacles) {
+        flags.obstacles = !flags.obstacles;
     }
 }
 
@@ -198,5 +205,49 @@ pub fn draw_ai_state(
             size,
             color,
         );
+    }
+}
+
+/// Draw red outlines on impassable tiles (walk_cost <= 0).
+pub fn draw_obstacles(
+    flags: Res<DebugFlags>,
+    map_settings: Res<MapSettings>,
+    tile_world: Res<TileWorld>,
+    mut gizmos: Gizmos,
+    camera_query: Query<&Transform, With<Camera2d>>,
+) {
+    if !flags.obstacles {
+        return;
+    }
+
+    let ts = map_settings.tile_size;
+    let half = ts * 0.5;
+    let color = Color::srgba(1.0, 0.2, 0.2, 0.4);
+
+    // Only draw obstacles within a generous viewport around the camera
+    let Ok(cam_transform) = camera_query.single() else { return };
+    let cam_pos = cam_transform.translation.truncate();
+    let view_radius = 1200.0 * cam_transform.scale.x; // generous estimate
+    let min_x = ((cam_pos.x - view_radius) / ts).floor().max(0.0) as u32;
+    let max_x = ((cam_pos.x + view_radius) / ts).ceil().min(map_settings.width as f32) as u32;
+    let min_y = ((cam_pos.y - view_radius) / ts).floor().max(0.0) as u32;
+    let max_y = ((cam_pos.y + view_radius) / ts).ceil().min(map_settings.height as f32) as u32;
+
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let idx = tile_world.idx(x, y);
+            if tile_world.walk_cost[idx] <= 0.0 {
+                let cx = x as f32 * ts;
+                let cy = y as f32 * ts;
+                let tl = Vec2::new(cx - half, cy + half);
+                let tr = Vec2::new(cx + half, cy + half);
+                let br = Vec2::new(cx + half, cy - half);
+                let bl = Vec2::new(cx - half, cy - half);
+                gizmos.line_2d(tl, tr, color);
+                gizmos.line_2d(tr, br, color);
+                gizmos.line_2d(br, bl, color);
+                gizmos.line_2d(bl, tl, color);
+            }
+        }
     }
 }

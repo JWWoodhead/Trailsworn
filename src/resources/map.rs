@@ -105,9 +105,10 @@ pub struct TerrainFeatureEntity;
 pub mod render_layers {
     pub const TERRAIN: f32 = 0.0;
     pub const TERRAIN_OVERLAY: f32 = 0.5;
-    pub const TERRAIN_FEATURES: f32 = 1.0;
-    pub const FLOOR_ITEMS: f32 = 2.0;
-    pub const ENTITIES: f32 = 3.0;
+    pub const FLOOR_ITEMS: f32 = 0.9;
+    /// Shared layer for terrain features AND entities — y-sorted together so
+    /// entities can render behind trees/rocks based on Y position.
+    pub const WORLD_OBJECTS: f32 = 1.0;
     pub const PROJECTILES: f32 = 4.0;
     pub const UI_OVERLAY: f32 = 5.0;
 

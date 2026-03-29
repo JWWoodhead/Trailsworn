@@ -37,12 +37,12 @@ pub(super) fn select_target(
     faction_relations: &FactionRelations,
     potential_targets: &Query<(Entity, &GridPosition, &Faction, &Body), (With<InCombat>, Without<Dead>)>,
 ) -> Option<Entity> {
+    // Threat-based targeting: if someone has hit us, fight back regardless of faction.
+    // Threat itself is proof of hostility.
     if let Some(table) = threat_table {
         if let Some(highest) = table.highest_threat() {
-            if let Ok((_, _, target_faction, _)) = potential_targets.get(highest) {
-                if faction_relations.is_hostile(self_faction.0, target_faction.0) {
-                    return Some(highest);
-                }
+            if potential_targets.get(highest).is_ok() {
+                return Some(highest);
             }
         }
     }

@@ -3,15 +3,19 @@
 
 pub mod events;
 pub mod faith;
+pub mod happiness;
 pub mod index;
 pub mod lifecycle;
+pub mod migration;
 pub mod notable;
 pub mod plague;
+pub mod prophet;
 pub mod resources;
 pub mod seed;
 pub mod trade;
 pub mod traits;
 pub mod types;
+pub mod faction_stats;
 pub mod war;
 
 pub use types::{DeathCause, LifeEvent, LifeEventKind, Occupation, Person, Sex};
@@ -44,8 +48,8 @@ pub struct PopulationSim {
 
 impl PopulationSim {
     /// Initialize from settlement list at the start of history.
-    pub fn new(settlements: &[SettlementState], start_year: i32, rng: &mut impl Rng) -> Self {
-        let (people, next_person_id) = seed::seed_population(settlements, start_year, rng);
+    pub fn new(settlements: &[SettlementState], factions: &[crate::worldgen::history::state::FactionState], start_year: i32, rng: &mut impl Rng) -> Self {
+        let (people, next_person_id) = seed::seed_population(settlements, factions, start_year, rng);
         Self {
             people,
             next_person_id,
@@ -56,12 +60,14 @@ impl PopulationSim {
         }
     }
 
-    /// Advance one year: lifecycle, war, plague, faith, resources, famine, events, notable check.
+    /// Advance one year: lifecycle, war, plague, faith, happiness, migration, resources, famine.
     /// Mutates settlement stockpiles in place. Returns person IDs that became notable this year.
     pub fn advance_year(
         &mut self,
         settlements: &mut [SettlementState],
         gods: &[GodState],
+        factions: &[crate::worldgen::history::state::FactionState],
+        world_state: &crate::worldgen::history::state::WorldState,
         year: i32,
         rng: &mut impl Rng,
     ) -> &[u32] {
@@ -103,6 +109,25 @@ impl PopulationSim {
         }
         self.prev_at_war = current_at_war;
 
+        // Conquest events: notify all residents of conquered settlements
+        for settlement in settlements.iter_mut() {
+            if settlement.conquered_this_year {
+                for &idx in index.residents(settlement.id) {
+                    if self.people[idx].is_alive(year) {
+                        self.people[idx].life_events.push(LifeEvt {
+                            year,
+                            kind: LifeEvtKind::SettlementConquered { new_faction_id: settlement.owner_faction },
+                            cause: Some(types::EventCause::Faction {
+                                faction_id: settlement.owner_faction,
+                                detail: "settlement conquered",
+                            }),
+                        });
+                    }
+                }
+                settlement.conquered_this_year = false;
+            }
+        }
+
         // Plague effects: one-time kill pulse
         let mut plague_dead: Vec<u32> = Vec::new();
         for settlement in settlements.iter_mut() {
@@ -119,8 +144,20 @@ impl PopulationSim {
         // Rebuild index after war/plague deaths
         let index = SettlementIndex::build(&self.people, year);
 
-        // Faith evaluation (before resources — faith affects stories, not economics)
+        // Faith evaluation
         faith::evaluate_faith(&mut self.people, &index, settlements, gods, year);
+
+        // Prophet emergence + influence
+        prophet::evaluate_prophets(&mut self.people, &index, settlements, gods, year);
+
+        // Happiness evaluation
+        happiness::evaluate_happiness(&mut self.people, &index, settlements, year);
+
+        // Migration — unhappy families leave for better settlements
+        migration::evaluate_migration(&mut self.people, &index, settlements, factions, world_state, year);
+
+        // Rebuild index after migration (people moved settlements)
+        let index = SettlementIndex::build(&self.people, year);
 
         // Occupation rebalancing (before resource computation)
         for settlement in settlements.iter() {
@@ -198,10 +235,8 @@ impl PopulationSim {
                 self.apply_famine(settlement.id, index, famine_deficit, year);
             }
 
-            // Resource-driven prosperity
-            if production.food > consumption.food {
-                settlement.prosperity = (settlement.prosperity + 1).min(100);
-            } else if famine_deficit > 0 {
+            // Famine hits prosperity hard
+            if famine_deficit > 0 {
                 settlement.prosperity = settlement.prosperity.saturating_sub(5);
             }
 
@@ -243,6 +278,7 @@ impl PopulationSim {
             .iter()
             .map(|&(idx, _)| {
                 self.people[idx].death_year = Some(year);
+                self.people[idx].death_cause = Some(DeathCause::Famine);
                 (idx, self.people[idx].id)
             })
             .collect();

@@ -39,18 +39,27 @@ pub enum Action {
     // World map
     ToggleWorldMap,
 
-    // Debug
+    // Party selection (F1-F4)
+    SelectPartyMember1,
+    SelectPartyMember2,
+    SelectPartyMember3,
+    SelectPartyMember4,
+
+    // Debug (Ctrl+F1-F6)
     DebugGrid,
     DebugPathing,
     DebugAggro,
     DebugAiState,
     DebugProfiling,
+    DebugObstacles,
 }
 
 /// A raw input that can trigger an action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InputBinding {
     Key(KeyCode),
+    /// Key that requires Ctrl to be held.
+    CtrlKey(KeyCode),
     Mouse(MouseButton),
 }
 
@@ -104,12 +113,19 @@ impl Default for InputMap {
         // World map
         map.bind(InputBinding::Key(KeyCode::KeyM), Action::ToggleWorldMap);
 
-        // Debug
-        map.bind(InputBinding::Key(KeyCode::F1), Action::DebugGrid);
-        map.bind(InputBinding::Key(KeyCode::F2), Action::DebugPathing);
-        map.bind(InputBinding::Key(KeyCode::F3), Action::DebugAggro);
-        map.bind(InputBinding::Key(KeyCode::F4), Action::DebugAiState);
-        map.bind(InputBinding::Key(KeyCode::F5), Action::DebugProfiling);
+        // Party selection
+        map.bind(InputBinding::Key(KeyCode::F1), Action::SelectPartyMember1);
+        map.bind(InputBinding::Key(KeyCode::F2), Action::SelectPartyMember2);
+        map.bind(InputBinding::Key(KeyCode::F3), Action::SelectPartyMember3);
+        map.bind(InputBinding::Key(KeyCode::F4), Action::SelectPartyMember4);
+
+        // Debug (Ctrl+F key)
+        map.bind(InputBinding::CtrlKey(KeyCode::F1), Action::DebugGrid);
+        map.bind(InputBinding::CtrlKey(KeyCode::F2), Action::DebugPathing);
+        map.bind(InputBinding::CtrlKey(KeyCode::F3), Action::DebugAggro);
+        map.bind(InputBinding::CtrlKey(KeyCode::F4), Action::DebugAiState);
+        map.bind(InputBinding::CtrlKey(KeyCode::F5), Action::DebugProfiling);
+        map.bind(InputBinding::CtrlKey(KeyCode::F6), Action::DebugObstacles);
 
         map
     }
@@ -164,9 +180,26 @@ pub fn process_input(
 ) {
     actions.clear();
 
+    let ctrl_held = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+
     for (binding, action) in &input_map.bindings {
         match binding {
             InputBinding::Key(key) => {
+                // Plain key bindings only fire when Ctrl is NOT held,
+                // so Ctrl+F1 doesn't also trigger a plain F1 binding.
+                if ctrl_held { continue; }
+                if keyboard.pressed(*key) {
+                    actions.pressed.insert(*action);
+                }
+                if keyboard.just_pressed(*key) {
+                    actions.just_pressed.insert(*action);
+                }
+                if keyboard.just_released(*key) {
+                    actions.just_released.insert(*action);
+                }
+            }
+            InputBinding::CtrlKey(key) => {
+                if !ctrl_held { continue; }
                 if keyboard.pressed(*key) {
                     actions.pressed.insert(*action);
                 }
