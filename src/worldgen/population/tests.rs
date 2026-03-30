@@ -48,7 +48,7 @@ fn test_faction() -> FactionState {
     FactionState {
         id: 1,
         name: "Test Faction".into(),
-        faction_type: FactionType::Kingdom,
+        faction_type: FactionType::TribalWarband,
         race: Race::Human,
         founded_year: 0,
         home_region: "Test".into(),

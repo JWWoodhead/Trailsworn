@@ -80,12 +80,14 @@ impl RelationMatrix {
         }
 
         // Type-based friction
+        let a_territorial = a.faction_type.is_territorial();
+        let b_territorial = b.faction_type.is_territorial();
         match (a.faction_type, b.faction_type) {
-            (FactionType::Kingdom, FactionType::BanditClan)
-            | (FactionType::BanditClan, FactionType::Kingdom) => {
-                if a.home_region == b.home_region {
-                    base -= 20;
-                }
+            // Bandits clash with any territorial neighbour
+            (FactionType::BanditClan, _) | (_, FactionType::BanditClan)
+                if a_territorial && b_territorial && a.home_region == b.home_region =>
+            {
+                base -= 20;
             }
             (FactionType::ReligiousOrder, FactionType::MageCircle)
             | (FactionType::MageCircle, FactionType::ReligiousOrder) => base -= 10,
@@ -148,20 +150,20 @@ impl FactionState {
         self.dissolved_year.is_none() || self.dissolved_year.unwrap() > year
     }
 
-    /// Update gauges from population-derived stats. Factions not in the stats
-    /// map (e.g. just spawned, no settlements yet) keep their current values.
+    /// Update gauges from population-derived stats. Factions with no allegiant
+    /// people get zeroed gauges so the dissolution check can fire.
     pub fn update_from_stats(&mut self, stats: &crate::worldgen::population::faction_stats::FactionStats) {
-        if let Some(m) = stats.military(self.id) {
-            self.military_strength = m;
-        }
-        if let Some(w) = stats.wealth(self.id) {
-            self.wealth = w;
-        }
-        if let Some(s) = stats.stability(self.id) {
-            self.stability = s;
-        }
-        if let Some(g) = stats.patron_god(self.id) {
-            self.patron_god = Some(g);
+        if stats.has_population(self.id) {
+            self.military_strength = stats.military(self.id).unwrap();
+            self.wealth = stats.wealth(self.id).unwrap();
+            self.stability = stats.stability(self.id).unwrap();
+            if let Some(g) = stats.patron_god(self.id) {
+                self.patron_god = Some(g);
+            }
+        } else {
+            self.military_strength = 0;
+            self.wealth = 0;
+            self.stability = 0;
         }
     }
 
@@ -169,7 +171,6 @@ impl FactionState {
     /// Initial gauge values (military, wealth, stability) based on faction type.
     pub fn initialize_gauges(faction_type: FactionType) -> (u32, u32, u32) {
         match faction_type {
-            FactionType::Kingdom => (50, 60, 65),
             FactionType::MercenaryCompany => (55, 40, 50),
             FactionType::ReligiousOrder => (25, 45, 70),
             FactionType::ThievesGuild => (20, 55, 40),
@@ -407,7 +408,7 @@ mod tests {
     #[test]
     fn racial_initialization() {
         let dwarf = FactionState {
-            id: 1, name: "D".into(), faction_type: FactionType::Kingdom,
+            id: 1, name: "D".into(), faction_type: FactionType::MercenaryCompany,
             race: Race::Dwarf, founded_year: 0, home_region: "North".into(),
             dissolved_year: None, leader_name: "L".into(), leader_id: None,
             military_strength: 50, wealth: 50, stability: 50,
@@ -424,16 +425,16 @@ mod tests {
         };
         let mut rm = RelationMatrix::default();
         rm.initialize_pair(&dwarf, &goblin);
-        // Dwarf vs Goblin: -15 racial + 5 same region + (-20 Kingdom vs BanditClan same region) = -30
+        // Dwarf vs Goblin: -15 racial + 5 same region + (-20 BanditClan vs territorial same region) = -30
         assert!(rm.get(1, 2) < 0);
     }
 
     #[test]
     fn faction_initial_gauges() {
-        let (m, w, s) = FactionState::initialize_gauges(FactionType::Kingdom);
-        assert_eq!(m, 50);
-        assert_eq!(w, 60);
-        assert_eq!(s, 65);
+        let (m, w, s) = FactionState::initialize_gauges(FactionType::MercenaryCompany);
+        assert_eq!(m, 55);
+        assert_eq!(w, 40);
+        assert_eq!(s, 50);
     }
 
     #[test]

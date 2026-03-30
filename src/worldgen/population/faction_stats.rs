@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::worldgen::divine::gods::GodId;
+use crate::worldgen::history::characters::CharacterTrait;
 use crate::worldgen::history::state::{FactionState, SettlementState};
 use crate::worldgen::names::{FactionType, Race};
 
@@ -44,6 +45,11 @@ impl FactionStats {
     pub fn patron_god(&self, faction_id: u32) -> Option<GodId> {
         self.entries.get(&faction_id).and_then(|e| e.patron_god)
     }
+
+    /// Whether the faction has any living allegiant people.
+    pub fn has_population(&self, faction_id: u32) -> bool {
+        self.entries.contains_key(&faction_id)
+    }
 }
 
 /// Compute faction stats from population data for all alive factions.
@@ -60,15 +66,21 @@ pub fn compute_faction_stats(
     let mut entries = HashMap::new();
 
     for faction in factions.iter().filter(|f| f.is_alive(year)) {
-        // Military: from all allegiant soldiers regardless of where they live
+        // Base military: from all allegiant soldiers regardless of where they live
         let raw_military = faction_military_power(people, index, settlements, faction.id, year);
-        let military = (raw_military / 2.0).round().clamp(0.0, 100.0) as u32;
+        let base_military = (raw_military / 2.0).round().clamp(0.0, 100.0) as u32;
 
         // Stats from all allegiant people (not settlement-based)
         let mut merchant_count = 0u32;
         let mut total_happiness = 0u64;
         let mut total_population = 0u64;
         let mut god_worship: BTreeMap<GodId, u64> = BTreeMap::new();
+        // Trait counters for type-aware gauges
+        let mut treacherous_cunning = 0u32;
+        let mut devout_fanatical = 0u32;
+        let mut scholarly_wise = 0u32;
+        let mut total_patron_devotion = 0u64;
+        let mut patron_devotion_count = 0u64;
 
         for person in people.iter() {
             if !person.is_alive(year) { continue; }
@@ -80,7 +92,30 @@ pub fn compute_faction_stats(
             total_happiness += person.happiness as u64;
             total_population += 1;
 
-            // Individual faith for patron god
+            // Trait counting
+            if person.traits.contains(&CharacterTrait::Treacherous)
+                || person.traits.contains(&CharacterTrait::Cunning) {
+                treacherous_cunning += 1;
+            }
+            if person.traits.contains(&CharacterTrait::Devout)
+                || person.traits.contains(&CharacterTrait::Fanatical) {
+                devout_fanatical += 1;
+            }
+            if person.traits.contains(&CharacterTrait::Scholarly)
+                || person.traits.contains(&CharacterTrait::Wise) {
+                scholarly_wise += 1;
+            }
+
+            // Devotion to faction's patron god (from previous year)
+            if let Some(patron) = faction.patron_god {
+                let d = person.devotion_to(patron) as u64;
+                if d > 0 {
+                    total_patron_devotion += d;
+                    patron_devotion_count += 1;
+                }
+            }
+
+            // Individual faith for patron god computation
             if let Some(primary) = person.primary_god() {
                 let devotion = person.devotion_to(primary) as u64;
                 *god_worship.entry(primary).or_insert(0) += devotion;
@@ -89,8 +124,53 @@ pub fn compute_faction_stats(
 
         if total_population == 0 { continue; } // no allegiant people — skip
 
-        let wealth = (merchant_count * 2).min(100);
-        let stability = (total_happiness / total_population).min(100) as u32;
+        let avg_happiness = (total_happiness / total_population).min(100) as u32;
+        let avg_devotion = if patron_devotion_count > 0 {
+            (total_patron_devotion / patron_devotion_count).min(100) as u32
+        } else {
+            0
+        };
+
+        // Type-aware gauge computation
+        let (military, wealth, stability) = match faction.faction_type {
+            FactionType::ThievesGuild => (
+                (treacherous_cunning * 5).min(100),          // shadow operatives
+                (total_population as u32 * 3).min(100),      // stolen wealth
+                avg_happiness,
+            ),
+            FactionType::MerchantGuild => (
+                base_military,                                // hired guards
+                (merchant_count * 4 + total_population as u32).min(100), // trade network
+                avg_happiness,
+            ),
+            FactionType::ReligiousOrder => (
+                (devout_fanatical * 3).min(100),             // zealot fighters
+                (merchant_count * 2).min(100),               // donations
+                if avg_devotion > 0 { avg_devotion } else { avg_happiness }, // faith-based cohesion
+            ),
+            FactionType::Theocracy => (
+                base_military.max((devout_fanatical * 2).min(100)), // soldiers or holy warriors
+                (merchant_count * 2).min(100),
+                // 60% devotion + 40% happiness
+                if avg_devotion > 0 {
+                    ((avg_devotion as u64 * 60 + avg_happiness as u64 * 40) / 100).min(100) as u32
+                } else {
+                    avg_happiness
+                },
+            ),
+            FactionType::MageCircle => (
+                (scholarly_wise * 4).min(100),                // arcane warfare
+                (scholarly_wise * 3).min(100),                // arcane knowledge value
+                avg_happiness,
+            ),
+            _ => (
+                // Kingdom, MercenaryCompany, BanditClan, TribalWarband — unchanged
+                base_military,
+                (merchant_count * 2).min(100),
+                avg_happiness,
+            ),
+        };
+
         let patron_god = god_worship.into_iter()
             .max_by_key(|(_, v)| *v)
             .map(|(god, _)| god);
@@ -187,14 +267,15 @@ pub struct FactionFounder {
     pub race_mismatch: bool,
     /// Whether the dominant faith differs from the ruling faction's faith.
     pub faith_mismatch: bool,
+    /// The god this faction is founded around (prophet's god, founder's faith, etc.).
+    /// None means use the settlement's patron god as fallback.
+    pub patron_god: Option<GodId>,
 }
 
 /// Results of scanning the population for potential faction founders and kingdom upgrades.
 pub struct FormationCandidates {
     /// People who will found new factions based on their traits and circumstances.
     pub founders: Vec<FactionFounder>,
-    /// Existing factions that now control 3+ settlements (eligible for Kingdom upgrade).
-    pub kingdom_upgrades: Vec<u32>,
     /// Settlements ripe for rebellion (race/faith mismatch + unhappy leader figure).
     pub rebellions: Vec<FactionFounder>,
 }
@@ -212,7 +293,6 @@ pub fn compute_formation_candidates(
 
     let mut candidates = FormationCandidates {
         founders: Vec::new(),
-        kingdom_upgrades: Vec::new(),
         rebellions: Vec::new(),
     };
 
@@ -241,52 +321,48 @@ pub fn compute_formation_candidates(
             && controlling_faction.patron_god.is_some()
             && settlement.patron_god != controlling_faction.patron_god;
 
-        // Build a set of faction types already present in this settlement (via resident allegiances)
-        let mut local_faction_types: Vec<FactionType> = Vec::new();
-        for &idx in &living {
-            let fid = people[idx].faction_allegiance;
-            if fid == 0 { continue; }
-            if let Some(f) = factions.iter().find(|f| f.id == fid && f.is_alive(year)) {
-                if !local_faction_types.contains(&f.faction_type) {
-                    local_faction_types.push(f.faction_type);
-                }
-            }
-        }
-
-        // Helper: check if a matching faction already exists that the person could join
-        let existing_faction_of_type = |ft: FactionType, extra_match: Option<&dyn Fn(&FactionState) -> bool>| -> bool {
-            factions.iter().any(|f| {
-                f.is_alive(year) && f.faction_type == ft
-                    && extra_match.map_or(true, |check| check(f))
-            })
-        };
-
-        // Scan each adult for founding potential
+        // Scan each adult for founding potential. A person founds a faction when:
+        // 1. Their traits/circumstances create the motivation
+        // 2. No existing faction already serves that motivation (they'd join it instead)
+        // The allegiance shift system handles the actual recruitment into existing factions.
         for &idx in &living {
             if claimed_settlements.contains(&settlement.id) { break; }
             let person = &people[idx];
 
-            // Prophet → Theocracy: only if no theocracy for this god exists yet
+            // Helper: would an existing faction serve this person's motivation?
+            // If so, they'll join it via allegiance shifts rather than founding a new one.
+            let would_join_existing = |ft: FactionType, extra: Option<&dyn Fn(&FactionState) -> bool>| -> bool {
+                factions.iter().any(|f| {
+                    f.is_alive(year) && f.faction_type == ft
+                        && extra.map_or(true, |check| check(f))
+                })
+            };
+
+            // Prophet → Theocracy: only if no faction already champions their god
             if let Some(ref prophet) = person.prophet_of {
                 if prophet.kind == super::types::ProphetKind::Zealot {
                     let god = prophet.god_id;
-                    let theocracy_exists = factions.iter().any(|f| {
-                        f.is_alive(year) && f.faction_type == FactionType::Theocracy && f.patron_god == Some(god)
+                    // Don't found a theocracy if any faction already has this god as patron —
+                    // the god's worship is already represented in the world
+                    let god_already_championed = factions.iter().any(|f| {
+                        f.is_alive(year) && f.patron_god == Some(god)
                     });
-                    if !theocracy_exists {
-                        claimed_settlements.push(settlement.id);
-                        candidates.founders.push(FactionFounder {
-                            person_id: person.id,
-                            settlement_id: settlement.id,
-                            faction_type: FactionType::Theocracy,
-                            race: person.race,
-                            reason: format!("prophet of god {} declared a holy state", prophet.god_id),
-                            avg_happiness,
-                            race_mismatch,
-                            faith_mismatch,
-                        });
-                        break;
+                    if god_already_championed {
+                        continue;
                     }
+                    claimed_settlements.push(settlement.id);
+                    candidates.founders.push(FactionFounder {
+                        person_id: person.id,
+                        settlement_id: settlement.id,
+                        faction_type: FactionType::Theocracy,
+                        race: person.race,
+                        reason: format!("prophet of god {} declared a holy state", prophet.god_id),
+                        avg_happiness,
+                        race_mismatch,
+                        faith_mismatch,
+                        patron_god: Some(god),
+                    });
+                    break;
                 }
             }
 
@@ -300,61 +376,51 @@ pub fn compute_formation_candidates(
             if person.happiness >= 40 { continue; }
 
             // Different race from controlling faction → tribal breakaway
-            // Only if no tribal faction for this race exists yet
             if person.race != controlling_faction.race && is_ambitious {
                 let race = person.race;
-                let tribal_exists = existing_faction_of_type(
-                    FactionType::TribalWarband,
-                    Some(&|f: &FactionState| f.race == race),
-                );
-                if !tribal_exists {
-                    claimed_settlements.push(settlement.id);
-                    candidates.founders.push(FactionFounder {
-                        person_id: person.id,
-                        settlement_id: settlement.id,
-                        faction_type: FactionType::TribalWarband,
-                        race: person.race,
-                        reason: format!("{:?} declared independence for their people", person.race),
-                        avg_happiness,
-                        race_mismatch,
-                        faith_mismatch,
-                    });
-                    break;
+                if would_join_existing(FactionType::TribalWarband, Some(&|f: &FactionState| f.race == race)) {
+                    continue;
                 }
+                claimed_settlements.push(settlement.id);
+                candidates.founders.push(FactionFounder {
+                    person_id: person.id,
+                    settlement_id: settlement.id,
+                    faction_type: FactionType::TribalWarband,
+                    race: person.race,
+                    reason: format!("{:?} declared independence for their people", person.race),
+                    avg_happiness,
+                    race_mismatch,
+                    faith_mismatch,
+                    patron_god: None,
+                });
+                break;
             }
 
             // Treacherous/Cunning + unhappy → criminal syndicate
-            // Only if no ThievesGuild exists for this race yet
             if person.traits.contains(&CharacterTrait::Treacherous)
                 || person.traits.contains(&CharacterTrait::Cunning) {
-                let race = person.race;
-                let guild_exists = existing_faction_of_type(
-                    FactionType::ThievesGuild,
-                    Some(&|f: &FactionState| f.race == race),
-                );
-                if !guild_exists {
-                    claimed_settlements.push(settlement.id);
-                    candidates.founders.push(FactionFounder {
-                        person_id: person.id,
-                        settlement_id: settlement.id,
-                        faction_type: FactionType::ThievesGuild,
-                        race: person.race,
-                        reason: "built a criminal network from the shadows".into(),
-                        avg_happiness,
-                        race_mismatch,
-                        faith_mismatch,
-                    });
-                    break;
-                }
+                if would_join_existing(FactionType::ThievesGuild, None) { continue; }
+                claimed_settlements.push(settlement.id);
+                candidates.founders.push(FactionFounder {
+                    person_id: person.id,
+                    settlement_id: settlement.id,
+                    faction_type: FactionType::ThievesGuild,
+                    race: person.race,
+                    reason: "built a criminal network from the shadows".into(),
+                    avg_happiness,
+                    race_mismatch,
+                    faith_mismatch,
+                    patron_god: None,
+                });
+                break;
             }
 
             // Soldier who survived wars + ambitious → military order
-            // Only if no MercenaryCompany already operates locally
             let wars_survived = person.life_events.iter()
                 .filter(|e| matches!(e.kind, LifeEventKind::SurvivedWar { .. }))
                 .count();
-            let merc_exists = existing_faction_of_type(FactionType::MercenaryCompany, None);
-            if wars_survived >= 2 && person.occupation == Occupation::Soldier && !merc_exists {
+            if wars_survived >= 2 && person.occupation == Occupation::Soldier {
+                if would_join_existing(FactionType::MercenaryCompany, None) { continue; }
                 claimed_settlements.push(settlement.id);
                 candidates.founders.push(FactionFounder {
                     person_id: person.id,
@@ -365,19 +431,14 @@ pub fn compute_formation_candidates(
                     avg_happiness,
                     race_mismatch,
                     faith_mismatch,
+                    patron_god: None,
                 });
                 break;
             }
 
             // Merchant + charismatic → merchant guild
-            // Only if no MerchantGuild for this race exists yet
             if person.occupation == Occupation::Merchant && is_charismatic {
-                let race = person.race;
-                let mg_exists = existing_faction_of_type(
-                    FactionType::MerchantGuild,
-                    Some(&|f: &FactionState| f.race == race),
-                );
-                if mg_exists { continue; }
+                if would_join_existing(FactionType::MerchantGuild, None) { continue; }
                 claimed_settlements.push(settlement.id);
                 candidates.founders.push(FactionFounder {
                     person_id: person.id,
@@ -388,20 +449,21 @@ pub fn compute_formation_candidates(
                     avg_happiness,
                     race_mismatch,
                     faith_mismatch,
+                    patron_god: None,
                 });
                 break;
             }
 
             // Devout + different faith from controlling faction → religious order
-            // Only if no ReligiousOrder for this god exists yet
+            // Only if no faction already champions this god (same logic as Theocracy)
             if person.traits.contains(&CharacterTrait::Devout) {
                 let person_god = person.primary_god();
                 if person_god.is_some() && person_god != controlling_faction.patron_god {
                     let god = person_god.unwrap();
-                    let order_exists = factions.iter().any(|f| {
-                        f.is_alive(year) && f.faction_type == FactionType::ReligiousOrder && f.patron_god == Some(god)
+                    let god_already_championed = factions.iter().any(|f| {
+                        f.is_alive(year) && f.patron_god == Some(god)
                     });
-                    if order_exists { continue; }
+                    if god_already_championed { continue; }
                     claimed_settlements.push(settlement.id);
                     candidates.founders.push(FactionFounder {
                         person_id: person.id,
@@ -412,9 +474,30 @@ pub fn compute_formation_candidates(
                         avg_happiness,
                         race_mismatch,
                         faith_mismatch,
+                        patron_god: Some(god),
                     });
                     break;
                 }
+            }
+
+            // Scholarly/Wise → mage circle
+            if person.traits.contains(&CharacterTrait::Scholarly)
+                || person.traits.contains(&CharacterTrait::Wise)
+            {
+                if would_join_existing(FactionType::MageCircle, None) { continue; }
+                claimed_settlements.push(settlement.id);
+                candidates.founders.push(FactionFounder {
+                    person_id: person.id,
+                    settlement_id: settlement.id,
+                    faction_type: FactionType::MageCircle,
+                    race: person.race,
+                    reason: "gathered fellow scholars into an arcane circle".into(),
+                    avg_happiness,
+                    race_mismatch,
+                    faith_mismatch,
+                    patron_god: None,
+                });
+                break;
             }
         }
 
@@ -440,6 +523,15 @@ pub fn compute_formation_candidates(
 
                 if let Some(rebel_person) = rebel {
                     let ft = if race_mismatch { FactionType::TribalWarband } else { FactionType::ReligiousOrder };
+
+                    // Faith rebellions: don't rebel if a faction already champions the rebel's god
+                    if ft == FactionType::ReligiousOrder {
+                        if let Some(god) = rebel_person.primary_god() {
+                            let already = factions.iter().any(|f| f.is_alive(year) && f.patron_god == Some(god));
+                            if already { continue; }
+                        }
+                    }
+
                     candidates.rebellions.push(FactionFounder {
                         person_id: rebel_person.id,
                         settlement_id: settlement.id,
@@ -449,16 +541,10 @@ pub fn compute_formation_candidates(
                         avg_happiness,
                         race_mismatch,
                         faith_mismatch,
+                        patron_god: rebel_person.primary_god(),
                     });
                 }
             }
-        }
-    }
-
-    // Kingdom upgrade: factions with 3+ settlements that aren't already kingdoms
-    for faction in factions.iter().filter(|f| f.is_alive(year)) {
-        if faction.settlements.len() >= 3 && faction.faction_type != FactionType::Kingdom {
-            candidates.kingdom_upgrades.push(faction.id);
         }
     }
 

@@ -147,7 +147,6 @@ pub fn settlement_name(rng: &mut impl Rng) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FactionType {
     MercenaryCompany,
-    Kingdom,
     ReligiousOrder,
     ThievesGuild,
     MerchantGuild,
@@ -157,14 +156,22 @@ pub enum FactionType {
     Theocracy,
 }
 
+impl FactionType {
+    /// Territorial factions hold land and wage conventional wars.
+    /// Non-territorial factions (guilds, orders, circles) exist within
+    /// the population and cannot be besieged or absorbed by force.
+    pub fn is_territorial(&self) -> bool {
+        matches!(self,
+            FactionType::TribalWarband
+            | FactionType::BanditClan | FactionType::MercenaryCompany
+            | FactionType::Theocracy
+        )
+    }
+}
+
 const MERCENARY_PATTERNS: &[&str] = &[
     "The {adj} Company", "The {adj} {noun}s", "{name}'s {noun}s",
     "The {noun}s of {place}", "The {adj} Guard",
-];
-
-const KINGDOM_PATTERNS: &[&str] = &[
-    "The Kingdom of {place}", "The {adj} Realm", "The {place} Dominion",
-    "The {adj} Crown", "{place}",
 ];
 
 const RELIGIOUS_PATTERNS: &[&str] = &[
@@ -230,7 +237,6 @@ const FACTION_PLACE: &[&str] = &[
 pub fn faction_name(faction_type: FactionType, race: Race, rng: &mut impl Rng) -> String {
     let patterns = match faction_type {
         FactionType::MercenaryCompany => MERCENARY_PATTERNS,
-        FactionType::Kingdom => KINGDOM_PATTERNS,
         FactionType::ReligiousOrder => RELIGIOUS_PATTERNS,
         FactionType::ThievesGuild => THIEVES_PATTERNS,
         FactionType::MerchantGuild => MERCHANT_PATTERNS,
@@ -317,13 +323,13 @@ mod tests {
         let mut rng = rng();
         let types = [
             FactionType::MercenaryCompany,
-            FactionType::Kingdom,
             FactionType::ReligiousOrder,
             FactionType::ThievesGuild,
             FactionType::MerchantGuild,
             FactionType::MageCircle,
             FactionType::BanditClan,
             FactionType::TribalWarband,
+            FactionType::Theocracy,
         ];
         for ft in types {
             let name = faction_name(ft, Race::Human, &mut rng);

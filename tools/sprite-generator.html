@@ -79,6 +79,15 @@
   </div>
   <div class="canvas-row" id="canvas-row"></div>
 
+  <div id="tile-preview-section" style="display:none;width:100%;padding:10px 16px 0;text-align:center">
+    <div style="color:#555;font-size:11px;margin-bottom:6px">Tiling preview</div>
+    <canvas id="tile-preview" style="image-rendering:pixelated;border:1px solid #2a2a2a;background:#131313"></canvas>
+  </div>
+  <div id="room-preview-section" style="display:none;width:100%;padding:10px 16px 0;text-align:center">
+    <div style="color:#555;font-size:11px;margin-bottom:6px">Room preview</div>
+    <canvas id="room-preview" style="image-rendering:pixelated;border:1px solid #2a2a2a;background:#1a1a1a"></canvas>
+  </div>
+
   <div class="queue-section">
     <div class="queue-header">
       <h3>Export Queue <span class="count" id="queue-count">(0)</span></h3>
@@ -105,6 +114,28 @@ function rgba(c,a){return 'rgba('+c[0]+','+c[1]+','+c[2]+','+a+')'}
 function desat(hex,amt){var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);var gr=r*0.299+g*0.587+b*0.114;return[Math.round(r+(gr-r)*amt),Math.round(g+(gr-g)*amt),Math.round(b+(gr-b)*amt)]}
 function lerpColor(c1,c2,t){t=Math.max(0,Math.min(1,t));return[Math.round(c1[0]+(c2[0]-c1[0])*t),Math.round(c1[1]+(c2[1]-c1[1])*t),Math.round(c1[2]+(c2[2]-c1[2])*t)]}
 function colForRamp(ramp,dx,dy){var len=Math.sqrt(dx*dx+dy*dy)||1;var dot=(dx/len)*LX+(dy/len)*LY;var t=(dot+1)/2;return ramp[Math.min(Math.round(t*(ramp.length-1)),ramp.length-1)]}
+
+// ============================================================
+//  SHARED GROUND SHADOW
+// ============================================================
+// Centralized shadow for all generators. objectHeight drives everything:
+//   < 12  → no shadow (ground-level: grass, pebbles, mushrooms, leaves, flowers)
+//   12-25 → small (bushes, small rocks)
+//   25-45 → medium (fences, walls, big rocks)
+//   45+   → large (trees, cacti)
+function drawGroundShadow(ctx,cx,baseY,footprint,objectHeight,shadowColor){
+  if(objectHeight<12) return; // ground-level objects — no baked shadow
+  var t=Math.min((objectHeight-12)/60,1); // 0..1 ramp from 12px to 72px tall
+  var ellW=footprint*(0.5+t*0.4);         // wider for taller objects
+  var ellH=2.5+t*3;                       // flatter for short, rounder for tall
+  var offX=footprint*(0.06+t*0.06);       // offset right, more for taller
+  var offY=3+t*3;                         // offset down
+  var alpha=0.35+t*0.3;                   // 0.35 for short bushes, up to 0.65 for trees
+  ctx.beginPath();
+  ctx.ellipse(cx+offX,baseY+offY,ellW,ellH,0,0,Math.PI*2);
+  ctx.fillStyle=rgba(shadowColor,alpha);
+  ctx.fill();
+}
 
 // ============================================================
 //  ROCK GENERATOR
@@ -236,7 +267,9 @@ function generateTree(ctx,W,H,cfg){
   if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
   var pal=treePalettes[cfg._palette];var tr=pal.trunk;
   var bx=W/2+rf(-3,3),by=H-12+rf(-3,3);
-  ctx.beginPath();ctx.ellipse(bx+cfg.tw*0.3,by+4,cfg.tw*0.8,3.5,0,0,Math.PI*2);ctx.fillStyle=rgba(pal.shadow,0.65);ctx.fill();
+  // canopy-scale shadow: footprint from leaf size + spread, height from trunk length
+  var canopyFootprint=Math.max(cfg.tw*2,cfg.ls*3+cfg.spread*0.5);
+  drawGroundShadow(ctx,bx,by,canopyFootprint,cfg.tl,pal.shadow);
   if(cfg._type==='swamp'){treeSeg(ctx,bx,by,bx+rf(-2,2),by-12,cfg.tw*1.3/2,cfg.tw/2,tr);by-=10}
   treeLeaves=[];
   treeBranch(ctx,bx,by,-Math.PI/2+rf(-0.08,0.08),rf(cfg.tl*0.8,cfg.tl*1.2),cfg.tw,cfg.taper/100,1,cfg.depth,cfg.branches,cfg.spread,tr);
@@ -278,7 +311,7 @@ function generateBush(ctx,W,H,cfg){
   var pal=bushPalettes[cfg._palette];
   // Bottom-center: bush base near canvas bottom
   var cx=W/2,cy=H-cfg.clusterSize-6;
-  ctx.beginPath();ctx.ellipse(cx+1,cy+cfg.clusterSize*0.4,cfg.spread*1.2,3.5,0,0,Math.PI*2);ctx.fillStyle=rgba(pal.shadow,0.5);ctx.fill();
+  drawGroundShadow(ctx,cx,cy+cfg.clusterSize*0.3,cfg.spread*2,cfg.clusterSize+cfg.bladeHeight*0.5,pal.shadow);
   if(cfg._type==='scrub'){for(var i=0;i<5;i++){var sx=cx+rf(-cfg.spread,cfg.spread),sh=rf(12,22);ctx.beginPath();ctx.moveTo(sx,cy+rf(-3,3));ctx.lineTo(sx+rf(-4,4),cy-sh);ctx.strokeStyle=rgba(pal.stickColor,rf(0.5,0.8));ctx.lineWidth=rf(0.8,1.5);ctx.stroke()}}
   if(cfg.blades>0){var thick=cfg._type==='reeds'?rf(1.8,2.8):rf(1.2,2.0);for(var i=0;i<cfg.blades;i++) drawBlade(ctx,cx+rf(-cfg.spread,cfg.spread),cy+rf(-2,4),cfg.bladeHeight,pal.ramp,thick,cfg._type==='reeds')}
   for(var c=0;c<cfg.clusters;c++) fluffyCluster(ctx,cx+rf(-cfg.spread,cfg.spread),cy+rf(-cfg.spread*0.4,cfg.spread*0.4),cfg.clusterSize+rf(-2,2),pal.ramp);
@@ -287,24 +320,238 @@ function generateBush(ctx,W,H,cfg){
 // ============================================================
 //  GROUND SCATTER GENERATOR
 // ============================================================
-var grassRamp=['#3a7028','#4a8035','#5a9042','#6aa050','#5a8838','#7ab060'].map(function(c){return desat(c,0.10)});
-var FLOWER_COLORS=[[0x8a,0x6a,0x9a],[0xb0,0xa0,0x50],[0xc0,0xb8,0xb0],[0xa0,0x60,0x60],[0x70,0x80,0xb0],[0xc0,0x80,0x50]];
-var scatterPresets={
-  tall_grass:{blades:30,bladeHeight:28,spread:20,curve:8,bladeWidth:1.8,flowerChance:0,flowerSize:3},
-  wildflowers:{blades:25,bladeHeight:22,spread:18,curve:7,bladeWidth:1.5,flowerChance:0.35,flowerSize:3}
+var scatterPalettes={
+  grassland:{ramp:['#3a7028','#4a8035','#5a9042','#6aa050','#5a8838','#7ab060'].map(function(c){return desat(c,0.10)}),shadow:[0x2a,0x3a,0x1e],flowerColors:[[0x8a,0x6a,0x9a],[0xb0,0xa0,0x50],[0xc0,0xb8,0xb0],[0xa0,0x60,0x60],[0x70,0x80,0xb0],[0xc0,0x80,0x50]]},
+  forest:{ramp:['#2a5018','#3a6024','#486e30','#3a5820','#506a2a','#5a7e38'].map(function(c){return desat(c,0.14)}),shadow:[0x20,0x23,0x0e],flowerColors:[[0x7a,0x60,0x8a],[0xc0,0xb8,0xb0],[0x90,0x80,0x90]]},
+  tundra:{ramp:['#506050','#607060','#6e7e6e','#5a6a5a','#788878','#687868'].map(function(c){return desat(c,0.28)}),shadow:[0x38,0x48,0x52],flowerColors:[]},
+  swamp:{ramp:['#3a3a18','#4a4a20','#585828','#4a4818','#606020','#686830'].map(function(c){return desat(c,0.22)}),shadow:[0x1a,0x20,0x10],flowerColors:[[0x6a,0x6a,0x30]]},
+  coast:{ramp:['#506840','#607850','#6e8860','#5a7048','#788a58','#688068'].map(function(c){return desat(c,0.20)}),shadow:[0x3a,0x38,0x28],flowerColors:[]},
+  flower:{ramp:['#3a6028','#4a7035','#5a8040'].map(function(c){return desat(c,0.10)}),shadow:[0x2a,0x3a,0x1e],flowerColors:[[0x8a,0x6a,0x9a],[0xb0,0xa0,0x50],[0xc0,0xb8,0xb0],[0xa0,0x60,0x60],[0x70,0x80,0xb0],[0xc0,0x80,0x50],[0xd0,0x60,0x70],[0xe0,0xb0,0x50]]},
+  autumn:{ramp:['#5a4a28','#6a5a30','#786838'].map(function(c){return desat(c,0.15)}),shadow:[0x2a,0x20,0x10],leafColors:[[0xb0,0x60,0x20],[0xc0,0x80,0x30],[0xa0,0x40,0x20],[0xd0,0xa0,0x30],[0x90,0x30,0x18],[0x80,0x60,0x28],[0xd0,0xc0,0x40]]}
 };
+var scatterPresets={
+  tall_grass:{palette:'grassland',blades:30,bladeHeight:28,spread:20,curve:8,bladeWidth:1.8,flowerChance:0,flowerSize:3,fernChance:0,leafCount:0},
+  wildflowers:{palette:'grassland',blades:25,bladeHeight:22,spread:18,curve:7,bladeWidth:1.5,flowerChance:0.35,flowerSize:3,fernChance:0,leafCount:0},
+  forest_undergrowth:{palette:'forest',blades:22,bladeHeight:18,spread:18,curve:5,bladeWidth:2.0,flowerChance:0,flowerSize:3,fernChance:0.35,leafCount:0},
+  tundra_scrub:{palette:'tundra',blades:12,bladeHeight:14,spread:24,curve:12,bladeWidth:1.2,flowerChance:0,flowerSize:2,fernChance:0,leafCount:0},
+  swamp_grass:{palette:'swamp',blades:28,bladeHeight:32,spread:14,curve:4,bladeWidth:2.2,flowerChance:0,flowerSize:3,fernChance:0,leafCount:0},
+  coastal_dune:{palette:'coast',blades:16,bladeHeight:24,spread:22,curve:10,bladeWidth:1.0,flowerChance:0,flowerSize:2,fernChance:0,leafCount:0},
+  flower_clusters:{palette:'flower',blades:10,bladeHeight:14,spread:16,curve:4,bladeWidth:1.0,flowerChance:0.85,flowerSize:3.5,fernChance:0,leafCount:0},
+  fallen_leaves:{palette:'autumn',blades:0,bladeHeight:0,spread:22,curve:0,bladeWidth:0,flowerChance:0,flowerSize:0,fernChance:0,leafCount:18}
+};
+
+function drawFern(ctx,bx,by,h,ramp){
+  var curveX=rf(-4,4),tipY=by-h;
+  var cpX=bx+curveX*rf(0.5,0.8),cpY=by-h*rf(0.4,0.7);
+  // central stem
+  ctx.beginPath();ctx.moveTo(bx,by);ctx.quadraticCurveTo(cpX,cpY,bx+curveX,tipY);
+  ctx.strokeStyle=rgba(colForRamp(ramp,curveX,-h),rf(0.7,0.9));ctx.lineWidth=1.2;ctx.stroke();
+  // side fronds
+  var fronds=ri(3,5);
+  for(var f=0;f<fronds;f++){
+    var t=(f+1)/(fronds+1);
+    var fx=bx+curveX*t*rf(0.4,0.8),fy=by-h*t;
+    var side=(f%2===0)?1:-1;
+    var fl=h*rf(0.12,0.22),fa=side*rf(0.3,0.8);
+    ctx.beginPath();ctx.moveTo(fx,fy);
+    ctx.quadraticCurveTo(fx+side*fl*0.6,fy-fl*0.3,fx+side*fl,fy-fl*0.5);
+    ctx.quadraticCurveTo(fx+side*fl*0.6+0.5,fy-fl*0.3,fx+0.5,fy+0.5);ctx.closePath();
+    ctx.fillStyle=rgba(colForRamp(ramp,side*5,-h*t),rf(0.7,0.9));ctx.fill();
+  }
+}
+
+function drawFlowerHead(ctx,x,y,size,petalColor){
+  var petals=ri(4,6),pr=size*0.55;
+  for(var p=0;p<petals;p++){
+    var a=Math.PI*2*p/petals+rf(-0.2,0.2);
+    var px=x+Math.cos(a)*pr,py=y+Math.sin(a)*pr;
+    ctx.beginPath();ctx.arc(px,py,size*rf(0.35,0.5),0,Math.PI*2);
+    ctx.fillStyle=rgba(petalColor,rf(0.7,0.95));ctx.fill();
+  }
+  // center
+  ctx.beginPath();ctx.arc(x,y,size*0.25,0,Math.PI*2);
+  ctx.fillStyle=rgba(lerpColor(petalColor,[0xff,0xff,0xe0],0.4),rf(0.6,0.8));ctx.fill();
+}
+
+function drawLeaf(ctx,x,y,size,angle,color){
+  // drop shadow — offset right+down for top-left light
+  ctx.save();ctx.translate(x+size*0.2,y+size*0.15);ctx.rotate(angle);
+  ctx.beginPath();ctx.moveTo(-size,0);
+  ctx.quadraticCurveTo(-size*0.3,-size*0.5,size*0.8,0);
+  ctx.quadraticCurveTo(-size*0.3,size*0.5,-size,0);ctx.closePath();
+  ctx.fillStyle='rgba(20,16,8,'+rf(0.2,0.35)+')';ctx.fill();
+  ctx.restore();
+  // leaf body
+  ctx.save();ctx.translate(x,y);ctx.rotate(angle);
+  ctx.beginPath();ctx.moveTo(-size,0);
+  ctx.quadraticCurveTo(-size*0.3,-size*0.5,size*0.8,0);
+  ctx.quadraticCurveTo(-size*0.3,size*0.5,-size,0);ctx.closePath();
+  ctx.fillStyle=rgba(color,rf(0.65,0.9));ctx.fill();
+  // vein
+  ctx.beginPath();ctx.moveTo(-size*0.8,0);ctx.lineTo(size*0.6,0);
+  ctx.strokeStyle=rgba(lerpColor(color,[0x20,0x18,0x10],0.4),rf(0.3,0.5));ctx.lineWidth=0.5;ctx.stroke();
+  ctx.restore();
+}
 
 function generateScatter(ctx,W,H,cfg){
   if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
-  // Bottom-center: grass grows up from near bottom
+  var pal=scatterPalettes[cfg._palette]||scatterPalettes.grassland;
+  var ramp=pal.ramp;
   var cx=W/2,cy=H-10;
-  ctx.beginPath();ctx.ellipse(cx,cy+2,cfg.spread*0.8,3,0,0,Math.PI*2);ctx.fillStyle=rgba([0x2a,0x3a,0x1e],0.4);ctx.fill();
+
+  // ground-level scatter: no baked shadow (grass, flowers, leaves sit on the ground)
+  drawGroundShadow(ctx,cx,cy,cfg.spread*2,0,pal.shadow);
+
+  // fallen leaves mode
+  if(cfg.leafCount>0){
+    var lc=pal.leafColors||[[0x80,0x60,0x28]];
+    for(var i=0;i<cfg.leafCount;i++){
+      var lx=cx+rf(-cfg.spread,cfg.spread),ly=cy+rf(-cfg.spread*0.5,cfg.spread*0.3);
+      var ls=rf(2.5,5),la=rf(0,Math.PI*2);
+      drawLeaf(ctx,lx,ly,ls,la,lc[ri(0,lc.length-1)]);
+    }
+    return;
+  }
+
+  // sand dots for coastal
+  if(cfg._palette==='coast'){
+    for(var i=0;i<ri(4,8);i++){
+      ctx.beginPath();ctx.arc(cx+rf(-cfg.spread,cfg.spread),cy+rf(-2,6),rf(0.8,1.8),0,Math.PI*2);
+      ctx.fillStyle=rgba([0x8a,0x7a,0x60],rf(0.3,0.5));ctx.fill();
+    }
+  }
+
+  // grass blades
   for(var i=0;i<cfg.blades;i++){
+    // fern chance
+    if(cfg.fernChance>0&&Math.random()<cfg.fernChance){
+      drawFern(ctx,cx+rf(-cfg.spread,cfg.spread),cy+rf(-3,5),cfg.bladeHeight*rf(0.6,1.3),ramp);
+      continue;
+    }
     var bx=cx+rf(-cfg.spread,cfg.spread),by=cy+rf(-3,5),h=cfg.bladeHeight*rf(0.6,1.3),curveX=rf(-cfg.curve,cfg.curve);
     var tipX=bx+curveX,tipY=by-h;
     ctx.beginPath();ctx.moveTo(bx-cfg.bladeWidth/2,by);ctx.quadraticCurveTo(bx+curveX*rf(0.4,0.8),by-h*rf(0.4,0.7),tipX,tipY);ctx.quadraticCurveTo(bx+curveX*rf(0.4,0.8)+cfg.bladeWidth*0.3,by-h*rf(0.4,0.7),bx+cfg.bladeWidth/2,by);ctx.closePath();
-    ctx.fillStyle=rgba(colForRamp(grassRamp,curveX,-h),rf(0.75,0.95));ctx.fill();
-    if(cfg.flowerChance>0&&Math.random()<cfg.flowerChance){var fc=FLOWER_COLORS[Math.floor(Math.random()*FLOWER_COLORS.length)];ctx.beginPath();ctx.arc(tipX,tipY,cfg.flowerSize*rf(0.7,1.3),0,Math.PI*2);ctx.fillStyle=rgba(fc,rf(0.7,0.95));ctx.fill();ctx.beginPath();ctx.arc(tipX-cfg.flowerSize*0.2,tipY-cfg.flowerSize*0.2,cfg.flowerSize*0.3,0,Math.PI*2);ctx.fillStyle='rgba(255,255,240,'+rf(0.3,0.5)+')';ctx.fill()}
+    ctx.fillStyle=rgba(colForRamp(ramp,curveX,-h),rf(0.75,0.95));ctx.fill();
+    // wet sheen for swamp
+    if(cfg._palette==='swamp'){
+      ctx.beginPath();ctx.moveTo(bx,by);ctx.quadraticCurveTo(bx+curveX*rf(0.4,0.8),by-h*rf(0.5,0.7),tipX,tipY);
+      ctx.strokeStyle='rgba(255,255,255,'+rf(0.06,0.14)+')';ctx.lineWidth=0.8;ctx.stroke();
+    }
+    // flowers
+    if(cfg.flowerChance>0&&Math.random()<cfg.flowerChance){
+      var fc=(pal.flowerColors&&pal.flowerColors.length)?pal.flowerColors[ri(0,pal.flowerColors.length-1)]:[0xc0,0xb0,0xa0];
+      if(cfg.flowerSize>=3){
+        drawFlowerHead(ctx,tipX,tipY,cfg.flowerSize*rf(0.7,1.1),fc);
+      } else {
+        ctx.beginPath();ctx.arc(tipX,tipY,cfg.flowerSize*rf(0.7,1.3),0,Math.PI*2);ctx.fillStyle=rgba(fc,rf(0.7,0.95));ctx.fill();
+        ctx.beginPath();ctx.arc(tipX-cfg.flowerSize*0.2,tipY-cfg.flowerSize*0.2,cfg.flowerSize*0.3,0,Math.PI*2);ctx.fillStyle='rgba(255,255,240,'+rf(0.3,0.5)+')';ctx.fill();
+      }
+    }
+  }
+}
+
+// ============================================================
+//  SMALL DETAILS GENERATOR
+// ============================================================
+var detailPalettes={
+  forest_mushroom:{cap:[[0x8a,0x50,0x30],[0x6a,0x3a,0x20],[0xa0,0x68,0x40]],stem:[0xd0,0xc8,0xb0],shadow:[0x2a,0x3a,0x1e],spots:null},
+  swamp_mushroom:{cap:[[0x5a,0x6a,0x40],[0x4a,0x5a,0x30],[0x6a,0x7a,0x50]],stem:[0xb0,0xb8,0xa0],shadow:[0x1a,0x20,0x10],spots:null},
+  red_mushroom:{cap:[[0xa0,0x30,0x28],[0x80,0x20,0x18],[0xc0,0x40,0x30]],stem:[0xd8,0xd0,0xc0],shadow:[0x2a,0x3a,0x1e],spots:[0xf0,0xe8,0xd0]},
+  gravel:{stones:[[0x5e,0x5c,0x56],[0x4a,0x48,0x42],[0x6e,0x6c,0x64],[0x3a,0x38,0x34]],shadow:[0x28,0x28,0x24]},
+  sandy_gravel:{stones:[[0x8a,0x7a,0x65],[0x7a,0x6a,0x55],[0x9a,0x8a,0x75],[0x6a,0x5a,0x48]],shadow:[0x4a,0x3a,0x28]}
+};
+var detailPresets={
+  forest_mushroom:{palette:'forest_mushroom',count:4,capSize:5,stemHeight:6,spread:14,sizeVariance:0.3,type:'mushroom'},
+  swamp_mushroom:{palette:'swamp_mushroom',count:5,capSize:4.5,stemHeight:5,spread:12,sizeVariance:0.35,type:'mushroom'},
+  red_mushroom:{palette:'red_mushroom',count:3,capSize:6,stemHeight:7,spread:12,sizeVariance:0.25,type:'mushroom'},
+  gravel:{palette:'gravel',count:25,capSize:2.5,stemHeight:0,spread:18,sizeVariance:0.5,type:'gravel'},
+  sandy_gravel:{palette:'sandy_gravel',count:20,capSize:3,stemHeight:0,spread:20,sizeVariance:0.5,type:'gravel'}
+};
+
+function drawMushroom(ctx,x,y,capSize,stemH,pal){
+  var sw=rf(1.5,2.5),lean=rf(-1.5,1.5);
+  // stem
+  ctx.fillStyle=rgba(pal.stem,rf(0.8,1));
+  ctx.beginPath();ctx.roundRect(x-sw/2+lean*0.3,y-stemH,sw,stemH,sw/3);ctx.fill();
+  // stem shadow
+  ctx.fillStyle=rgba(lerpColor(pal.stem,[0x20,0x18,0x10],0.4),0.3);
+  ctx.beginPath();ctx.roundRect(x+lean*0.3,y-stemH,sw/2,stemH,0);ctx.fill();
+  // cap
+  var capColor=pal.cap[ri(0,pal.cap.length-1)];
+  var cw=capSize,ch=capSize*0.55;
+  ctx.beginPath();ctx.ellipse(x+lean*0.5,y-stemH,cw,ch,0,Math.PI,0);ctx.fillStyle=rgba(capColor,1);ctx.fill();
+  // cap shading — top-left light: highlight top-left, shadow bottom-right
+  ctx.save();ctx.beginPath();ctx.ellipse(x+lean*0.5,y-stemH,cw,ch,0,Math.PI,0);ctx.clip();
+  // highlight quadrant (top-left, matching LX/LY light direction)
+  ctx.fillStyle=rgba(lerpColor(capColor,[0xff,0xff,0xf0],0.3),0.35);
+  ctx.beginPath();ctx.moveTo(x+lean*0.5-cw-2,y-stemH);ctx.lineTo(x+lean*0.5+cw+2,y-stemH-ch-2);ctx.lineTo(x+lean*0.5-cw-2,y-stemH-ch-2);ctx.closePath();ctx.fill();
+  // shadow quadrant (bottom-right)
+  ctx.fillStyle=rgba(lerpColor(capColor,[0x10,0x08,0x00],0.3),0.35);
+  ctx.beginPath();ctx.moveTo(x+lean*0.5+cw+2,y-stemH);ctx.lineTo(x+lean*0.5-cw-2,y-stemH-ch-2);ctx.lineTo(x+lean*0.5+cw+2,y-stemH-ch-2);ctx.closePath();ctx.fill();
+  ctx.fillStyle=rgba(lerpColor(capColor,[0x10,0x08,0x00],0.2),0.25);
+  ctx.fillRect(x+lean*0.5,y-stemH-1,cw+2,ch+2);
+  ctx.restore();
+  // gills
+  ctx.beginPath();ctx.moveTo(x+lean*0.5-cw*0.7,y-stemH+0.5);ctx.lineTo(x+lean*0.5+cw*0.7,y-stemH+0.5);
+  ctx.strokeStyle=rgba(lerpColor(capColor,[0x10,0x08,0x00],0.5),0.5);ctx.lineWidth=0.8;ctx.stroke();
+  // spots for red cap
+  if(pal.spots){
+    var ns=ri(2,4);
+    for(var s=0;s<ns;s++){
+      var sa=Math.PI+Math.PI*rf(0.15,0.85);
+      var sd=rf(0.3,0.7);
+      ctx.beginPath();ctx.arc(x+lean*0.5+Math.cos(sa)*cw*sd,y-stemH+Math.sin(sa)*ch*sd,rf(0.8,1.5),0,Math.PI*2);
+      ctx.fillStyle=rgba(pal.spots,rf(0.5,0.8));ctx.fill();
+    }
+  }
+}
+
+function drawPebble(ctx,x,y,size,pal){
+  var color=pal.stones[ri(0,pal.stones.length-1)];
+  var rw=size*rf(0.6,1.0),rh=size*rf(0.5,0.8),angle=rf(0,Math.PI);
+  // shadow — offset right+down for top-left light, proportional to stone size
+  var shOff=Math.max(1,size*0.3);
+  ctx.beginPath();ctx.ellipse(x+shOff,y+shOff*0.7,rw*0.9,rh*0.7,angle,0,Math.PI*2);
+  ctx.fillStyle=rgba(pal.shadow,rf(0.3,0.5));ctx.fill();
+  // stone
+  ctx.save();ctx.translate(x,y);ctx.rotate(angle);
+  ctx.beginPath();ctx.ellipse(0,0,rw,rh,0,0,Math.PI*2);
+  ctx.fillStyle=rgba(color,rf(0.8,1));ctx.fill();
+  // highlight — top-left (unrotated, matching light direction)
+  ctx.restore();
+  ctx.save();ctx.translate(x,y);
+  ctx.beginPath();ctx.ellipse(-rw*0.25,-rh*0.25,rw*0.45,rh*0.35,0,0,Math.PI*2);
+  ctx.fillStyle=rgba(lerpColor(color,[0xf0,0xf0,0xe8],0.35),rf(0.2,0.4));ctx.fill();
+  // shadow tint — bottom-right
+  ctx.beginPath();ctx.ellipse(rw*0.15,rh*0.15,rw*0.5,rh*0.4,0,0,Math.PI*2);
+  ctx.fillStyle=rgba(lerpColor(color,[0x10,0x10,0x08],0.3),rf(0.1,0.2));ctx.fill();
+  ctx.restore();
+}
+
+function generateDetails(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  var pal=detailPalettes[cfg._palette];
+  var cx=W/2,cy=H-10;
+
+  if(cfg._type==='mushroom'){
+    // mushrooms are small ground-level objects — no baked shadow
+    var shrooms=[];
+    for(var i=0;i<cfg.count;i++){
+      var mx=cx+rf(-cfg.spread,cfg.spread),my=cy+rf(-cfg.spread*0.3,cfg.spread*0.3);
+      var cs=cfg.capSize*rf(1-cfg.sizeVariance,1+cfg.sizeVariance);
+      var sh=cfg.stemHeight*rf(1-cfg.sizeVariance,1+cfg.sizeVariance);
+      shrooms.push({x:mx,y:my,cs:cs,sh:sh});
+    }
+    shrooms.sort(function(a,b){return a.y-b.y});
+    for(var i=0;i<shrooms.length;i++) drawMushroom(ctx,shrooms[i].x,shrooms[i].y,shrooms[i].cs,shrooms[i].sh,pal);
+  }
+
+  if(cfg._type==='gravel'){
+    for(var i=0;i<cfg.count;i++){
+      var px=cx+rf(-cfg.spread,cfg.spread),py=cy+rf(-cfg.spread*0.5,cfg.spread*0.3);
+      var ps=cfg.capSize*rf(1-cfg.sizeVariance,1+cfg.sizeVariance);
+      drawPebble(ctx,px,py,ps,pal);
+    }
   }
 }
 
@@ -336,7 +583,8 @@ function cactusArm(ctx,ax,ay,side,len,ah,ribs,spDens){
 function generateCactus(ctx,W,H,cfg){
   if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
   var cx=W/2+rf(-4,4),by=H-14+rf(-3,3);
-  ctx.beginPath();ctx.ellipse(cx+2,by+3,cfg.colWidth*0.7,3,0,0,Math.PI*2);ctx.fillStyle=rgba(CC_S,0.5);ctx.fill();
+  var cacFootprint=cfg.colWidth+cfg.armLength*Math.min(cfg.arms,2);
+  drawGroundShadow(ctx,cx,by,cacFootprint,cfg.colHeight,CC_S);
   var used=[];
   for(var a=0;a<cfg.arms;a++){var side=used.indexOf('left')<0&&(Math.random()>0.5||used.indexOf('right')>=0)?'left':'right';used.push(side);cactusArm(ctx,cx,by-cfg.colHeight*rf(0.3,0.65),side,cfg.armLength*rf(0.8,1.2),cfg.armHeight*rf(0.7,1.2),cfg.ribs,cfg.spines)}
   var col=drawCactusCol(ctx,cx,by,cfg.colWidth*rf(0.9,1.1),cfg.colHeight*rf(0.85,1.15),rf(-2,2));
@@ -372,13 +620,495 @@ function generateDebris(ctx,W,H,cfg){
   var pal=debrisPalettes[cfg._palette];
   // Bottom-center: debris sits near canvas bottom
   var cx=W/2,cy=H-cfg.spread*0.5-6;
-  ctx.beginPath();ctx.ellipse(cx+1,cy+2,cfg.spread*0.7,3,0,0,Math.PI*2);ctx.fillStyle=rgba(pal.shadow,0.4);ctx.fill();
+  // debris is flat on the ground — no baked shadow
+  drawGroundShadow(ctx,cx,cy,cfg.spread*2,0,pal.shadow);
   for(var i=0;i<cfg.pieces;i++){
     var a=rf(0,Math.PI),l=cfg.length*rf(0.6,1.3),w=cfg.width*rf(0.7,1.3),px=cx+rf(-cfg.spread,cfg.spread),py=cy+rf(-cfg.spread*0.5,cfg.spread*0.5);
     var x1=px-Math.cos(a)*l/2,y1=py-Math.sin(a)*l/2,x2=px+Math.cos(a)*l/2,y2=py+Math.sin(a)*l/2;
     var cap=drawCapsule(ctx,x1,y1,x2,y2,w,pal);
     if(cfg._type==='bones'&&cfg.knuckle>0){if(Math.random()>0.3){var kr=cfg.knuckle*rf(0.7,1.3);ctx.beginPath();ctx.arc(x1,y1,kr,0,Math.PI*2);ctx.fillStyle=rgba(pal.mid,1);ctx.fill();ctx.beginPath();ctx.arc(x1-kr*0.25,y1-kr*0.25,kr*0.5,0,Math.PI*2);ctx.fillStyle=rgba(pal.highlight,0.35);ctx.fill()}if(Math.random()>0.5){var kr=cfg.knuckle*rf(0.6,1.0);ctx.beginPath();ctx.arc(x2,y2,kr,0,Math.PI*2);ctx.fillStyle=rgba(pal.mid,1);ctx.fill()}}
     if(cfg._type==='wood'){var dx=cap.x2-cap.x1,dy=cap.y2-cap.y1,cl=Math.sqrt(dx*dx+dy*dy)||1;for(var j=0;j<Math.floor(cl/5);j++){var t=(j+0.5)/(cl/5),gx=cap.x1+dx*t+rf(-1.5,1.5),gy=cap.y1+dy*t+rf(-1.5,1.5),gl=rf(4,8);ctx.beginPath();ctx.moveTo(gx,gy);ctx.lineTo(gx+Math.cos(cap.angle)*gl,gy+Math.sin(cap.angle)*gl);ctx.strokeStyle=rgba(pal.dark,rf(0.12,0.25));ctx.lineWidth=rf(0.4,0.8);ctx.stroke()}}
+  }
+}
+
+// ============================================================
+//  STRUCTURE GENERATOR
+// ============================================================
+var structPalettes={
+  wood_fence:{plank:{mid:[0x6a,0x5a,0x48],dark:[0x3a,0x30,0x22],hl:[0x8a,0x7a,0x68]},shadow:[0x2a,0x30,0x28]},
+  stone_wall:{stone:{mid:[0x52,0x50,0x4a],dark:[0x30,0x2e,0x28],hl:[0x74,0x72,0x6c]},mortar:[0x3e,0x3c,0x36],shadow:[0x2a,0x28,0x22],moss:null},
+  wood_wall:{plank:{mid:[0x5a,0x4a,0x38],dark:[0x30,0x28,0x1a],hl:[0x7a,0x6a,0x58]},shadow:[0x2a,0x28,0x1e]},
+  ruin:{stone:{mid:[0x50,0x4e,0x48],dark:[0x30,0x2e,0x28],hl:[0x70,0x6e,0x68]},mortar:[0x3a,0x38,0x32],shadow:[0x2a,0x28,0x22],moss:[0x3a,0x5a,0x28]},
+  sandstone:{stone:{mid:[0x8a,0x7a,0x60],dark:[0x5a,0x4a,0x38],hl:[0xb0,0xa0,0x82]},mortar:[0x6a,0x5a,0x48],shadow:[0x4a,0x3a,0x28],moss:null}
+};
+var structPresets={
+  wood_fence:{palette:'wood_fence',planks:6,plankWidth:7,plankHeight:44,gap:4,damage:0.15,stoneSize:0,crossbar:1,type:'fence'},
+  broken_fence:{palette:'wood_fence',planks:6,plankWidth:7,plankHeight:44,gap:4,damage:0.65,stoneSize:0,crossbar:1,type:'fence'},
+  stone_wall_s:{palette:'stone_wall',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:12,crossbar:0,type:'stonewall',facing:'south'},
+  stone_wall_n:{palette:'stone_wall',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:12,crossbar:0,type:'stonewall',facing:'north'},
+  stone_wall_e:{palette:'stone_wall',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:12,crossbar:0,type:'stonewall',facing:'east'},
+  stone_wall_w:{palette:'stone_wall',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:12,crossbar:0,type:'stonewall',facing:'west'},
+  ruined_wall_s:{palette:'ruin',planks:5,plankWidth:10,plankHeight:36,gap:1,damage:0.55,stoneSize:12,crossbar:0,type:'stonewall',facing:'south'},
+  ruined_wall_n:{palette:'ruin',planks:5,plankWidth:10,plankHeight:36,gap:1,damage:0.55,stoneSize:12,crossbar:0,type:'stonewall',facing:'north'},
+  ruined_wall_e:{palette:'ruin',planks:5,plankWidth:10,plankHeight:36,gap:1,damage:0.55,stoneSize:12,crossbar:0,type:'stonewall',facing:'east'},
+  ruined_wall_w:{palette:'ruin',planks:5,plankWidth:10,plankHeight:36,gap:1,damage:0.55,stoneSize:12,crossbar:0,type:'stonewall',facing:'west'},
+  wood_wall_s:{palette:'wood_wall',planks:5,plankWidth:10,plankHeight:44,gap:1,damage:0.15,stoneSize:0,crossbar:0,type:'woodwall',facing:'south'},
+  wood_wall_n:{palette:'wood_wall',planks:5,plankWidth:10,plankHeight:44,gap:1,damage:0.15,stoneSize:0,crossbar:0,type:'woodwall',facing:'north'},
+  wood_wall_e:{palette:'wood_wall',planks:5,plankWidth:10,plankHeight:44,gap:1,damage:0.15,stoneSize:0,crossbar:0,type:'woodwall',facing:'east'},
+  wood_wall_w:{palette:'wood_wall',planks:5,plankWidth:10,plankHeight:44,gap:1,damage:0.15,stoneSize:0,crossbar:0,type:'woodwall',facing:'west'},
+  stone_corner_sw:{palette:'stone_wall',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:12,crossbar:0,type:'corner',facing:'sw'},
+  stone_corner_se:{palette:'stone_wall',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:12,crossbar:0,type:'corner',facing:'se'},
+  stone_corner_nw:{palette:'stone_wall',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:12,crossbar:0,type:'corner',facing:'nw'},
+  stone_corner_ne:{palette:'stone_wall',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:12,crossbar:0,type:'corner',facing:'ne'},
+  wood_corner_sw:{palette:'wood_wall',planks:5,plankWidth:10,plankHeight:44,gap:1,damage:0.15,stoneSize:0,crossbar:0,type:'corner',facing:'sw'},
+  wood_corner_se:{palette:'wood_wall',planks:5,plankWidth:10,plankHeight:44,gap:1,damage:0.15,stoneSize:0,crossbar:0,type:'corner',facing:'se'},
+  wood_corner_nw:{palette:'wood_wall',planks:5,plankWidth:10,plankHeight:44,gap:1,damage:0.15,stoneSize:0,crossbar:0,type:'corner',facing:'nw'},
+  wood_corner_ne:{palette:'wood_wall',planks:5,plankWidth:10,plankHeight:44,gap:1,damage:0.15,stoneSize:0,crossbar:0,type:'corner',facing:'ne'},
+  sand_wall_s:{palette:'sandstone',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:14,crossbar:0,type:'stonewall',facing:'south'},
+  sand_wall_n:{palette:'sandstone',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:14,crossbar:0,type:'stonewall',facing:'north'},
+  sand_wall_e:{palette:'sandstone',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:14,crossbar:0,type:'stonewall',facing:'east'},
+  sand_wall_w:{palette:'sandstone',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:14,crossbar:0,type:'stonewall',facing:'west'},
+  sand_corner_sw:{palette:'sandstone',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:14,crossbar:0,type:'corner',facing:'sw'},
+  sand_corner_se:{palette:'sandstone',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:14,crossbar:0,type:'corner',facing:'se'},
+  sand_corner_nw:{palette:'sandstone',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:14,crossbar:0,type:'corner',facing:'nw'},
+  sand_corner_ne:{palette:'sandstone',planks:5,plankWidth:10,plankHeight:42,gap:1,damage:0.1,stoneSize:14,crossbar:0,type:'corner',facing:'ne'}
+};
+
+function drawPlank(ctx,x,y,w,h,pal,damaged){
+  var topY=y-h;
+  // break plank if damaged
+  if(damaged&&Math.random()<0.5){h=h*rf(0.4,0.8);topY=y-h;}
+  // main fill
+  ctx.fillStyle=rgba(pal.mid,1);ctx.fillRect(x,topY,w,h);
+  // left highlight
+  ctx.fillStyle=rgba(pal.hl,0.4);ctx.fillRect(x,topY,Math.max(1,w*0.25),h);
+  // right shadow
+  ctx.fillStyle=rgba(pal.dark,0.4);ctx.fillRect(x+w*0.75,topY,w*0.25,h);
+  // wood grain
+  var grains=ri(2,5);
+  for(var g=0;g<grains;g++){
+    var gy=topY+h*rf(0.1,0.9);
+    ctx.beginPath();ctx.moveTo(x+1,gy);ctx.lineTo(x+w-1,gy+rf(-2,2));
+    ctx.strokeStyle=rgba(pal.dark,rf(0.1,0.22));ctx.lineWidth=rf(0.4,0.8);ctx.stroke();
+  }
+  // cracks if damaged
+  if(damaged){
+    for(var c=0;c<ri(1,3);c++){
+      var cy2=topY+h*rf(0.2,0.8),cx2=x+w*rf(0.2,0.8);
+      ctx.beginPath();ctx.moveTo(cx2,cy2);ctx.lineTo(cx2+rf(-3,3),cy2+rf(3,8));
+      ctx.strokeStyle=rgba(pal.dark,rf(0.3,0.5));ctx.lineWidth=rf(0.5,1);ctx.stroke();
+    }
+  }
+  // outline
+  ctx.strokeStyle=rgba(pal.dark,0.2);ctx.lineWidth=0.5;ctx.strokeRect(x,topY,w,h);
+  // pointed top
+  if(!damaged||Math.random()>0.5){
+    ctx.beginPath();ctx.moveTo(x,topY);ctx.lineTo(x+w/2,topY-w*0.35);ctx.lineTo(x+w,topY);ctx.closePath();
+    ctx.fillStyle=rgba(pal.mid,1);ctx.fill();
+    ctx.fillStyle=rgba(pal.hl,0.35);
+    ctx.beginPath();ctx.moveTo(x,topY);ctx.lineTo(x+w/2,topY-w*0.35);ctx.lineTo(x+w*0.4,topY);ctx.closePath();ctx.fill();
+  }
+}
+
+function drawStoneBlock(ctx,x,y,w,h,pal){
+  ctx.fillStyle=rgba(lerpColor(pal.mid,pal.dark,rf(0,0.3)),rf(0.85,1));
+  ctx.fillRect(x,y,w,h);
+  // top-left highlight
+  ctx.fillStyle=rgba(pal.hl,rf(0.2,0.35));
+  ctx.fillRect(x,y,w,Math.min(2,h*0.3));
+  ctx.fillRect(x,y,Math.min(2,w*0.2),h);
+  // bottom-right shadow
+  ctx.fillStyle=rgba(pal.dark,rf(0.25,0.4));
+  ctx.fillRect(x,y+h-Math.min(2,h*0.3),w,Math.min(2,h*0.3));
+  ctx.fillRect(x+w-Math.min(2,w*0.2),y,Math.min(2,w*0.2),h);
+}
+
+// Draws horizontal planks filling a rectangular area. Used by wall renderers.
+function drawWallPlanks(ctx,x,y,w,h,pal,plankWidth,damage){
+  var numP=Math.max(1,Math.round(h/plankWidth));
+  var step=h/numP;
+  for(var i=0;i<numP;i++){
+    var py=y+i*step;
+    var t=i/(numP-1||1);
+    var col=lerpColor(pal.hl,pal.dark,t*0.6);
+    ctx.fillStyle=rgba(col,1);ctx.fillRect(x,py,w,step);
+    ctx.fillStyle=rgba(pal.hl,0.3);ctx.fillRect(x,py+1,w,1);
+    ctx.fillStyle=rgba(pal.dark,0.25);ctx.fillRect(x,py+step-1,w,1);
+    ctx.fillStyle=rgba(pal.dark,0.4);ctx.fillRect(x,py,w,1);
+    var jx=x+((i%2)*0.5+0.25)*w;
+    ctx.fillStyle=rgba(pal.dark,0.35);ctx.fillRect(jx,py+1,1,step-2);
+    ctx.fillStyle=rgba(pal.hl,0.15);ctx.fillRect(jx+1,py+1,1,step-2);
+    var grains=ri(2,4);
+    for(var g=0;g<grains;g++){
+      var gy=py+rf(2,step-2);
+      ctx.beginPath();ctx.moveTo(x,gy);ctx.lineTo(x+w,gy+rf(-1,1));
+      ctx.strokeStyle=rgba(pal.dark,rf(0.08,0.18));ctx.lineWidth=rf(0.3,0.7);ctx.stroke();
+    }
+    if(Math.random()<damage){
+      ctx.fillStyle=rgba(pal.dark,rf(0.2,0.4));
+      ctx.fillRect(x+rf(0,w-8),py+rf(2,step-3),rf(4,Math.min(10,w-2)),rf(1,2));
+    }
+  }
+}
+
+// Draw a wall tile facing a specific direction. Each direction has its own layout.
+// Camera looks from top-left, so:
+//   South: top surface (bulk) + front lip at bottom. Full tile width.
+//   North: top surface (bulk) + lip at top (back face visible). Same shading direction.
+//   East:  narrow vertical strip on right side of tile. Top surface + lip on right edge.
+//   West:  narrow vertical strip on left side of tile. Top surface + lip on left edge.
+function drawWallTile(ctx,W,H,pal,plankWidth,damage,facing){
+  var lipH=4;
+  if(facing==='south'){
+    drawWallPlanks(ctx,0,0,W,H-lipH,pal,plankWidth,damage);
+    ctx.fillStyle=rgba(pal.dark,0.8);ctx.fillRect(0,H-lipH,W,1);
+    ctx.fillStyle=rgba(pal.dark,1);ctx.fillRect(0,H-lipH+1,W,lipH-1);
+  } else if(facing==='north'){
+    // top surface above, lip at bottom — same as south but no front face visible
+    drawWallPlanks(ctx,0,0,W,H-lipH,pal,plankWidth,damage);
+    ctx.fillStyle=rgba(pal.dark,0.8);ctx.fillRect(0,H-lipH,W,1);
+    ctx.fillStyle=rgba(pal.dark,1);ctx.fillRect(0,H-lipH+1,W,lipH-1);
+  } else if(facing==='west'){
+    // strip on left edge, lip faces right (inward)
+    var wallW=18;
+    var surfW=wallW-lipH;
+    // gradient from highlight to dark (matching lip color)
+    for(var gx=0;gx<surfW;gx++){
+      var gt=gx/surfW;
+      ctx.fillStyle=rgba(lerpColor(pal.hl,pal.dark,gt),1);ctx.fillRect(gx,0,1,H);
+    }
+    var numP=Math.max(1,Math.round(H/plankWidth));
+    var step=H/numP;
+    for(var i=0;i<numP;i++){
+      ctx.fillStyle=rgba(pal.dark,0.35);ctx.fillRect(0,i*step,surfW,1);
+    }
+    ctx.fillStyle=rgba(pal.dark,0.8);ctx.fillRect(surfW,0,1,H);
+    ctx.fillStyle=rgba(pal.dark,1);ctx.fillRect(surfW+1,0,lipH-1,H);
+  } else if(facing==='east'){
+    // strip on right edge, lip faces left (inward)
+    var wallW=18;
+    var sx=W-wallW;
+    var surfW=wallW-lipH;
+    ctx.fillStyle=rgba(pal.dark,1);ctx.fillRect(sx,0,lipH-1,H);
+    ctx.fillStyle=rgba(pal.dark,0.8);ctx.fillRect(sx+lipH-1,0,1,H);
+    // gradient from dark (matching lip) to highlight
+    for(var gx=0;gx<surfW;gx++){
+      var gt=gx/surfW;
+      ctx.fillStyle=rgba(lerpColor(pal.dark,pal.hl,gt),1);ctx.fillRect(sx+lipH+gx,0,1,H);
+    }
+    var numP=Math.max(1,Math.round(H/plankWidth));
+    var step=H/numP;
+    for(var i=0;i<numP;i++){
+      ctx.fillStyle=rgba(pal.dark,0.35);ctx.fillRect(sx+lipH,i*step,surfW,1);
+    }
+  }
+}
+
+// Draws stone courses filling a rectangular area — same pattern as drawWallPlanks.
+// Deterministic top-to-bottom shading, horizontal mortar lines, staggered vertical joints.
+function drawStoneCourses(ctx,x,y,w,h,pal,stoneSize,damage){
+  var courseH=Math.max(4,stoneSize*0.45);
+  var numCourses=Math.max(1,Math.round(h/courseH));
+  var step=h/numCourses;
+  for(var i=0;i<numCourses;i++){
+    var cy=y+i*step;
+    // deterministic gradient: light at top, dark at bottom
+    var t=i/(numCourses-1||1);
+    var courseCol=lerpColor(pal.hl,pal.dark,t*0.75);
+    ctx.fillStyle=rgba(courseCol,1);ctx.fillRect(x,cy,w,step);
+    // highlight top edge
+    ctx.fillStyle=rgba(pal.hl,0.35);ctx.fillRect(x,cy+1,w,1);
+    // shadow bottom edge
+    ctx.fillStyle=rgba(pal.dark,0.3);ctx.fillRect(x,cy+step-1,w,1);
+    // mortar line
+    ctx.fillStyle=rgba(pal.dark,0.45);ctx.fillRect(x,cy,w,1);
+    // vertical joints — more frequent than wood, staggered per course
+    var blockW=stoneSize*0.8;
+    var jOffset=((i%3)*0.33)*blockW;
+    for(var jx=x+jOffset+blockW;jx<x+w-2;jx+=blockW){
+      ctx.fillStyle=rgba(pal.dark,0.3);ctx.fillRect(jx,cy+1,1,step-2);
+      ctx.fillStyle=rgba(pal.hl,0.1);ctx.fillRect(jx+1,cy+1,1,step-2);
+    }
+    // damage marks
+    if(Math.random()<damage){
+      ctx.fillStyle=rgba(pal.dark,rf(0.2,0.4));
+      ctx.fillRect(x+rf(0,w-6),cy+rf(1,step-2),rf(3,8),rf(1,2));
+    }
+  }
+}
+
+// Stone wall tile — mirrors drawWallTile using stone courses
+function drawStoneWallTile(ctx,W,H,pal,stoneSize,damage,facing,moss){
+  var lipH=4;
+  if(facing==='south'||facing==='north'){
+    var surfH=H-lipH;
+    drawStoneCourses(ctx,0,0,W,surfH,pal,stoneSize,damage);
+    ctx.fillStyle=rgba(pal.dark,0.8);ctx.fillRect(0,surfH,W,1);
+    ctx.fillStyle=rgba(pal.dark,1);ctx.fillRect(0,surfH+1,W,lipH-1);
+  } else if(facing==='west'){
+    var wallW=18;var surfW=wallW-lipH;
+    for(var gx=0;gx<surfW;gx++){var gt=gx/surfW;ctx.fillStyle=rgba(lerpColor(pal.hl,pal.dark,gt),1);ctx.fillRect(gx,0,1,H)}
+    // horizontal course lines on the narrow strip
+    var courseH=Math.max(4,stoneSize*0.45);
+    var numC=Math.max(1,Math.round(H/courseH));var cStep=H/numC;
+    for(var i=0;i<numC;i++){ctx.fillStyle=rgba(pal.dark,0.3);ctx.fillRect(0,i*cStep,surfW,1)}
+    ctx.fillStyle=rgba(pal.dark,0.8);ctx.fillRect(surfW,0,1,H);
+    ctx.fillStyle=rgba(pal.dark,1);ctx.fillRect(surfW+1,0,lipH-1,H);
+  } else if(facing==='east'){
+    var wallW=18;var sx=W-wallW;var surfW=wallW-lipH;
+    ctx.fillStyle=rgba(pal.dark,1);ctx.fillRect(sx,0,lipH-1,H);
+    ctx.fillStyle=rgba(pal.dark,0.8);ctx.fillRect(sx+lipH-1,0,1,H);
+    for(var gx=0;gx<surfW;gx++){var gt=gx/surfW;ctx.fillStyle=rgba(lerpColor(pal.dark,pal.hl,gt),1);ctx.fillRect(sx+lipH+gx,0,1,H)}
+    var courseH=Math.max(4,stoneSize*0.45);
+    var numC=Math.max(1,Math.round(H/courseH));var cStep=H/numC;
+    for(var i=0;i<numC;i++){ctx.fillStyle=rgba(pal.dark,0.3);ctx.fillRect(sx+lipH,i*cStep,surfW,1)}
+  }
+  if(moss){
+    for(var m=0;m<ri(2,5);m++){ctx.fillStyle=rgba(moss,rf(0.3,0.55));ctx.beginPath();ctx.arc(rf(2,W-2),rf(2,H-2),rf(1.5,3),0,Math.PI*2);ctx.fill()}
+  }
+}
+
+function generateStructure(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  var pal=structPalettes[cfg._palette];
+  var cx=W/2,baseY=H-8;
+
+  if(cfg._type==='fence'){
+    var p=pal.plank;
+    drawGroundShadow(ctx,cx,baseY,W,cfg.plankHeight,pal.shadow);
+    // fill planks edge-to-edge: compute count, then adjust step so they tile exactly
+    var rawStep=cfg.plankWidth+cfg.gap;
+    var numPlanks=Math.max(2,Math.round(W/rawStep));
+    var step=W/numPlanks; // exact step so last plank ends at W
+    // crossbars span full tile width
+    if(cfg.crossbar>0){
+      var barY1=baseY-cfg.plankHeight*0.35,barY2=baseY-cfg.plankHeight*0.7;
+      for(var b=0;b<2;b++){
+        var by2=b===0?barY1:barY2;
+        ctx.fillStyle=rgba(p.mid,0.9);ctx.fillRect(0,by2-1.5,W,3);
+        ctx.fillStyle=rgba(p.hl,0.3);ctx.fillRect(0,by2-1.5,W,1);
+        ctx.fillStyle=rgba(p.dark,0.3);ctx.fillRect(0,by2+0.5,W,1);
+      }
+    }
+    for(var i=0;i<numPlanks;i++){
+      var px=i*step;
+      var isDamaged=Math.random()<cfg.damage;
+      if(isDamaged&&Math.random()<cfg.damage*0.5) continue;
+      drawPlank(ctx,px,baseY,cfg.plankWidth,cfg.plankHeight,p,isDamaged);
+    }
+  }
+
+  if(cfg._type==='woodwall'){
+    drawWallTile(ctx,W,H,pal.plank,cfg.plankWidth,cfg.damage,cfg._facing||'south');
+  }
+
+  if(cfg._type==='stonewall'){
+    drawStoneWallTile(ctx,W,H,pal.stone,cfg.stoneSize,cfg.damage,cfg._facing||'south',pal.moss);
+  }
+
+  if(cfg._type==='corner'){
+    var cp=pal.plank||pal.stone;
+    var lipH=4,pillarW=18;
+    var facing=cfg._facing||'sw';
+    var isWood=!!pal.plank;
+
+    // South corners: full south wall + pillar on one side
+    // North corners: full north wall + pillar on one side
+    var isSouth=(facing==='sw'||facing==='se');
+    var isWest=(facing==='sw'||facing==='nw');
+
+    // Step 1: draw the horizontal south wall across full tile
+    if(isWood) drawWallTile(ctx,W,H,cp,cfg.plankWidth,cfg.damage,'south');
+    else drawStoneWallTile(ctx,W,H,cp,cfg.stoneSize,cfg.damage,'south',pal.moss);
+
+    // Step 2: overlay the vertical wall strip
+    if(isSouth){
+      // SW/SE: pillar with plank shading, stops before bottom lip
+      var surfW=pillarW-lipH;
+      var surfH=H-lipH;
+      if(isWest){
+        if(isWood) drawWallPlanks(ctx,0,0,surfW,surfH,cp,cfg.plankWidth,cfg.damage);
+        else drawStoneCourses(ctx,0,0,surfW,surfH,cp,cfg.stoneSize,cfg.damage);
+        ctx.fillStyle=rgba(cp.dark,0.8);ctx.fillRect(surfW,0,1,surfH);
+        ctx.fillStyle=rgba(cp.dark,1);ctx.fillRect(surfW+1,0,lipH-1,surfH);
+      } else {
+        var sx=W-pillarW;
+        ctx.fillStyle=rgba(cp.dark,1);ctx.fillRect(sx,0,lipH-1,surfH);
+        ctx.fillStyle=rgba(cp.dark,0.8);ctx.fillRect(sx+lipH-1,0,1,surfH);
+        if(isWood) drawWallPlanks(ctx,sx+lipH,0,surfW,surfH,cp,cfg.plankWidth,cfg.damage);
+        else drawStoneCourses(ctx,sx+lipH,0,surfW,surfH,cp,cfg.stoneSize,cfg.damage);
+      }
+    } else {
+      // NW/NE: just overlay the east/west wall tile directly
+      if(isWood) drawWallTile(ctx,W,H,cp,cfg.plankWidth,cfg.damage,isWest?'west':'east');
+      else drawStoneWallTile(ctx,W,H,cp,cfg.stoneSize,cfg.damage,isWest?'west':'east',pal.moss);
+    }
+  }
+}
+
+// ============================================================
+//  FLOOR TILE GENERATOR
+// ============================================================
+var floorPalettes={
+  stone_floor:{base:[0x4a,0x48,0x42],grout:[0x3a,0x38,0x32],stones:[[0x5e,0x5c,0x56],[0x50,0x4e,0x48],[0x68,0x66,0x60],[0x58,0x56,0x50]],hl:[0x78,0x76,0x70],shadow:[0x2a,0x28,0x22]},
+  wood_planks:{base:[0x5a,0x4a,0x38],planks:[[0x6a,0x5a,0x48],[0x5a,0x4a,0x38],[0x7a,0x6a,0x58],[0x60,0x50,0x3e]],hl:[0x8a,0x7a,0x68],shadow:[0x30,0x28,0x1a],grain:[0x40,0x34,0x22]},
+  cobblestone:{base:[0x48,0x46,0x40],grout:[0x2a,0x28,0x22],stones:[[0x5a,0x58,0x52],[0x4e,0x4c,0x46],[0x66,0x64,0x5e],[0x54,0x52,0x4c]],hl:[0x76,0x74,0x6e],shadow:[0x2a,0x28,0x22]},
+  dirt_path:{base:[0x5a,0x4a,0x38],colors:[[0x5a,0x4a,0x38],[0x4a,0x3a,0x28],[0x6a,0x5a,0x48],[0x50,0x40,0x30]],pebble:[0x6e,0x6c,0x64],shadow:[0x3a,0x30,0x22]}
+};
+var floorPresets={
+  stone_floor:{palette:'stone_floor',tileSize:16,groutWidth:2,irregularity:0.15,wear:0.2,grainDensity:0,pebbleChance:0,type:'flagstone'},
+  wood_planks:{palette:'wood_planks',tileSize:12,groutWidth:1.5,irregularity:0,wear:0.2,grainDensity:0.5,pebbleChance:0,type:'planks'},
+  cobblestone:{palette:'cobblestone',tileSize:8,groutWidth:1.5,irregularity:0.25,wear:0.2,grainDensity:0,pebbleChance:0,type:'cobble'},
+  dirt_path:{palette:'dirt_path',tileSize:10,groutWidth:0,irregularity:0.3,wear:0.15,grainDensity:0.4,pebbleChance:0.15,type:'dirt'}
+};
+
+// Draw an element at all 9 wrapped positions for seamless tiling.
+// drawFn(x, y) draws the element once at the given position.
+// Canvas clipping naturally hides off-screen copies.
+function tileDraw(ctx,W,H,x,y,drawFn){
+  for(var dy=-1;dy<=1;dy++) for(var dx=-1;dx<=1;dx++) drawFn(x+dx*W,y+dy*H);
+}
+
+function generateFloor(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  var pal=floorPalettes[cfg._palette];
+
+  if(cfg._type==='flagstone'){
+    ctx.fillStyle=rgba(pal.grout,1);ctx.fillRect(0,0,W,H);
+    var ts=cfg.tileSize,gw=cfg.groutWidth;
+    // pre-compute all stones so we can draw each at 9 positions
+    var stones=[];
+    var cols=Math.ceil(W/ts)+1,rows=Math.ceil(H/ts)+1;
+    for(var r=0;r<rows;r++){
+      var offset=(r%2)*ts*0.5;
+      for(var c=-1;c<cols;c++){
+        var tx=c*ts+offset+rf(-cfg.irregularity*3,cfg.irregularity*3);
+        var ty=r*ts+rf(-cfg.irregularity*3,cfg.irregularity*3);
+        var tw=ts-gw+rf(-cfg.irregularity*2,cfg.irregularity*2);
+        var th=ts-gw+rf(-cfg.irregularity*2,cfg.irregularity*2);
+        if(tw<3||th<3) continue;
+        stones.push({x:tx,y:ty,w:tw,h:th,c:pal.stones[ri(0,pal.stones.length-1)],worn:Math.random()<cfg.wear});
+      }
+    }
+    for(var i=0;i<stones.length;i++){
+      var s=stones[i];
+      tileDraw(ctx,W,H,s.x,s.y,function(sx,sy){
+        ctx.fillStyle=rgba(s.c,rf(0.85,1));ctx.fillRect(sx,sy,s.w,s.h);
+        ctx.fillStyle=rgba(pal.hl,rf(0.15,0.28));ctx.fillRect(sx,sy,s.w,1);ctx.fillRect(sx,sy,1,s.h);
+        ctx.fillStyle=rgba(pal.shadow,rf(0.2,0.35));ctx.fillRect(sx,sy+s.h-1,s.w,1);ctx.fillRect(sx+s.w-1,sy,1,s.h);
+        if(s.worn){ctx.beginPath();ctx.moveTo(sx+rf(2,s.w-2),sy+rf(2,s.h-2));ctx.lineTo(sx+rf(2,s.w-2),sy+rf(2,s.h-2));ctx.strokeStyle=rgba(pal.shadow,rf(0.2,0.4));ctx.lineWidth=rf(0.5,1);ctx.stroke()}
+      });
+    }
+  }
+
+  if(cfg._type==='planks'){
+    ctx.fillStyle=rgba(pal.shadow,1);ctx.fillRect(0,0,W,H);
+    var pw=cfg.tileSize,gap=cfg.groutWidth;
+    // pre-compute plank positions to fill exactly W, then tile-wrap
+    var planks2=[];var x=0;
+    while(x<W+pw){
+      var thisW=pw+rf(-2,2);
+      planks2.push({x:x,w:thisW-gap,color:pal.planks[ri(0,pal.planks.length-1)],
+        knot:Math.random()<0.15?{kx:thisW*rf(0.3,0.7),ky:rf(8,H-8)}:null,
+        worn:Math.random()<cfg.wear?{wy:rf(0,H*0.5),wh:rf(4,12)}:null});
+      x+=thisW;
+    }
+    for(var i=0;i<planks2.length;i++){
+      var p=planks2[i],pc=p.color;
+      tileDraw(ctx,W,H,p.x,0,function(px,py){
+        ctx.fillStyle=rgba(pc,1);ctx.fillRect(px,0,p.w,H);
+        ctx.fillStyle=rgba(pal.hl,rf(0.2,0.35));ctx.fillRect(px,0,1,H);
+        ctx.fillStyle=rgba(pal.shadow,rf(0.2,0.35));ctx.fillRect(px+p.w-1,0,1,H);
+        var grainCount=Math.floor(H/8*cfg.grainDensity);
+        for(var g=0;g<grainCount;g++){
+          var gy=rf(0,H);ctx.beginPath();ctx.moveTo(px+1,gy);ctx.lineTo(px+p.w-1,gy+rf(-1,1));
+          ctx.strokeStyle=rgba(pal.grain||pal.shadow,rf(0.08,0.18));ctx.lineWidth=rf(0.3,0.7);ctx.stroke();
+        }
+        if(p.knot){
+          var kx2=px+p.knot.kx,ky2=p.knot.ky;
+          ctx.beginPath();ctx.arc(kx2,ky2,rf(1.5,3),0,Math.PI*2);ctx.fillStyle=rgba(pal.shadow,rf(0.3,0.5));ctx.fill();
+          for(var a=0;a<3;a++){ctx.beginPath();ctx.arc(kx2,ky2,rf(2,5),rf(0,Math.PI*2),rf(1,2.5));ctx.strokeStyle=rgba(pal.shadow,rf(0.1,0.2));ctx.lineWidth=0.5;ctx.stroke()}
+        }
+        if(p.worn){ctx.fillStyle=rgba(lerpColor(pc,pal.shadow,0.2),rf(0.1,0.25));ctx.fillRect(px,p.worn.wy,p.w,p.worn.wh)}
+      });
+    }
+  }
+
+  if(cfg._type==='cobble'){
+    ctx.fillStyle=rgba(pal.grout,1);ctx.fillRect(0,0,W,H);
+    var cs=cfg.tileSize,gw=cfg.groutWidth;
+    // pre-compute cobblestones
+    var cobbles=[];
+    var cols2=Math.ceil(W/cs)+1,rows2=Math.ceil(H/cs)+1;
+    for(var r=0;r<rows2;r++){
+      for(var c=0;c<cols2;c++){
+        var bx=c*cs+cs*rf(-0.3,0.3)*cfg.irregularity*4;
+        var by=r*cs+cs*rf(-0.3,0.3)*cfg.irregularity*4;
+        var sc2=pal.stones[ri(0,pal.stones.length-1)];
+        var nv=ri(5,8),pts2=[];
+        for(var v=0;v<nv;v++){
+          var a=Math.PI*2*v/nv+rf(-0.3,0.3);
+          var rad=(cs-gw)*0.45*rf(0.7,1.0);
+          pts2.push({dx:Math.cos(a)*rad,dy:Math.sin(a)*rad});
+        }
+        cobbles.push({x:bx,y:by,c:sc2,pts:pts2,worn:Math.random()<cfg.wear});
+      }
+    }
+    for(var i=0;i<cobbles.length;i++){
+      var cb=cobbles[i];
+      tileDraw(ctx,W,H,cb.x,cb.y,function(sx,sy){
+        ctx.beginPath();ctx.moveTo(sx+cb.pts[0].dx,sy+cb.pts[0].dy);
+        for(var v=1;v<cb.pts.length;v++) ctx.lineTo(sx+cb.pts[v].dx,sy+cb.pts[v].dy);
+        ctx.closePath();ctx.fillStyle=rgba(cb.c,rf(0.85,1));ctx.fill();
+        ctx.save();
+        ctx.beginPath();ctx.moveTo(sx+cb.pts[0].dx,sy+cb.pts[0].dy);
+        for(var v=1;v<cb.pts.length;v++) ctx.lineTo(sx+cb.pts[v].dx,sy+cb.pts[v].dy);
+        ctx.closePath();ctx.clip();
+        ctx.fillStyle=rgba(pal.hl,rf(0.12,0.22));ctx.fillRect(sx-cs,sy-cs,cs,cs*2);
+        ctx.fillStyle=rgba(pal.shadow,rf(0.12,0.22));ctx.fillRect(sx,sy,cs,cs*2);
+        ctx.restore();
+        if(cb.worn){ctx.beginPath();ctx.arc(sx+rf(-2,2),sy+rf(-2,2),rf(1,2.5),0,Math.PI*2);ctx.fillStyle=rgba(pal.shadow,rf(0.15,0.3));ctx.fill()}
+      });
+    }
+  }
+
+  if(cfg._type==='dirt'){
+    ctx.fillStyle=rgba(pal.base,1);ctx.fillRect(0,0,W,H);
+    // noise texture — already tiles (full grid coverage)
+    for(var y2=0;y2<H;y2+=2){
+      for(var x2=0;x2<W;x2+=2){
+        var nc=pal.colors[ri(0,pal.colors.length-1)];
+        ctx.fillStyle=rgba(nc,rf(0.15,0.35));ctx.fillRect(x2,y2,2,2);
+      }
+    }
+    // roughness patches — wrap for tiling
+    var patches=Math.floor(cfg.grainDensity*12);
+    for(var p=0;p<patches;p++){
+      var px=rf(0,W),py=rf(0,H),pr=rf(4,12);
+      var pc2=pal.colors[ri(0,pal.colors.length-1)];
+      tileDraw(ctx,W,H,px,py,function(sx,sy){
+        ctx.beginPath();ctx.arc(sx,sy,pr,0,Math.PI*2);
+        ctx.fillStyle=rgba(pc2,rf(0.1,0.2));ctx.fill();
+      });
+    }
+    // pebbles — wrap for tiling
+    var pebCount=Math.floor(W*H/64*cfg.pebbleChance);
+    for(var p=0;p<pebCount;p++){
+      var px2=rf(0,W),py2=rf(0,H),ps=rf(0.8,2),pa=rf(0,Math.PI);
+      var pCol=pal.pebble;
+      tileDraw(ctx,W,H,px2,py2,function(sx,sy){
+        ctx.beginPath();ctx.ellipse(sx+0.5,sy+0.5,ps*0.8,ps*0.6,pa,0,Math.PI*2);
+        ctx.fillStyle=rgba(pal.shadow,rf(0.2,0.35));ctx.fill();
+        ctx.beginPath();ctx.ellipse(sx,sy,ps*0.8,ps*0.6,pa,0,Math.PI*2);
+        ctx.fillStyle=rgba(pCol,rf(0.5,0.8));ctx.fill();
+      });
+    }
+    // cart tracks — vertical lines tile naturally
+    if(cfg.wear>0.1&&Math.random()<cfg.wear){
+      var tx1=W*rf(0.3,0.4),tx2=W*rf(0.6,0.7);
+      ctx.fillStyle=rgba(pal.shadow,rf(0.08,0.15));
+      ctx.fillRect(tx1-1,0,2,H);ctx.fillRect(tx2-1,0,2,H);
+    }
   }
 }
 
@@ -467,20 +1197,55 @@ var GENERATORS = {
   scatter: {
     name: 'Ground Scatter', canvasW: 64, canvasH: 64, // 1x1 tile
     modes: [
-      {id:'tall_grass', label:'Tall Grass (Grassland)'},
-      {id:'wildflowers',label:'Wildflowers (Grassland)'}
+      {id:'tall_grass',         label:'Tall Grass (Grassland)'},
+      {id:'wildflowers',        label:'Wildflowers (Grassland)'},
+      {id:'forest_undergrowth', label:'Forest Undergrowth'},
+      {id:'tundra_scrub',       label:'Tundra Scrub'},
+      {id:'swamp_grass',        label:'Swamp Grass'},
+      {id:'coastal_dune',       label:'Coastal Dune Grass'},
+      {id:'flower_clusters',    label:'Flower Clusters'},
+      {id:'fallen_leaves',      label:'Fallen Leaves (Autumn)'}
     ],
     controls: [
-      {id:'blades',     label:'Blade Count',   min:10,max:50,step:1,key:'blades'},
-      {id:'bladeHeight',label:'Blade Height',  min:10,max:50,step:1,key:'bladeHeight'},
+      {id:'blades',     label:'Blade Count',   min:0,max:50,step:1,key:'blades'},
+      {id:'bladeHeight',label:'Blade Height',  min:0,max:50,step:1,key:'bladeHeight'},
       {id:'spread',     label:'Spread',         min:5,max:40,step:1,key:'spread'},
-      {id:'curve',      label:'Blade Curve',    min:2,max:18,step:1,key:'curve'},
-      {id:'bladeWidth', label:'Blade Width',    min:0.8,max:3.5,step:0.1,key:'bladeWidth'},
-      {id:'flowerChance',label:'Flower Chance', min:0,max:0.8,step:0.05,key:'flowerChance'},
-      {id:'flowerSize', label:'Flower Size',    min:1.5,max:5,step:0.5,key:'flowerSize'}
+      {id:'curve',      label:'Blade Curve',    min:0,max:18,step:1,key:'curve'},
+      {id:'bladeWidth', label:'Blade Width',    min:0,max:3.5,step:0.1,key:'bladeWidth'},
+      {id:'flowerChance',label:'Flower Chance', min:0,max:0.9,step:0.05,key:'flowerChance'},
+      {id:'flowerSize', label:'Flower Size',    min:1.5,max:5,step:0.5,key:'flowerSize'},
+      {id:'fernChance', label:'Fern Chance',    min:0,max:0.6,step:0.05,key:'fernChance'},
+      {id:'leafCount',  label:'Leaf Count',     min:0,max:30,step:1,key:'leafCount'}
     ],
     presets: scatterPresets,
-    generate: function(ctx,W,H,cfg){ generateScatter(ctx,W,H,cfg); }
+    generate: function(ctx,W,H,cfg,modeId){
+      var p=scatterPresets[modeId];
+      if(p) cfg._palette=p.palette;
+      generateScatter(ctx,W,H,cfg);
+    }
+  },
+  details: {
+    name: 'Small Details', canvasW: 64, canvasH: 64, // 1x1 tile
+    modes: [
+      {id:'forest_mushroom',label:'Forest Mushroom'},
+      {id:'swamp_mushroom', label:'Swamp Mushroom'},
+      {id:'red_mushroom',   label:'Red Cap Mushroom'},
+      {id:'gravel',         label:'Gravel (Mountain)'},
+      {id:'sandy_gravel',   label:'Sandy Gravel (Desert)'}
+    ],
+    controls: [
+      {id:'count',       label:'Count',         min:2,max:40,step:1,key:'count'},
+      {id:'capSize',     label:'Cap/Stone Size', min:1.5,max:8,step:0.5,key:'capSize'},
+      {id:'stemHeight',  label:'Stem Height',    min:0,max:12,step:1,key:'stemHeight'},
+      {id:'spread',      label:'Spread',         min:5,max:28,step:1,key:'spread'},
+      {id:'sizeVariance',label:'Size Variance',  min:0.1,max:0.8,step:0.05,key:'sizeVariance'}
+    ],
+    presets: detailPresets,
+    generate: function(ctx,W,H,cfg,modeId){
+      var p=detailPresets[modeId];
+      if(p){cfg._palette=p.palette;cfg._type=p.type;}
+      generateDetails(ctx,W,H,cfg);
+    }
   },
   cactus: {
     name: 'Cactus', canvasW: 64, canvasH: 128, // 1x2 tiles
@@ -515,6 +1280,78 @@ var GENERATORS = {
       var p=debrisPresets[modeId];
       cfg._palette=p.palette; cfg._type=p.type;
       generateDebris(ctx,W,H,cfg);
+    }
+  },
+  structure: {
+    name: 'Structure', canvasW: 64, canvasH: 64, // 1x1 tile
+    modes: [
+      {id:'wood_fence',    label:'Wood Fence'},
+      {id:'broken_fence',  label:'Broken Fence'},
+      {id:'stone_wall_s',  label:'Stone Wall — South'},
+      {id:'stone_wall_n',  label:'Stone Wall — North'},
+      {id:'stone_wall_e',  label:'Stone Wall — East'},
+      {id:'stone_wall_w',  label:'Stone Wall — West'},
+      {id:'ruined_wall_s', label:'Ruined Wall — South'},
+      {id:'ruined_wall_n', label:'Ruined Wall — North'},
+      {id:'ruined_wall_e', label:'Ruined Wall — East'},
+      {id:'ruined_wall_w', label:'Ruined Wall — West'},
+      {id:'wood_wall_s',   label:'Wood Wall — South'},
+      {id:'wood_wall_n',   label:'Wood Wall — North'},
+      {id:'wood_wall_e',   label:'Wood Wall — East'},
+      {id:'wood_wall_w',   label:'Wood Wall — West'},
+      {id:'stone_corner_sw',label:'Stone Corner — SW'},
+      {id:'stone_corner_se',label:'Stone Corner — SE'},
+      {id:'stone_corner_nw',label:'Stone Corner — NW'},
+      {id:'stone_corner_ne',label:'Stone Corner — NE'},
+      {id:'wood_corner_sw', label:'Wood Corner — SW'},
+      {id:'wood_corner_se', label:'Wood Corner — SE'},
+      {id:'wood_corner_nw', label:'Wood Corner — NW'},
+      {id:'wood_corner_ne', label:'Wood Corner — NE'},
+      {id:'sand_wall_s',    label:'Sandstone Wall — South'},
+      {id:'sand_wall_n',    label:'Sandstone Wall — North'},
+      {id:'sand_wall_e',    label:'Sandstone Wall — East'},
+      {id:'sand_wall_w',    label:'Sandstone Wall — West'},
+      {id:'sand_corner_sw', label:'Sandstone Corner — SW'},
+      {id:'sand_corner_se', label:'Sandstone Corner — SE'},
+      {id:'sand_corner_nw', label:'Sandstone Corner — NW'},
+      {id:'sand_corner_ne', label:'Sandstone Corner — NE'}
+    ],
+    controls: [
+      {id:'planks',     label:'Plank/Stone Count',min:2,max:8,step:1,key:'planks'},
+      {id:'plankWidth', label:'Width',            min:4,max:14,step:1,key:'plankWidth'},
+      {id:'plankHeight',label:'Height',           min:20,max:55,step:1,key:'plankHeight'},
+      {id:'gap',        label:'Gap',              min:0,max:6,step:1,key:'gap'},
+      {id:'damage',     label:'Damage',           min:0,max:1,step:0.05,key:'damage'},
+      {id:'stoneSize',  label:'Stone Size',       min:4,max:18,step:1,key:'stoneSize'}
+    ],
+    presets: structPresets,
+    generate: function(ctx,W,H,cfg,modeId){
+      var p=structPresets[modeId];
+      if(p){cfg._palette=p.palette;cfg._type=p.type;cfg.crossbar=p.crossbar;cfg._facing=p.facing;}
+      generateStructure(ctx,W,H,cfg);
+    }
+  },
+  floor: {
+    name: 'Floor Tile', canvasW: 64, canvasH: 64, // 1x1 tile
+    modes: [
+      {id:'stone_floor',label:'Stone Floor'},
+      {id:'wood_planks',label:'Wood Planks'},
+      {id:'cobblestone',label:'Cobblestone Road'},
+      {id:'dirt_path',  label:'Dirt Path'}
+    ],
+    controls: [
+      {id:'tileSize',    label:'Tile/Stone Size', min:6,max:24,step:1,key:'tileSize'},
+      {id:'groutWidth',  label:'Grout Width',     min:0.5,max:4,step:0.5,key:'groutWidth'},
+      {id:'irregularity',label:'Irregularity',    min:0,max:0.4,step:0.05,key:'irregularity'},
+      {id:'wear',        label:'Wear',            min:0,max:0.8,step:0.05,key:'wear'},
+      {id:'grainDensity',label:'Grain/Roughness', min:0,max:0.8,step:0.05,key:'grainDensity'},
+      {id:'pebbleChance',label:'Pebble Chance',   min:0,max:0.4,step:0.05,key:'pebbleChance'}
+    ],
+    presets: floorPresets,
+    generate: function(ctx,W,H,cfg,modeId){
+      var p=floorPresets[modeId];
+      if(p){cfg._palette=p.palette;cfg._type=p.type;}
+      generateFloor(ctx,W,H,cfg);
     }
   }
 };
@@ -877,6 +1714,78 @@ function render(){
       if(showTerrain && terrainImg) drawTerrainBg(ctx, W, H, terrainImg);
       ctx.drawImage(tmp, 0, 0);
       if(showGuide) drawTileGuide(ctx, W, H);
+    }
+    // tiling preview for tileable generators
+    var tileSection = document.getElementById('tile-preview-section');
+    var tileable = activeGen==='floor'||activeGen==='structure';
+    tileSection.style.display = tileable ? '' : 'none';
+    if(tileable && cleanSprites[0]){
+      var tp = document.getElementById('tile-preview');
+      var cols=activeGen==='structure'?5:3, rows=activeGen==='structure'?1:3;
+      tp.width = W*cols; tp.height = H*rows;
+      tp.style.width = (W*cols)+'px'; tp.style.height = (H*rows)+'px';
+      var tctx2 = tp.getContext('2d');
+      tctx2.clearRect(0,0,tp.width,tp.height);
+      for(var tr=0;tr<rows;tr++) for(var tc=0;tc<cols;tc++){
+        var src = cleanSprites[tc % NUM];
+        tctx2.drawImage(src, tc*W, tr*H);
+      }
+    }
+    // room preview for wall types
+    var roomSection = document.getElementById('room-preview-section');
+    var isWall = modeId.match(/^(stone_wall|ruined_wall|wood_wall|sand_wall|stone_corner|wood_corner|sand_corner)_[nsew]{1,2}$/);
+    roomSection.style.display = isWall ? '' : 'none';
+    if(isWall){
+      var rp = document.getElementById('room-preview');
+      var roomSize=6; // 6x6 tile room
+      rp.width=W*roomSize;rp.height=H*roomSize;
+      rp.style.width=(W*roomSize)+'px';rp.style.height=(H*roomSize)+'px';
+      var rctx=rp.getContext('2d');
+      rctx.clearRect(0,0,rp.width,rp.height);
+      // floor fill
+      rctx.fillStyle='#1e1e1e';rctx.fillRect(0,0,rp.width,rp.height);
+      // generate one wall tile per direction
+      // extract base wall id: stone_wall_s -> stone_wall, stone_corner_sw -> stone_wall
+      var baseId=modeId.replace(/_[nsew]{1,2}$/,'').replace('_corner','_wall');
+      var dirs=['south','north','east','west'];
+      var wallCanvases={};
+      for(var d=0;d<dirs.length;d++){
+        var wc=document.createElement('canvas');wc.width=W;wc.height=H;
+        var wcCtx=wc.getContext('2d');
+        var wcCfg=Object.assign({},cfg);
+        var wp=structPresets[baseId+'_'+dirs[d][0]];
+        if(wp){wcCfg._palette=wp.palette;wcCfg._type=wp.type;wcCfg.crossbar=wp.crossbar;wcCfg._facing=wp.facing;}
+        generateStructure(wcCtx,W,H,wcCfg);
+        if(showOutline) applyOutline(wc);
+        wallCanvases[dirs[d]]=wc;
+      }
+      // generate corner tiles
+      var cornerDirs=['sw','se','nw','ne'];
+      var cornerCanvases={};
+      for(var d=0;d<cornerDirs.length;d++){
+        var cc=document.createElement('canvas');cc.width=W;cc.height=H;
+        var ccCtx=cc.getContext('2d');
+        var ccCfg=Object.assign({},cfg);
+        ccCfg._palette=structPresets[baseId+'_s'].palette;
+        ccCfg._type='corner';ccCfg._facing=cornerDirs[d];
+        generateStructure(ccCtx,W,H,ccCfg);
+        if(showOutline) applyOutline(cc);
+        cornerCanvases[cornerDirs[d]]=cc;
+      }
+      // draw room: walls along edges, corners at intersections
+      for(var t=1;t<roomSize-1;t++){
+        rctx.drawImage(wallCanvases.north,t*W,0);
+        rctx.drawImage(wallCanvases.south,t*W,(roomSize-1)*H);
+      }
+      for(var t=1;t<roomSize-1;t++){
+        rctx.drawImage(wallCanvases.west,0,t*H);
+        rctx.drawImage(wallCanvases.east,(roomSize-1)*W,t*H);
+      }
+      // corners
+      rctx.drawImage(cornerCanvases.nw,0,0);
+      rctx.drawImage(cornerCanvases.ne,(roomSize-1)*W,0);
+      rctx.drawImage(cornerCanvases.sw,0,(roomSize-1)*H);
+      rctx.drawImage(cornerCanvases.se,(roomSize-1)*W,(roomSize-1)*H);
     }
   }
 

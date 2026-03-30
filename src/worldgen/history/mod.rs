@@ -250,13 +250,14 @@ pub fn generate_history(
 
     // --- Initialize mortal factions ---
     let faction_type_table = PopTable::pick_one(vec![
-        (FactionType::Kingdom, 30.0),
+        (FactionType::TribalWarband, 25.0),
         (FactionType::MercenaryCompany, 15.0),
         (FactionType::ReligiousOrder, 15.0),
         (FactionType::MerchantGuild, 15.0),
         (FactionType::MageCircle, 10.0),
-        (FactionType::TribalWarband, 10.0),
+        (FactionType::Theocracy, 10.0),
         (FactionType::BanditClan, 5.0),
+        (FactionType::ThievesGuild, 5.0),
     ]);
 
     let race_table = PopTable::pick_one(vec![
@@ -308,7 +309,7 @@ pub fn generate_history(
         let sname = settlement_name(&mut rng);
         let sid = next_id; next_id += 1;
         let pop = match ft {
-            FactionType::Kingdom | FactionType::MerchantGuild => PopulationClass::Town,
+            FactionType::MerchantGuild | FactionType::Theocracy => PopulationClass::Town,
             _ => PopulationClass::Village,
         };
         // Pick a random land cell for this faction's settlement
@@ -456,7 +457,7 @@ pub fn generate_history(
 
         // Phases 5-8: Mortal simulation
         if config.mortal_simulation {
-            world_events::simulate_year(
+            let founder_shifts = world_events::simulate_year(
                 year, &mut factions, &mut settlements, &mut characters,
                 &mut artifacts_list, &mut events,
                 &mut world_state, &regions, &mut next_id,
@@ -466,6 +467,23 @@ pub fn generate_history(
                 formation_candidates.as_ref(),
                 &mut rng,
             );
+
+            // Founders join their own faction immediately
+            if let Some(ref mut pop) = pop_sim {
+                for &(person_id, faction_id) in &founder_shifts {
+                    if let Some(person) = pop.people.iter_mut().find(|p| p.id == person_id) {
+                        let old = person.faction_allegiance;
+                        person.faction_allegiance = faction_id;
+                        person.life_events.push(population::types::LifeEvent {
+                            year,
+                            kind: population::types::LifeEventKind::AllegianceChanged {
+                                old_faction: old, new_faction: faction_id,
+                            },
+                            cause: None,
+                        });
+                    }
+                }
+            }
         }
 
         // plague_this_year / conquered_this_year are set directly by world_events
@@ -926,6 +944,171 @@ mod tests {
             println!("{:>6} {:>5} {:>5} {:>4} {:>4} {:>5} {:>6} {:>5} {:>5} {:>8.1} {:>4}",
                 seed, alive, history.people.len(), factions_alive, wars, conquests,
                 plagues, migrations, prophets, avg_happiness, active_gods);
+        }
+    }
+
+    #[test]
+    fn faction_diagnostic_sweep() {
+        // Sweep 50 seeds, show total vs alive factions, type breakdown, and zombie factions
+        println!("\n{:>6} {:>5} {:>5} {:>4} {:>4}  {:<50}  {:>7}",
+            "seed", "total", "alive", "dead", "wars", "type breakdown (alive)", "zombies");
+        println!("{}", "-".repeat(110));
+
+        let mut worst_seeds: Vec<(u64, usize, usize)> = Vec::new();
+
+        for seed in 0u64..50 {
+            let history = test_history_with_size(HistoryConfig::default(), seed, 256);
+            let year = history.current_year;
+
+            let total = history.factions.len();
+            let alive: Vec<_> = history.factions.iter().filter(|f| f.is_alive(year)).collect();
+            let dead = total - alive.len();
+            let wars = history.events.iter().filter(|e| e.kind == EventKind::WarDeclared).count();
+
+            // Type breakdown of alive factions
+            let mut type_counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+            for f in &alive {
+                *type_counts.entry(format!("{:?}", f.faction_type)).or_insert(0) += 1;
+            }
+            let type_str: String = type_counts.iter()
+                .map(|(t, c)| format!("{}:{}", t, c))
+                .collect::<Vec<_>>().join(" ");
+
+            // Zombie factions: alive but zero allegiant people
+            let zombies: Vec<_> = alive.iter().filter(|f| {
+                let pop = history.people.iter()
+                    .filter(|p| p.is_alive(year) && p.faction_allegiance == f.id)
+                    .count();
+                pop == 0
+            }).collect();
+
+            println!("{:>6} {:>5} {:>5} {:>4} {:>4}  {:<50}  {:>7}",
+                seed, total, alive.len(), dead, wars, type_str, zombies.len());
+
+            worst_seeds.push((seed, total, alive.len()));
+        }
+
+        // Show worst seeds by total factions
+        worst_seeds.sort_by(|a, b| b.1.cmp(&a.1));
+        println!("\n--- WORST SEEDS (by total factions ever) ---");
+        for (seed, total, alive) in worst_seeds.iter().take(5) {
+            println!("  seed {} — {} total, {} alive", seed, total, alive);
+        }
+    }
+
+    #[test]
+    fn faction_deep_dive() {
+        // Deep dive into a specific seed to trace faction lifecycle
+        let seed = 17u64; // was 18 alive — ReligiousOrder spam seed
+        let history = test_history_with_size(HistoryConfig::default(), seed, 256);
+        let year = history.current_year;
+
+        println!("\n========== DEEP DIVE: seed {} ==========", seed);
+        println!("  {} factions total, {} alive\n", history.factions.len(),
+            history.living_factions().len());
+
+        // Formation timeline: when were factions founded?
+        println!("--- FORMATION TIMELINE ---");
+        let mut by_year: std::collections::BTreeMap<i32, Vec<&FactionState>> = std::collections::BTreeMap::new();
+        for f in &history.factions {
+            by_year.entry(f.founded_year).or_default().push(f);
+        }
+        for (yr, facs) in &by_year {
+            let names: Vec<_> = facs.iter().map(|f| {
+                let status = if f.is_alive(year) { "ALIVE" } else {
+                    if let Some(dy) = f.dissolved_year { "dead" } else { "???" }
+                };
+                let pop = history.people.iter()
+                    .filter(|p| p.is_alive(year) && p.faction_allegiance == f.id)
+                    .count();
+                let god_str = f.patron_god.map(|g| format!("g{}", g)).unwrap_or("-".into());
+                format!("{} ({:?}, {}, pop:{}, {})", f.name, f.faction_type, status, pop, god_str)
+            }).collect();
+            println!("  yr {:>3}: {}", yr, names.join("; "));
+        }
+
+        // Zombie factions detail
+        println!("\n--- ZOMBIE FACTIONS (alive, zero population) ---");
+        for f in history.factions.iter().filter(|f| f.is_alive(year)) {
+            let pop = history.people.iter()
+                .filter(|p| p.is_alive(year) && p.faction_allegiance == f.id)
+                .count();
+            if pop == 0 {
+                println!("  {} ({:?}) — founded yr {}, mil:{} wealth:{} stab:{} settlements:{} unhappy_yrs:{}",
+                    f.name, f.faction_type, f.founded_year,
+                    f.military_strength, f.wealth, f.stability,
+                    f.settlements.len(), f.unhappy_years);
+            }
+        }
+
+        // Faction lifespan histogram
+        println!("\n--- FACTION LIFESPANS (dead factions) ---");
+        let mut lifespans: Vec<(i32, String, String)> = Vec::new();
+        for f in history.factions.iter().filter(|f| !f.is_alive(year)) {
+            let lifespan = f.dissolved_year.unwrap_or(year) - f.founded_year;
+            lifespans.push((lifespan, format!("{:?}", f.faction_type), f.name.clone()));
+        }
+        lifespans.sort();
+        let short_lived = lifespans.iter().filter(|(l, _, _)| *l <= 3).count();
+        let medium = lifespans.iter().filter(|(l, _, _)| *l > 3 && *l <= 10).count();
+        let long = lifespans.iter().filter(|(l, _, _)| *l > 10).count();
+        println!("  <=3 years: {}  |  4-10 years: {}  |  >10 years: {}", short_lived, medium, long);
+
+        // Show the short-lived ones
+        println!("\n  Short-lived factions (<=3 years):");
+        for (lifespan, ftype, name) in lifespans.iter().filter(|(l, _, _)| *l <= 3).take(20) {
+            println!("    {} ({}) — lived {} years", name, ftype, lifespan);
+        }
+
+        // Theocracy lifecycle trace
+        let theocracies: Vec<_> = history.factions.iter()
+            .filter(|f| f.faction_type == crate::worldgen::names::FactionType::Theocracy)
+            .collect();
+        if !theocracies.is_empty() {
+            println!("\n--- THEOCRACY LIFECYCLE ---");
+            for f in &theocracies {
+                let lifespan = f.dissolved_year.unwrap_or(year) - f.founded_year;
+                let status = if f.is_alive(year) { "ALIVE".to_string() }
+                    else { format!("died yr {}", f.dissolved_year.unwrap()) };
+
+                // Find how it died
+                let death_event = history.events.iter()
+                    .find(|e| e.kind == EventKind::FactionDissolved && e.participants.contains(&f.id)
+                        && e.year == f.dissolved_year.unwrap_or(-1));
+                let death_cause = death_event.map(|e| {
+                    if e.description.contains("absorbed") { "ABSORBED" }
+                    else { "DISSOLVED" }
+                }).unwrap_or(if f.is_alive(year) { "alive" } else { "???" });
+
+                // Pop at end
+                let pop_now = history.people.iter()
+                    .filter(|p| p.is_alive(year) && p.faction_allegiance == f.id)
+                    .count();
+
+                // Find the founder event
+                let founded_event = history.events.iter()
+                    .find(|e| e.kind == EventKind::FactionFounded && e.participants.contains(&f.id)
+                        && e.year == f.founded_year);
+                let reason = founded_event.map(|e| e.description.as_str()).unwrap_or("?");
+
+                println!("  {} — founded yr {}, {} (lived {}yr), pop:{}, god:{:?}, mil:{} stab:{} | {} | {}",
+                    f.name, f.founded_year, status, lifespan, pop_now,
+                    f.patron_god, f.military_strength, f.stability,
+                    death_cause, reason);
+            }
+        }
+
+        // Type churn: how many of each type were created vs survived
+        println!("\n--- TYPE CHURN ---");
+        let mut type_total: std::collections::BTreeMap<String, (usize, usize)> = std::collections::BTreeMap::new();
+        for f in &history.factions {
+            let key = format!("{:?}", f.faction_type);
+            let entry = type_total.entry(key).or_insert((0, 0));
+            entry.0 += 1;
+            if f.is_alive(year) { entry.1 += 1; }
+        }
+        for (ftype, (total, alive)) in &type_total {
+            println!("  {:<20} created:{:>3}  alive:{:>3}  died:{:>3}", ftype, total, alive, total - alive);
         }
     }
 }

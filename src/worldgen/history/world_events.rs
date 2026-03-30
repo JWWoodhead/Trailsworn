@@ -13,6 +13,8 @@ use super::characters::{*, Ambition};
 use super::state::*;
 use super::{EventKind, HistoricEvent};
 
+/// Returns `(person_id, faction_id)` pairs for people who founded factions
+/// this year, so the caller can shift their allegiance.
 pub(super) fn simulate_year(
     year: i32,
     factions: &mut Vec<FactionState>,
@@ -29,9 +31,9 @@ pub(super) fn simulate_year(
     prophet_tensions: Option<&ProphetTensions>,
     formation_candidates: Option<&FormationCandidates>,
     rng: &mut impl Rng,
-) {
+) -> Vec<(u32, u32)> {
     let living: Vec<u32> = factions.iter().filter(|f| f.is_alive(year)).map(|f| f.id).collect();
-    if living.is_empty() { return; }
+    if living.is_empty() { return Vec::new(); }
 
     // Phase 0: Aging and death
     let mut dead_leaders: Vec<(u32, u32)> = Vec::new(); // (faction_id, character_id)
@@ -207,10 +209,10 @@ pub(super) fn simulate_year(
                 FactionType::MerchantGuild => {
                     world_state.relations.modify(faction.id, other_id, 1);
                 }
-                // Bandits/thieves hostile to kingdoms in same region
+                // Bandits/thieves hostile to territorial factions in same region
                 FactionType::BanditClan | FactionType::ThievesGuild => {
                     if let Some(other_f) = factions_snapshot.iter().find(|f| f.id == other_id) {
-                        if other_f.faction_type == FactionType::Kingdom && other_f.home_region == faction.home_region {
+                        if other_f.faction_type.is_territorial() && other_f.home_region == faction.home_region {
                             world_state.relations.modify(faction.id, other_id, -1);
                         }
                     }
@@ -298,13 +300,15 @@ pub(super) fn simulate_year(
     // monster_attack and hero removed — monsters are gameplay, heroes emerge from population
     evaluate_artifact_discovered(year, factions, characters, artifacts_list, events, &living, next_id, rng);
     evaluate_settlement_founded(year, factions, settlements, characters, events, next_id, &living, regions, rng);
-    evaluate_faction_formation(year, factions, settlements, characters, events, world_state, next_id, formation_candidates, rng);
-    evaluate_rebellion(year, factions, settlements, characters, events, world_state, next_id, formation_candidates, rng);
+    let mut founder_shifts = evaluate_faction_formation(year, factions, settlements, characters, events, world_state, next_id, formation_candidates, rng);
+    founder_shifts.extend(evaluate_rebellion(year, factions, settlements, characters, events, world_state, next_id, formation_candidates, rng));
     evaluate_absorption(year, factions, settlements, events, world_state, &living, rng);
     evaluate_faction_dissolved(year, factions, settlements, events, world_state, &living, rng);
 
     // Phase 4: Sentiment drift
     world_state.relations.drift_toward_neutral();
+
+    founder_shifts
 }
 
 // ── Event evaluation functions ──
@@ -332,6 +336,11 @@ fn evaluate_war_declared(
     for (a, b, sentiment) in hostile_pairs {
         if world_state.at_war(a, b) { continue; }
         if world_state.war_count(a) > 1 || world_state.war_count(b) > 1 { continue; }
+
+        // Non-territorial factions can't wage or be targeted by conventional war
+        let a_territorial = factions.iter().find(|f| f.id == a).map_or(true, |f| f.faction_type.is_territorial());
+        let b_territorial = factions.iter().find(|f| f.id == b).map_or(true, |f| f.faction_type.is_territorial());
+        if !a_territorial || !b_territorial { continue; }
 
         let aggressor_mil = factions.iter().find(|f| f.id == a).map(|f| f.military_strength).unwrap_or(0);
         if aggressor_mil < 10 { continue; }
@@ -924,47 +933,40 @@ fn evaluate_faction_formation(
     world_state: &mut WorldState, next_id: &mut u32,
     candidates: Option<&FormationCandidates>,
     rng: &mut impl Rng,
-) {
+) -> Vec<(u32, u32)> {
     let candidates = match candidates {
         Some(c) => c,
-        None => return,
+        None => return Vec::new(),
     };
 
-    // Kingdom upgrades — type transformation, not new factions
-    for &fid in &candidates.kingdom_upgrades {
-        if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
-            f.faction_type = FactionType::Kingdom;
-            events.push(HistoricEvent {
-                year, kind: EventKind::FactionFounded,
-                description: format!("{} declared itself a kingdom", f.name),
-                participants: vec![fid],
-                god_participants: vec![],
-                cause: None,
-            });
-        }
-    }
+    let mut founder_shifts = Vec::new();
 
     // Each founder creates a new faction
     for founder in &candidates.founders {
-        spawn_faction_from_founder(
+        let faction_id = spawn_faction_from_founder(
             founder, year, factions, settlements, characters, events,
             world_state, next_id, rng,
         );
+        if let Some(fid) = faction_id {
+            founder_shifts.push((founder.person_id, fid));
+        }
     }
+
+    founder_shifts
 }
 
 /// Create a new faction from a specific person who founded it.
+/// Returns the new faction's ID so the caller can shift the founder's allegiance.
 fn spawn_faction_from_founder(
     founder: &crate::worldgen::population::faction_stats::FactionFounder,
     year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
     characters: &mut Vec<Character>, events: &mut Vec<HistoricEvent>,
     world_state: &mut WorldState, next_id: &mut u32, rng: &mut impl Rng,
-) {
+) -> Option<u32> {
     let settlement = match settlements.iter().find(|s| s.id == founder.settlement_id) {
         Some(s) => s,
-        None => return,
+        None => return None,
     };
-    let old_owner = settlement.controlling_faction;
     let region = settlement.region.clone();
     let ft = founder.faction_type;
     let race = founder.race;
@@ -984,11 +986,10 @@ fn spawn_faction_from_founder(
         dissolved_year: None, leader_name: leader_display, leader_id: Some(leader_id),
         military_strength: mil, wealth, stability: stab,
         territory: vec![region], settlements: vec![], // derived from allegiance
-        patron_god: settlement.patron_god, devotion: settlement.devotion,
+        patron_god: founder.patron_god.or(settlement.patron_god),
+        devotion: settlement.devotion,
         unhappy_years: 0,
     };
-    // Don't transfer settlement ownership — allegiance shifts + recompute will handle it
-    let _ = old_owner;
 
     for existing in factions.iter() {
         if existing.is_alive(year) {
@@ -1004,6 +1005,8 @@ fn spawn_faction_from_founder(
         god_participants: vec![],
         cause: None,
     });
+
+    Some(faction_id)
 }
 
 fn evaluate_faction_dissolved(
@@ -1017,10 +1020,35 @@ fn evaluate_faction_dissolved(
             None => continue,
         };
 
-        // Faction dissolves when it has no people (all gauges zero) or sustained misery
-        let no_people = f.military_strength == 0 && f.wealth == 0 && f.stability == 0
-            && year - f.founded_year >= 2; // grace period for new factions
-        let should_dissolve = no_people || f.unhappy_years >= 5;
+        // Type-aware dissolution: each faction type dies for different reasons.
+        let age = year - f.founded_year;
+        let all_gauges_zero = f.military_strength == 0 && f.wealth == 0 && f.stability == 0;
+        let should_dissolve = match f.faction_type {
+            // Territorial factions: depopulation or sustained misery
+            FactionType::TribalWarband | FactionType::BanditClan => {
+                (all_gauges_zero && age >= 2) || f.unhappy_years >= 5
+            }
+            // No fighters = no company
+            FactionType::MercenaryCompany => {
+                f.military_strength == 0 && age >= 3
+            }
+            // Shadow orgs and arcane circles only die when truly empty
+            FactionType::ThievesGuild | FactionType::MageCircle => {
+                all_gauges_zero && age >= 2
+            }
+            // No trade = no guild
+            FactionType::MerchantGuild => {
+                f.wealth == 0 && age >= 3
+            }
+            // No devotion = no order
+            FactionType::ReligiousOrder => {
+                f.stability == 0 && age >= 3
+            }
+            // Needs faith or fighters
+            FactionType::Theocracy => {
+                f.stability == 0 && f.military_strength == 0 && age >= 3
+            }
+        };
 
         if !should_dissolve { continue; }
 
@@ -1056,11 +1084,13 @@ fn evaluate_rebellion(
     world_state: &mut WorldState, next_id: &mut u32,
     candidates: Option<&FormationCandidates>,
     rng: &mut impl Rng,
-) {
+) -> Vec<(u32, u32)> {
     let candidates = match candidates {
         Some(c) => c,
-        None => return,
+        None => return Vec::new(),
     };
+
+    let mut founder_shifts = Vec::new();
 
     // Each rebellion candidate is a specific person who leads the revolt
     for rebel in &candidates.rebellions {
@@ -1069,16 +1099,19 @@ fn evaluate_rebellion(
             .map(|s| s.controlling_faction)
             .unwrap_or(0);
 
-        spawn_faction_from_founder(
+        let faction_id = spawn_faction_from_founder(
             rebel, year, factions, settlements, characters, events,
             world_state, next_id, rng,
         );
 
-        // Hostile to former owner
-        if let Some(new_faction) = factions.last() {
-            world_state.relations.modify(new_faction.id, old_owner, -30);
+        if let Some(fid) = faction_id {
+            founder_shifts.push((rebel.person_id, fid));
+            // Hostile to former owner
+            world_state.relations.modify(fid, old_owner, -30);
         }
     }
+
+    founder_shifts
 }
 
 /// Weak factions near strong same-race/faith factions may be absorbed.
@@ -1092,6 +1125,8 @@ fn evaluate_absorption(
             Some(f) => f,
             None => continue,
         };
+        // Non-territorial factions can't be absorbed by force
+        if !f.faction_type.is_territorial() { continue; }
         if f.settlements.len() > 1 || f.military_strength >= 20 { continue; }
 
         // Find a strong neighboring faction with shared identity
