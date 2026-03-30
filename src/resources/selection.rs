@@ -22,6 +22,13 @@ pub enum TargetingMode {
     },
 }
 
+/// Entity currently under the mouse cursor (from bevy_picking).
+/// Updated each frame by `update_hovered_target`.
+#[derive(Resource, Default)]
+pub struct HoveredTarget {
+    pub entity: Option<Entity>,
+}
+
 /// Tracks the drag selection box state.
 #[derive(Resource, Default)]
 pub struct DragSelection {

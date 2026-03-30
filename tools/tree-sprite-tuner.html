@@ -1,0 +1,412 @@
+S<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tree Sprite Tuner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #131313; color: #F5F5DC; font-family: 'Consolas', monospace; display: flex; height: 100vh; }
+
+  .sidebar {
+    width: 340px;
+    padding: 16px;
+    overflow-y: auto;
+    border-right: 2px solid #2a2a2a;
+    flex-shrink: 0;
+  }
+
+  h1 { color: #d4af37; font-size: 16px; margin-bottom: 12px; }
+  h2 { color: #d4af37; font-size: 13px; margin: 16px 0 8px; border-bottom: 1px solid #2a2a2a; padding-bottom: 4px; }
+
+  .control {
+    margin-bottom: 10px;
+  }
+  .control label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+  .control label span.val { color: #d4af37; }
+  .control input[type="range"] {
+    width: 100%;
+    accent-color: #d4af37;
+  }
+  .control input[type="number"] {
+    width: 80px;
+    background: #1e1e1e;
+    color: #F5F5DC;
+    border: 1px solid #3a3a3a;
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 12px;
+  }
+
+  .preview-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .canvas-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  canvas {
+    background: repeating-conic-gradient(#1a1a1a 0% 25%, #222 0% 50%) 50% / 16px 16px;
+    image-rendering: pixelated;
+    border: 1px solid #2a2a2a;
+  }
+
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  button {
+    background: #2a2a2a;
+    color: #d4af37;
+    border: 1px solid #3a3a3a;
+    padding: 6px 14px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button:hover { background: #3a3a3a; }
+
+  #rust-output {
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    color: #F5F5DC;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 8px;
+    width: 100%;
+    white-space: pre;
+    margin-top: 8px;
+    display: none;
+  }
+
+  .seed-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .seed-row label { font-size: 12px; }
+  .seed-row input {
+    width: 100px;
+    background: #1e1e1e;
+    color: #F5F5DC;
+    border: 1px solid #3a3a3a;
+    padding: 2px 6px;
+    font-family: inherit;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <h1>Tree Sprite Tuner</h1>
+
+  <div class="seed-row">
+    <label>Seed:</label>
+    <input type="number" id="seed" value="99" min="0" step="1">
+    <button id="btn-random-seed">Random</button>
+  </div>
+
+  <h2>Structure</h2>
+  <div class="control">
+    <label>Trunk Length <span class="val" id="v-trunk-length">35</span></label>
+    <input type="range" id="trunk-length" min="10" max="80" step="1" value="35">
+  </div>
+  <div class="control">
+    <label>Trunk Width <span class="val" id="v-trunk-width">8</span></label>
+    <input type="range" id="trunk-width" min="2" max="24" step="0.5" value="8">
+  </div>
+  <div class="control">
+    <label>Taper <span class="val" id="v-taper">0.45</span></label>
+    <input type="range" id="taper" min="0.15" max="0.8" step="0.01" value="0.45">
+  </div>
+  <div class="control">
+    <label>Branches <span class="val" id="v-num-branches">3</span></label>
+    <input type="range" id="num-branches" min="2" max="5" step="1" value="3">
+  </div>
+  <div class="control">
+    <label>Max Depth <span class="val" id="v-max-depth">4</span></label>
+    <input type="range" id="max-depth" min="2" max="6" step="1" value="4">
+  </div>
+  <div class="control">
+    <label>Spread (deg) <span class="val" id="v-spread-deg">22</span></label>
+    <input type="range" id="spread-deg" min="5" max="60" step="1" value="22">
+  </div>
+
+  <h2>Foliage</h2>
+  <div class="control">
+    <label>Leaf Size <span class="val" id="v-leaf-size">9</span></label>
+    <input type="range" id="leaf-size" min="3" max="24" step="0.5" value="9">
+  </div>
+
+  <h2>Output</h2>
+  <div class="actions">
+    <button id="btn-copy">Copy Rust Config</button>
+    <button id="btn-export">Export PNGs</button>
+  </div>
+  <pre id="rust-output"></pre>
+</div>
+
+<div class="preview-area">
+  <div class="canvas-row" id="canvas-row"></div>
+</div>
+
+<script>
+// --- LCG RNG matching Rust implementation exactly ---
+class Rng {
+  constructor(seed) {
+    this.state = BigInt(seed);
+  }
+  next() {
+    this.state = BigInt.asUintN(64,
+      this.state * 6364136223846793005n + 1442695040888963407n
+    );
+    return Number(this.state >> 33n) / 0xFFFFFFFF;
+  }
+  range(a, b) {
+    return a + this.next() * (b - a);
+  }
+}
+
+const LIGHT_X = -0.7071, LIGHT_Y = -0.7071;
+
+const LEAF_RAMP = [
+  [0x32, 0x38, 0x1c],
+  [0x3e, 0x44, 0x1e],
+  [0x40, 0x43, 0x22],
+  [0x50, 0x53, 0x2c],
+  [0x4f, 0x5a, 0x22],
+  [0x5c, 0x5e, 0x33],
+];
+
+const TRUNK_MID = [0x4c, 0x3a, 0x23];
+const TRUNK_DARK = [0x20, 0x23, 0x0e];
+const TRUNK_HIGHLIGHT = [0x6b, 0x52, 0x34];
+
+function leafColor(dx, dy) {
+  const len = Math.max(Math.sqrt(dx*dx + dy*dy), 0.001);
+  const dot = (dx/len)*LIGHT_X + (dy/len)*LIGHT_Y;
+  const t = (dot + 1) / 2;
+  const idx = Math.min(Math.round(t * (LEAF_RAMP.length - 1)), LEAF_RAMP.length - 1);
+  const c = LEAF_RAMP[idx];
+  return c;
+}
+
+function rgba(c, a) {
+  return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+}
+
+function drawTaperedSegment(ctx, x1, y1, x2, y2, w1, w2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.max(Math.sqrt(dx*dx + dy*dy), 0.001);
+  const nx = dy/len, ny = -dx/len;
+
+  // Mid
+  ctx.fillStyle = rgba(TRUNK_MID, 1);
+  ctx.beginPath();
+  ctx.moveTo(x1+nx*w1, y1+ny*w1);
+  ctx.lineTo(x2+nx*w2, y2+ny*w2);
+  ctx.lineTo(x2-nx*w2, y2-ny*w2);
+  ctx.lineTo(x1-nx*w1, y1-ny*w1);
+  ctx.closePath();
+  ctx.fill();
+
+  // Shadow
+  ctx.fillStyle = rgba(TRUNK_DARK, 0.72);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.lineTo(x2-nx*w2, y2-ny*w2);
+  ctx.lineTo(x1-nx*w1, y1-ny*w1);
+  ctx.closePath();
+  ctx.fill();
+
+  // Highlight
+  ctx.fillStyle = rgba(TRUNK_HIGHLIGHT, 0.45);
+  ctx.beginPath();
+  ctx.moveTo(x1+nx*w1, y1+ny*w1);
+  ctx.lineTo(x2+nx*w2, y2+ny*w2);
+  ctx.lineTo(x2+nx*(w2*0.45), y2+ny*(w2*0.45));
+  ctx.lineTo(x1+nx*(w1*0.45), y1+ny*(w1*0.45));
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawLeafCluster(ctx, cx, cy, leafSize, rng) {
+  const count = Math.floor(rng.range(6, 11));
+  for (let i = 0; i < count; i++) {
+    const dx = rng.range(-leafSize, leafSize);
+    const dy = rng.range(-leafSize * 0.8, leafSize * 0.8);
+    const r  = rng.range(leafSize * 0.5, leafSize);
+    const alpha = rng.range(0.85, 0.98);
+    const c = leafColor(dx, dy);
+    ctx.fillStyle = rgba(c, alpha);
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawBranch(ctx, x, y, angle, length, widthBase, cfg, depth, leaves, rng) {
+  const ex = x + Math.cos(angle) * length;
+  const ey = y + Math.sin(angle) * length;
+  const widthTip = widthBase * cfg.taper;
+
+  drawTaperedSegment(ctx, x, y, ex, ey, widthBase/2, widthTip/2);
+
+  if (depth === cfg.maxDepth) {
+    leaves.push({ x: ex, y: ey });
+    return;
+  }
+
+  const spreadRad = cfg.spreadDeg * Math.PI / 180;
+  for (let i = 0; i < cfg.numBranches; i++) {
+    const childAngle = angle + rng.range(-spreadRad, spreadRad);
+    const childLen = length * rng.range(0.65, 0.82);
+    drawBranch(ctx, ex, ey, childAngle, childLen, widthTip, cfg, depth + 1, leaves, rng);
+  }
+}
+
+function generateTree(ctx, cfg, seed, w, h) {
+  ctx.clearRect(0, 0, w, h);
+  const rng = new Rng(seed);
+
+  const baseX = w / 2;
+  const baseY = h - 10;
+
+  // Ground shadow
+  const sw = cfg.trunkWidth * 0.9;
+  const sx = baseX + sw * 0.3;
+  const sy = baseY + 4;
+  ctx.fillStyle = rgba([0x20, 0x23, 0x0e], 0.65);
+  ctx.beginPath();
+  ctx.ellipse(sx, sy, sw, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  const leaves = [];
+  const trunkAngle = -Math.PI/2 + rng.range(-0.08, 0.08);
+
+  drawBranch(ctx, baseX, baseY, trunkAngle,
+    cfg.trunkLength * rng.range(0.85, 1.15),
+    cfg.trunkWidth, cfg, 1, leaves, rng);
+
+  leaves.sort((a, b) => a.y - b.y);
+
+  for (const leaf of leaves) {
+    const size = cfg.leafSize + rng.range(-2, 3);
+    drawLeafCluster(ctx, leaf.x, leaf.y, size, rng);
+  }
+}
+
+// --- UI ---
+const NUM_PREVIEWS = 5;
+const W = 128, H = 128;
+const canvasRow = document.getElementById('canvas-row');
+const canvases = [];
+
+for (let i = 0; i < NUM_PREVIEWS; i++) {
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  c.style.width = `${W}px`; c.style.height = `${H}px`;
+  canvasRow.appendChild(c);
+  canvases.push(c);
+}
+
+const sliders = {
+  trunkLength: document.getElementById('trunk-length'),
+  trunkWidth:  document.getElementById('trunk-width'),
+  taper:       document.getElementById('taper'),
+  numBranches: document.getElementById('num-branches'),
+  maxDepth:    document.getElementById('max-depth'),
+  spreadDeg:   document.getElementById('spread-deg'),
+  leafSize:    document.getElementById('leaf-size'),
+};
+
+const seedInput = document.getElementById('seed');
+
+function getConfig() {
+  return {
+    trunkLength: parseFloat(sliders.trunkLength.value),
+    trunkWidth:  parseFloat(sliders.trunkWidth.value),
+    taper:       parseFloat(sliders.taper.value),
+    numBranches: parseInt(sliders.numBranches.value),
+    maxDepth:    parseInt(sliders.maxDepth.value),
+    spreadDeg:   parseFloat(sliders.spreadDeg.value),
+    leafSize:    parseFloat(sliders.leafSize.value),
+  };
+}
+
+function render() {
+  const cfg = getConfig();
+  const baseSeed = parseInt(seedInput.value) || 0;
+
+  // Update value displays
+  for (const [key, el] of Object.entries(sliders)) {
+    const display = document.getElementById('v-' + el.id);
+    if (display) display.textContent = el.value;
+  }
+
+  for (let i = 0; i < NUM_PREVIEWS; i++) {
+    const ctx = canvases[i].getContext('2d');
+    generateTree(ctx, cfg, baseSeed + i * 12345, W, H);
+  }
+}
+
+// Bind events
+for (const el of Object.values(sliders)) {
+  el.addEventListener('input', render);
+}
+seedInput.addEventListener('input', render);
+
+document.getElementById('btn-random-seed').addEventListener('click', () => {
+  seedInput.value = Math.floor(Math.random() * 100000);
+  render();
+});
+
+document.getElementById('btn-copy').addEventListener('click', () => {
+  const cfg = getConfig();
+  const out = document.getElementById('rust-output');
+  out.style.display = 'block';
+  out.textContent =
+`TreeConfig {
+    trunk_width: ${cfg.trunkWidth},
+    taper: ${cfg.taper},
+    num_branches: ${cfg.numBranches},
+    max_depth: ${cfg.maxDepth},
+    spread_deg: ${cfg.spreadDeg},
+    leaf_size: ${cfg.leafSize},
+    trunk_length: ${cfg.trunkLength},
+}`;
+  navigator.clipboard.writeText(out.textContent).catch(() => {});
+});
+
+document.getElementById('btn-export').addEventListener('click', () => {
+  for (let i = 0; i < NUM_PREVIEWS; i++) {
+    const link = document.createElement('a');
+    link.download = `tree_${i}.png`;
+    link.href = canvases[i].toDataURL('image/png');
+    link.click();
+  }
+});
+
+render();
+</script>
+</body>
+</html>

@@ -89,6 +89,8 @@ impl RelationMatrix {
             }
             (FactionType::ReligiousOrder, FactionType::MageCircle)
             | (FactionType::MageCircle, FactionType::ReligiousOrder) => base -= 10,
+            (FactionType::Theocracy, FactionType::MageCircle)
+            | (FactionType::MageCircle, FactionType::Theocracy) => base -= 10,
             (FactionType::MerchantGuild, _) | (_, FactionType::MerchantGuild) => base += 5,
             _ => {}
         }
@@ -137,6 +139,8 @@ pub struct FactionState {
     pub patron_god: Option<GodId>,
     /// Faction's devotion to their patron (0-100).
     pub devotion: u32,
+    /// Consecutive years with average happiness below 20. Dissolves at 5.
+    pub unhappy_years: u8,
 }
 
 impl FactionState {
@@ -173,6 +177,7 @@ impl FactionState {
             FactionType::MageCircle => (25, 50, 60),
             FactionType::BanditClan => (45, 30, 35),
             FactionType::TribalWarband => (50, 25, 40),
+            FactionType::Theocracy => (20, 40, 75),
         }
     }
 }
@@ -217,7 +222,8 @@ pub struct SettlementState {
     pub id: u32,
     pub name: String,
     pub founded_year: i32,
-    pub owner_faction: u32,
+    /// Derived cache: faction with the most allegiant residents. Recomputed yearly.
+    pub controlling_faction: u32,
     pub destroyed_year: Option<i32>,
     pub region: String,
     pub population_class: PopulationClass,
@@ -233,12 +239,12 @@ pub struct SettlementState {
     pub zone_type: Option<ZoneType>,
     /// Resource stockpile.
     pub stockpile: ResourceStockpile,
-    /// Owner faction is currently at war (set each year by history loop).
-    pub at_war: bool,
     /// Hit by plague this year (one-time pulse, cleared after population processes it).
     pub plague_this_year: bool,
-    /// Conquered this year — new faction took over (set by world_events, cleared after population processes).
+    /// Conquered this year (set by world_events, cleared after population processes).
     pub conquered_this_year: bool,
+    /// Which faction conquered this settlement (set alongside conquered_this_year).
+    pub conquered_by: Option<u32>,
     /// Dominant race among living residents (computed yearly from population).
     pub dominant_race: Option<Race>,
 }
@@ -406,7 +412,7 @@ mod tests {
             dissolved_year: None, leader_name: "L".into(), leader_id: None,
             military_strength: 50, wealth: 50, stability: 50,
             territory: vec![], settlements: vec![],
-            patron_god: None, devotion: 0,
+            patron_god: None, devotion: 0, unhappy_years: 0,
         };
         let goblin = FactionState {
             id: 2, name: "G".into(), faction_type: FactionType::BanditClan,
@@ -414,7 +420,7 @@ mod tests {
             dissolved_year: None, leader_name: "L".into(), leader_id: None,
             military_strength: 50, wealth: 50, stability: 50,
             territory: vec![], settlements: vec![],
-            patron_god: None, devotion: 0,
+            patron_god: None, devotion: 0, unhappy_years: 0,
         };
         let mut rm = RelationMatrix::default();
         rm.initialize_pair(&dwarf, &goblin);

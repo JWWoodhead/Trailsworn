@@ -1,16 +1,27 @@
 # Combat System
 
+## Health System
+
+**Flat HP pool** via `Health { current, max }` component. Max HP = `50 + toughness * 10`. Every hit reduces current HP by post-armor damage. Death when `current <= 0`.
+- `health.take_damage(amount)` — reduces current, returns actual damage dealt
+- `health.heal(amount)` — restores current, capped at max
+- `health.fraction()` — current/max for health bar display
+
+Health bars, party portraits, hover tooltips, and AI (flee, heal decisions) all read `Health.fraction()`.
+
 ## Hit Resolution Chain
 1. `accuracy_check(accuracy, dodge, roll)` — hit chance clamped 5%-95%
 2. `select_body_part(template, coverage_roll)` — weighted by body part coverage
 3. `armor.reduce_damage(part_index, damage_type, raw_damage)` — per-part armor resistances
-4. `body.damage_part(index, damage, template)` — reduces HP, cascades destruction to children
+4. `body.damage_part(index, damage, template)` — reduces part HP, cascades destruction to children
+5. `health.take_damage(damage_after_armor)` — reduces flat HP pool
 
-## Body Part System
+## Body Part System (secondary, for future injuries)
 - Tree structure: Head -> (Brain, Eyes, Jaw), Torso -> (Heart, Lungs, Arms -> Hands, etc.)
 - Each part has: max_hp, coverage weight, vital flag, capabilities (Sight, Movement, etc.)
 - Destroying a part destroys all children
-- Destroying a vital part (Brain, Heart) kills the entity
+- Destroying a vital part (Brain, Heart) is **also** instant death (in addition to flat HP reaching 0)
+- Body part damage runs in parallel with the flat HP pool — currently cosmetic but supports future limb injuries
 - `BodyTemplate` loaded from data (currently `humanoid_template()`)
 - `Body` component stores per-part runtime HP state
 
@@ -42,16 +53,23 @@
 - On resolution, fires `AbilityLandedEvent` at the impact position for VFX
 
 ## Death
-- Destroying a vital body part (Brain, Heart) kills the entity
+- Flat HP reaching 0, OR destroying a vital body part (Brain, Heart), kills the entity
 - `cleanup_dead` inserts `Dead` marker, rotates sprite 90°, greys out to `Color::srgb(0.4, 0.4, 0.4)`, lowers z-layer to `FLOOR_ITEMS`
 - Removes `InCombat`, `Engaging`, `CurrentTask`, `CastingState`, `MovePath`, `HitFlash`
 - `Without<Dead>` guards on all targeting/combat queries prevent interacting with corpses
 - Corpses persist until zone exit (no despawn timer)
 
+## Targeting
+- **bevy_picking** for sprite-based click targeting — all combat entities have `Pickable` component
+- `HoveredTarget` resource updated each frame from Bevy's `HoverMap` (topmost entity under cursor)
+- Right-click: if hovered entity is non-friendly, issue attack; otherwise move to ground
+- Faction check: `!is_friendly()` (Neutral and Hostile entities are both attackable)
+- Threat-based aggro ignores faction — if something hit you, you fight back regardless
+
 ## Threat
 - `ThreatTable` per entity — tracks threat from each attacker
 - Damage generates threat
-- AI evaluators use highest-threat target when available
+- AI uses highest-threat target when available; skips faction check for threat sources (provoked enemies retaliate)
 
 ## UseCondition (AI ability gating)
 - `Always` — always use

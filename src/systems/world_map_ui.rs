@@ -8,7 +8,7 @@ use bevy::window::PrimaryWindow;
 use crate::resources::input::{Action, ActionState};
 use crate::resources::theme::Theme;
 use crate::resources::world::CurrentZone;
-use crate::worldgen::world_map::{SettlementSize, WorldMap, WorldPos};
+use crate::worldgen::world_map::{SettlementSize, WorldCell, WorldMap, WorldPos};
 use crate::worldgen::zone::ZoneType;
 
 // ---------------------------------------------------------------------------
@@ -91,6 +91,43 @@ fn biome_label(zone_type: ZoneType) -> &'static str {
     }
 }
 
+/// Format the info text for a world map cell.
+fn cell_info_text(pos: WorldPos, cell: &WorldCell) -> String {
+    let label = biome_label(cell.zone_type);
+
+    let mut parts = vec![format!(
+        "{} ({}, {}) | Elev: {:.0}% | Moist: {:.0}% | Temp: {:.0}%",
+        label, pos.x, pos.y,
+        cell.elevation * 100.0,
+        cell.moisture * 100.0,
+        cell.temperature * 100.0,
+    )];
+
+    if cell.river { parts.push("River".into()); }
+
+    if cell.road {
+        let class = match cell.road_class {
+            2 => "Major Road",
+            1 => "Road",
+            _ => "Road",
+        };
+        parts.push(class.into());
+    }
+
+    if let Some(name) = &cell.settlement_name {
+        let size_label = match cell.settlement_size {
+            Some(SettlementSize::City) => "City",
+            Some(SettlementSize::Town) => "Town",
+            Some(SettlementSize::Village) => "Village",
+            Some(SettlementSize::Hamlet) => "Hamlet",
+            None => "Settlement",
+        };
+        parts.push(format!("{size_label}: {name}"));
+    }
+
+    parts.join(" | ")
+}
+
 const RIVER_COLOR: [u8; 4] = [40, 90, 170, 255];
 const MAP_DISPLAY_SIZE: f32 = 768.0;
 
@@ -107,23 +144,20 @@ pub fn setup_world_map_ui(
     let map_image = generate_map_image(&world_map);
     let map_handle = images.add(map_image);
 
-    // Collect settlement positions for labels
+    // Collect settlement positions for labels (deduplicate multi-cell settlements)
+    let mut seen_names = std::collections::HashSet::new();
     let settlements: Vec<(i32, i32, String)> = world_map
         .cells
         .iter()
         .enumerate()
         .filter_map(|(i, cell)| {
-            if cell.zone_type == ZoneType::Settlement {
-                let x = (i as u32 % world_map.width) as i32;
-                let y = (i as u32 / world_map.width) as i32;
-                let name = cell
-                    .settlement_name
-                    .clone()
-                    .unwrap_or_else(|| "Settlement".to_string());
-                Some((x, y, name))
-            } else {
-                None
+            let name = cell.settlement_name.as_ref()?;
+            if !seen_names.insert(name.clone()) {
+                return None; // already added this settlement
             }
+            let x = (i as u32 % world_map.width) as i32;
+            let y = (i as u32 / world_map.width) as i32;
+            Some((x, y, name.clone()))
         })
         .collect();
 
@@ -333,6 +367,11 @@ fn generate_map_image(world_map: &WorldMap) -> Image {
 
             let mut color = biome_color(cell.zone_type);
 
+            // Road overlay (under rivers so rivers take visual priority)
+            if cell.road && !cell.river && cell.zone_type != ZoneType::Ocean && cell.zone_type != ZoneType::Settlement {
+                color = [139, 119, 80, 255]; // tan/brown
+            }
+
             // River overlay
             if cell.river && cell.zone_type != ZoneType::Ocean {
                 color = RIVER_COLOR;
@@ -348,27 +387,55 @@ fn generate_map_image(world_map: &WorldMap) -> Image {
         }
     }
 
-    // Draw settlement markers — 1 gold pixel per settlement cell.
-    // Cities (2x2) and towns (2x1) already occupy multiple cells as ZoneType::Settlement,
-    // so their footprint is visible from the base biome coloring. Villages and hamlets
-    // keep their natural zone type, so we draw a gold pixel to mark them.
-    let icon_color: [u8; 4] = [212, 175, 55, 255]; // #d4af37
-    let dim_icon: [u8; 4] = [160, 130, 40, 255]; // dimmer gold for hamlets
-    for (i, cell) in world_map.cells.iter().enumerate() {
-        let color = match cell.settlement_size {
-            Some(SettlementSize::Village) => icon_color,
-            Some(SettlementSize::Hamlet) => dim_icon,
-            _ => continue, // Cities/towns show via ZoneType::Settlement coloring
-        };
-        let x = (i as u32 % w) as i32;
-        let y = (i as u32 / w) as i32;
-        let img_y = (h as i32 - 1 - y) as i32;
-        if x < 0 || img_y < 0 || x >= w as i32 || img_y >= h as i32 { continue; }
-        let pi = ((img_y as u32 * w + x as u32) * 4) as usize;
+    // Draw settlement markers — deduplicated, sized by settlement tier.
+    // Each settlement gets a colored block with a dark outline for visibility.
+    let city_color: [u8; 4] = [212, 175, 55, 255]; // bright gold
+    let town_color: [u8; 4] = [212, 175, 55, 255]; // gold
+    let village_color: [u8; 4] = [190, 155, 50, 255]; // slightly dimmer
+    let hamlet_color: [u8; 4] = [160, 130, 40, 255]; // dim gold
+    let outline_color: [u8; 4] = [20, 15, 5, 255]; // near-black outline
+
+    // Helper to set a pixel in the image data
+    let set_pixel = |data: &mut [u8], px: i32, img_y: i32, color: [u8; 4]| {
+        if px < 0 || img_y < 0 || px >= w as i32 || img_y >= h as i32 { return; }
+        let pi = ((img_y as u32 * w + px as u32) * 4) as usize;
         data[pi] = color[0];
         data[pi + 1] = color[1];
         data[pi + 2] = color[2];
         data[pi + 3] = color[3];
+    };
+
+    let mut seen_settlement_names = std::collections::HashSet::new();
+    for (i, cell) in world_map.cells.iter().enumerate() {
+        let Some(name) = &cell.settlement_name else { continue };
+        if !seen_settlement_names.insert(name.clone()) { continue; }
+        // Footprint matches world map: City 2x2, Town 2x1, Village/Hamlet 1x1
+        let (color, footprint): (_, &[(i32, i32)]) = match cell.settlement_size {
+            Some(SettlementSize::City) => (city_color, &[(0,0),(1,0),(0,1),(1,1)]),
+            Some(SettlementSize::Town) => (town_color, &[(0,0),(1,0)]),
+            Some(SettlementSize::Village) => (village_color, &[(0,0)]),
+            Some(SettlementSize::Hamlet) => (hamlet_color, &[(0,0)]),
+            None => continue,
+        };
+        let cx = (i as u32 % w) as i32;
+        let cy = (i as u32 / w) as i32;
+        // Pass 1: dark outline (1px border around each footprint cell)
+        for &(dx, dy) in footprint {
+            for ox in -1i32..=1 {
+                for oy in -1i32..=1 {
+                    if ox == 0 && oy == 0 { continue; }
+                    let px = cx + dx + ox;
+                    let img_y = h as i32 - 1 - (cy + dy + oy);
+                    set_pixel(&mut data, px, img_y, outline_color);
+                }
+            }
+        }
+        // Pass 2: fill (overwrites outline pixels inside the footprint)
+        for &(dx, dy) in footprint {
+            let px = cx + dx;
+            let img_y = h as i32 - 1 - (cy + dy);
+            set_pixel(&mut data, px, img_y, color);
+        }
     }
 
     let mut image = Image::new(
@@ -539,23 +606,7 @@ pub fn world_map_click(
     let pos = WorldPos::new(cell_x, cell_y);
     if let Some(cell) = world_map.get(pos) {
         if let Ok(mut text) = info_query.single_mut() {
-            let label = biome_label(cell.zone_type);
-            let name_suffix = cell
-                .settlement_name
-                .as_ref()
-                .map(|n| format!(" — {n}"))
-                .unwrap_or_default();
-            **text = format!(
-                "{}{} ({}, {}) | Elev: {:.0}% | Moist: {:.0}% | Temp: {:.0}%{}",
-                label,
-                name_suffix,
-                pos.x,
-                pos.y,
-                cell.elevation * 100.0,
-                cell.moisture * 100.0,
-                cell.temperature * 100.0,
-                if cell.river { " | River" } else { "" },
-            );
+            **text = cell_info_text(pos, cell);
         }
     }
 }
@@ -602,10 +653,12 @@ pub fn update_world_map_marker(
         marker_node.top = Val::Px(py - 4.0);
     }
 
-    // Update settlement label positions for zoom/pan
+    // Update settlement label positions for zoom/pan (deduplicate multi-cell settlements)
     let mut settlement_idx = 0;
+    let mut seen_label_names = std::collections::HashSet::new();
     for (i, cell) in world_map.cells.iter().enumerate() {
-        if cell.zone_type != ZoneType::Settlement {
+        let Some(name) = &cell.settlement_name else { continue };
+        if !seen_label_names.insert(name.clone()) {
             continue;
         }
         let wx = (i as u32 % world_map.width) as f32;
@@ -623,22 +676,7 @@ pub fn update_world_map_marker(
     // Update info text with current zone info
     if let Ok(mut text) = info_query.single_mut() {
         if let Some(cell) = world_map.get(current_zone.world_pos) {
-            let label = biome_label(cell.zone_type);
-            let name_suffix = cell
-                .settlement_name
-                .as_ref()
-                .map(|n| format!(" — {n}"))
-                .unwrap_or_default();
-            **text = format!(
-                "{}{} ({}, {}) | Elev: {:.0}% | Moist: {:.0}% | Temp: {:.0}%{}",
-                label,
-                name_suffix,
-                current_zone.world_pos.x,
-                current_zone.world_pos.y,
-                cell.elevation * 100.0,
-                cell.moisture * 100.0,
-                cell.temperature * 100.0,
-                if cell.river { " | River" } else { "" },
+            **text = cell_info_text(current_zone.world_pos, cell
             );
         }
     }

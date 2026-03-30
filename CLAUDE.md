@@ -17,6 +17,7 @@ src/
   resources/           — All Components, Resources, and data types
   pathfinding/         — A* and HPA* (pure algorithms, no Bevy)
   worldgen/            — World/zone/history generation (pure Rust, no Bevy)
+    world_map/         — World map gen: terrain, rivers, roads, settlements, regions
 assets/                — Shader, textures, generated texture array
 examples/              — Asset generation tools (gen_terrain_array, gen_atlas)
 tests/                 — Integration test harness + per-system tests (~257 tests)
@@ -66,7 +67,7 @@ Colors in `resources/theme.rs`:
 - [docs/vfx.md](docs/vfx.md) — Combat feedback: VFX particles, audio, micro-animations, and how to add new effects
 - [docs/population.md](docs/population.md) — Population simulation: lifecycle, resources, faith, traits, happiness, migration
 - [docs/narrative.md](docs/narrative.md) — 39 narrative functions (Propp/Shakespeare/Dostoevsky) for emergent storytelling
-- [docs/faction-rework.md](docs/faction-rework.md) — Faction system rework plan: population-connected, type-specific, emergent formation
+- [docs/faction-rework.md](docs/faction-rework.md) — Faction system rework: allegiance-based model, leader-driven formation, character-driven events (in progress)
 
 ## Known Issues
 
@@ -77,7 +78,6 @@ Colors in `resources/theme.rs`:
 - **Attribute bonuses from equipment not applied** (needs `EffectiveAttributes` refactor)
 - **No equip/unequip from UI**
 - **No save/load** (`StableId` infrastructure ready, serialization not built)
-- **No party portraits UI**: no status display for multiple party members
 - **No camera follow**: camera is fully manual (WASD/edge scroll)
 - **Terrain feature sprites**: forest has real sprites, other biomes still use placeholder colored squares
 - **Terrain textures**: 5 of 9 still flat color (Sand, Snow, Swamp, Water, Mountain)
@@ -97,4 +97,5 @@ cargo run --example gen_terrain_array  # Regenerate terrain texture array
 cargo run --example gen_blend_texture  # Regenerate terrain blend weight texture
 ```
 
-Runtime debug toggles: F1=grid, F2=pathing, F3=aggro, F4=AI state, F5=profiling, F6=obstacles
+Party selection: F1-F4 select party members by spawn order (Warrior, Archer, Mage, Healer)
+Debug toggles (Ctrl+F key): Ctrl+F1=grid, Ctrl+F2=pathing, Ctrl+F3=aggro, Ctrl+F4=AI state, Ctrl+F5=profiling, Ctrl+F6=obstacles

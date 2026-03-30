@@ -139,9 +139,10 @@ pub fn seed_population(
                 death_year: None,
                 death_cause: None,
                 settlement_id: settlement.id,
+                faction_allegiance: settlement.controlling_faction,
                 sex,
                 race: factions.iter()
-                    .find(|f| f.id == settlement.owner_faction)
+                    .find(|f| f.id == settlement.controlling_faction)
                     .map(|f| f.race)
                     .unwrap_or(Race::Human),
                 secondary_race: None,

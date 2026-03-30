@@ -20,7 +20,7 @@ use crate::resources::faction::{Faction, FACTION_PLAYER};
 use crate::resources::game_state::GameState;
 use crate::resources::identity::StableId;
 use crate::resources::map::{render_layers, GridPosition, MapSettings, TileWorld};
-use crate::resources::movement::{FacingDirection, MovementSpeed, PathOffset};
+use crate::resources::movement::{DirectionalSprites, FacingDirection, MovementSpeed, PathOffset};
 use crate::resources::stats::{Attributes, CharacterLevel};
 use crate::resources::status_effects::ActiveStatusEffects;
 use crate::resources::threat::ThreatTable;
@@ -84,9 +84,15 @@ pub fn spawn_player(
     body_templates: Res<BodyTemplates>,
     item_registry: Res<ItemRegistry>,
     mut instance_registry: ResMut<ItemInstanceRegistry>,
+    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
-    let pawn_texture: Handle<Image> = asset_server.load("pawn.png");
     let template = body_templates.get("humanoid").unwrap();
+
+    // Load humanoid sprite sheet: 4 frames (S, N, E, W) at 64x64 in a horizontal strip
+    let atlas_texture: Handle<Image> = asset_server.load("actors/human_atlas.png");
+    let atlas_layout = texture_atlas_layouts.add(TextureAtlasLayout::from_grid(
+        UVec2::new(64, 64), 4, 1, None, None,
+    ));
 
     // Find a walkable spawn center near the map center
     let center = find_walkable_near(
@@ -191,8 +197,12 @@ pub fn spawn_player(
             StableId::next(),
             DespawnOnExit(GameState::Playing),
             Sprite {
-                image: pawn_texture.clone(),
+                image: atlas_texture.clone(),
                 color: member.color,
+                texture_atlas: Some(TextureAtlas {
+                    layout: atlas_layout.clone(),
+                    index: 0, // South-facing default
+                }),
                 ..default()
             },
             Transform::from_translation(Vec3::new(
@@ -207,6 +217,7 @@ pub fn spawn_player(
             Faction(FACTION_PLAYER),
             EntityName(member.name.into()),
         ));
+        entity_commands.insert((DirectionalSprites, Pickable::default()));
 
         let max_hp = 50.0 + member.attrs.toughness as f32 * 10.0;
         entity_commands.insert((

@@ -336,6 +336,9 @@ fn follow_entity_fails_when_leader_despawned() {
 
 #[test]
 fn no_processing_when_zero_ticks() {
+    // Task processing now runs even at zero ticks (for pause-time orders).
+    // Only tick-locked systems (movement, combat) gate on ticks.
+    // A completed action still resolves — this is correct behavior.
     let mut app = App::new();
     let mut gt = GameTime::default();
     gt.ticks_this_frame = 0;
@@ -344,7 +347,7 @@ fn no_processing_when_zero_ticks() {
     app.insert_resource(AbilityRegistry::default());
     app.add_systems(Update, execute_actions);
 
-    // Entity at destination — would normally complete
+    // Entity at destination — completes even at zero ticks
     let entity = app.world_mut().spawn((
         GridPosition::new(5, 5),
         ActiveStatusEffects::default(),
@@ -356,8 +359,8 @@ fn no_processing_when_zero_ticks() {
 
     app.update();
 
-    // With zero ticks, nothing should happen — task still present
-    assert!(app.world().get::<CurrentTask>(entity).is_some());
+    // Task completes because entity is already at destination
+    assert!(app.world().get::<CurrentTask>(entity).is_none());
 }
 
 // ---------------------------------------------------------------------------

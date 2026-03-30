@@ -1,6 +1,9 @@
 # World Generation (pure Rust, no Bevy)
 
-## World Map (`worldgen/world_map.rs`)
+## World Map (`worldgen/world_map/`)
+
+Module directory with focused sub-files: `mod.rs` (types + orchestrator), `terrain.rs`, `rivers.rs`, `settlements.rs`, `regions.rs`, `roads.rs`, `tests.rs`.
+
 - 256x256 grid of zones (65,536 cells), each zone 250x250 tiles
 - Noise-driven geography using four Fbm<Perlin> layers:
   - **Elevation** (freq 0.008, 6 octaves): continent shapes, ocean < 0.42, mountain > 0.78
@@ -14,13 +17,15 @@
 - **Ocean balance**: adaptive threshold ensures 15-60% ocean coverage across all seeds
 - **Rivers**: 5-40 sources at high elevation, walk downhill to ocean with momentum + meander. Track entry/exit edges and width per cell.
 - **Region identification**: flood-fill contiguous same-type zones → `region_id` (foundation for divine domains)
-- **Settlements**: ~70 placed across habitable land with size distribution: ~40 hamlets, ~20 villages, ~8 towns, ~3 cities. Towns/cities get `ZoneType::Settlement`; hamlets/villages keep natural terrain. Prefer river adjacency and grassland/forest. Cities spaced furthest apart, hamlets can cluster.
+- **Settlements**: ~70 placed across habitable land with size distribution: ~40 hamlets, ~20 villages, ~8 towns, ~3 cities. Towns/cities get `ZoneType::Settlement`; hamlets/villages keep natural terrain. Prefer river adjacency (adjacent cells, not ON river) and grassland/forest. Cities spaced furthest apart, hamlets can cluster. Never placed on river or ocean cells.
+- **Roads**: connect settlements via MST (Prim's algorithm) with A* pathfinding on the world grid. Terrain-aware costs (ocean impassable, mountain 8x, river 6x penalty, grassland 1x). Isolated hamlets/villages pruned when MST edge cost > 80. Towns/cities get 1-2 bonus edges for loops. Already-roaded cells cost 0.1 (encourages trunk routes). `road_class` 1=minor, 2=major.
 - Multiple landmasses emerge naturally from elevation + continent noise
 
 ### WorldCell fields
 - `zone_type`, `has_cave`, `explored` (original)
 - `elevation`, `moisture`, `temperature` (0.0-1.0 noise values)
 - `river` (bool), `river_entry` ([N,E,S,W] edge flags), `river_width` (0.0-1.0 progress)
+- `road` (bool), `road_entry` ([N,E,S,W] edge flags), `road_class` (0=none, 1=minor, 2=major)
 - `region_id` (Option<u32>, contiguous biome region)
 - `settlement_name` (Option<String>, procedurally generated)
 - `settlement_size` (Option<SettlementSize>: Hamlet/Village/Town/City)
@@ -29,7 +34,7 @@
 
 ## Zone Generation (`worldgen/zone.rs`)
 - **Noise-based terrain**: 3 noise layers per zone (detail, wetness, rocky) drive per-tile terrain selection
-- **Context-aware**: `ZoneGenContext` carries world-level elevation/moisture/temperature + neighbor zone types + ocean edge directions
+- **Context-aware**: `ZoneGenContext` carries world-level elevation/moisture/temperature + neighbor zone types + ocean edge directions + road entry/class
 - **Biome recipes**: each `ZoneType` has a terrain selection function mapping noise values to terrain types:
   - Grassland: grass base, dirt/forest/stone/water from noise
   - Forest: forest base, grass clearings, dirt paths, swamp patches
@@ -41,6 +46,7 @@
 - **Edge blending**: within 30 tiles of zone borders, terrain blends toward neighbor's base terrain via noise threshold
 - **Coast direction**: `ocean_edges: [bool; 4]` on `ZoneGenContext` tracks which edges face ocean. Coast zones place water on the correct side(s).
 - **River carving**: uses world-level entry/exit edges and width. Noise-driven curved path with variable width (2-10 tiles) and dirt riverbanks.
+- **Road carving**: uses world-level `road_entry` edges and `road_class`. Noise-driven dirt path (minor=2 tiles, major=4 tiles). Narrow water crossings (≤2 tiles) bridged with dirt; wider water deflects road perpendicular to find land. Runs after rivers (water takes priority at crossings). Settlement zones skip road carving.
 - **Terrain features**: 200-800 per zone, noise-driven scatter. Data-driven via `FeatureRegistry` (`resources/feature_defs.rs`) — each feature defined once with properties, sprite path, scale, and biome weights. Blocking features update walk_cost/blocks_los. Spawned as y-sorted sprite entities on `TERRAIN_FEATURES` layer with `Anchor::BottomCenter` offset.
 - **Settlement**: biome-aware theming (sand in desert, snow in tundra, raised stone paths in swamp, directional water on coast). Named settlements with procedural names.
 - **Enemy camps**: 1-3 per zone, 2-5 enemies. Clear a dirt patch around camp center. Features culled within 6 tiles.
@@ -90,16 +96,18 @@ Spawned as `TerrainFeatureEntity` + `ZoneEntity` on `TERRAIN_FEATURES` layer (z=
 
 ## World Map UI (`systems/world_map_ui.rs`)
 - Toggle with M key, full-screen overlay with semi-transparent background
-- 256x256 pixel texture with nearest-neighbor scaling, settlement icons (gold outlined circles)
+- 256x256 pixel texture with nearest-neighbor scaling
+- **Settlement markers**: gold blocks matching footprint size (City 2x2, Town 2x1, Village/Hamlet 1x1) with dark outline for visibility. Deduplicated — one marker per settlement regardless of footprint cells.
+- **Settlement labels**: procedural names displayed near markers, deduplicated for multi-cell settlements
+- **Road overlay**: tan/brown color on road cells (under rivers, hidden on ocean/settlement)
 - **Legend**: color-coded biome key with river entry
-- **Settlement labels**: procedural names displayed near icons
 - **Zoom/Pan**: scroll wheel zoom (1x-4x), arrow key panning, clipping container
-- **Clickable zones**: left-click to inspect any zone's biome/elevation/moisture/temperature
+- **Hover info**: biome, coordinates, elevation/moisture/temperature, river, road (with class), settlement name + size tier
 - Camera pan disabled while map overlay is open
 
 ## Zone Transitions (`systems/zone.rs`)
 - `detect_zone_edge`: fires event when player reaches map boundary, checks `is_passable()` (blocks ocean)
-- `handle_zone_transition`: builds `ZoneGenContext` from world map (includes river entry/width), generates zone via `generate_zone_with_context`, snapshots entities, repositions player
+- `handle_zone_transition`: builds `ZoneGenContext` from world map (includes river entry/width, road entry/class), generates zone via `generate_zone_with_context`, snapshots entities, repositions player
 - `rendering::update_terrain_map`: detects `TileWorld` change and rebuilds the terrain map GPU texture
 
 ## History Generation (`worldgen/history/` + `worldgen/divine/`)

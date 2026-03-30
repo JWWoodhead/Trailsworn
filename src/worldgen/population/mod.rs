@@ -1,6 +1,7 @@
 //! Population simulation — every person in the world tracked with life events.
 //! Notable characters emerge from accumulated experiences.
 
+pub mod allegiance;
 pub mod events;
 pub mod faith;
 pub mod happiness;
@@ -94,17 +95,18 @@ impl PopulationSim {
         let mut current_at_war = std::collections::HashSet::new();
         for settlement in settlements.iter() {
             if settlement.destroyed_year.is_some() { continue; }
-            if settlement.at_war {
+            let is_at_war = world_state.war_count(settlement.controlling_faction) > 0;
+            if is_at_war {
                 current_at_war.insert(settlement.id);
                 let dead = war::apply_war_effects(
                     &mut self.people, &index, settlement,
-                    settlement.owner_faction, // enemy_faction_id approximation
+                    settlement.controlling_faction, // enemy_faction_id approximation
                     year, rng,
                 );
                 war_dead.extend(dead);
             } else if self.prev_at_war.contains(&settlement.id) {
                 // War just ended for this settlement
-                war::apply_war_ended(&mut self.people, &index, settlement, settlement.owner_faction, year);
+                war::apply_war_ended(&mut self.people, &index, settlement, settlement.controlling_faction, year);
             }
         }
         self.prev_at_war = current_at_war;
@@ -116,9 +118,9 @@ impl PopulationSim {
                     if self.people[idx].is_alive(year) {
                         self.people[idx].life_events.push(LifeEvt {
                             year,
-                            kind: LifeEvtKind::SettlementConquered { new_faction_id: settlement.owner_faction },
+                            kind: LifeEvtKind::SettlementConquered { new_faction_id: settlement.controlling_faction },
                             cause: Some(types::EventCause::Faction {
-                                faction_id: settlement.owner_faction,
+                                faction_id: settlement.controlling_faction,
                                 detail: "settlement conquered",
                             }),
                         });
@@ -151,7 +153,12 @@ impl PopulationSim {
         prophet::evaluate_prophets(&mut self.people, &index, settlements, gods, year);
 
         // Happiness evaluation
-        happiness::evaluate_happiness(&mut self.people, &index, settlements, year);
+        happiness::evaluate_happiness(&mut self.people, &index, settlements, world_state, year);
+
+        // Allegiance shifts — people change faction loyalty based on circumstances
+        allegiance::evaluate_allegiance_shifts(
+            &mut self.people, &index, settlements, factions, world_state, year,
+        );
 
         // Migration — unhappy families leave for better settlements
         migration::evaluate_migration(&mut self.people, &index, settlements, factions, world_state, year);

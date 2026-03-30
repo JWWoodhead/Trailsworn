@@ -66,7 +66,7 @@ pub fn promote_to_character(
 ) -> Character {
     let faction_id = settlements.iter()
         .find(|s| s.id == person.settlement_id)
-        .map(|s| s.owner_faction);
+        .map(|s| s.controlling_faction);
 
     let race = faction_id
         .and_then(|fid| factions.iter().find(|f| f.id == fid))

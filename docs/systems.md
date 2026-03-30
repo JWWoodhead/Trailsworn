@@ -11,9 +11,11 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `game_time::game_speed_input` — pause (Space), speed (1/2/3)
 - `camera::camera_pan` — WASD/arrows + edge scroll
 - `camera::camera_zoom` — scroll wheel (reads raw events, not action-mapped)
-- `selection::selection_input` — left-click select, drag-box multi-select, AND targeting mode resolution. Guards against UI click-through via `Interaction` query.
-- `selection::right_click_command` — creates move or attack `Task` on selected entities. Guards against UI click-through.
+- `selection::update_hovered_target` — reads Bevy's `HoverMap` (bevy_picking) to find the topmost `Pickable` entity under the cursor, stores in `HoveredTarget` resource
+- `selection::selection_input` — left-click select (uses picking for single-click, drag-box for multi-select), AND targeting mode resolution. Guards against UI click-through.
+- `selection::right_click_command` — creates move or attack `Task` on selected entities. Uses `HoveredTarget` for sprite-based attack targeting. Guards against UI click-through.
 - `selection::ability_input` — ability hotkeys (Q/E/R/T/F/G), creates cast `Task` or enters targeting mode
+- `selection::party_hotkey_select` — F1-F4 selects individual party members by spawn order
 - `ui_panel::toggle_ui_panel` — `C` opens Character tab, `I` opens Inventory tab. Same key closes, other key switches.
 
 ## Tick (GameSet::Tick)
@@ -27,8 +29,8 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `task::defend_self` — proposes `EngageTarget` only when attacked (threat table non-empty, priority 60)
 - `task::follow_leader` — proposes `FollowEntity` for configured leader (priority 20)
 - `task::assign_task` — picks highest-priority proposal from `AiBrain.proposals`, assigns as `CurrentTask` (respects player task protection, interruptibility, CC)
-- `task::execute_actions` — advances the current `Action` in each entity's `CurrentTask`. Handles completion/failure detection, cast initiation (inserts `CastingState`), and action sequencing. Manages `Engaging` marker component. Runs for ALL entities.
-- `movement::resolve_movement` — reads the current action from `CurrentTask`, extracts a movement goal, and runs A* pathfinding -> `MovePath`. Handles repath throttling (`RepathTimer`, 30 ticks for AI), mid-movement repathing (`PendingPath` for AI, progress-preserving prepend for players).
+- `task::execute_actions` — advances the current `Action` in each entity's `CurrentTask`. Handles completion/failure detection, cast initiation (inserts `CastingState`), and action sequencing. Manages `Engaging` marker component. Runs for ALL entities. **Not tick-gated** — runs even while paused so orders can be given during pause.
+- `movement::resolve_movement` — reads the current action from `CurrentTask`, extracts a movement goal, and runs A* pathfinding -> `MovePath`. Handles repath throttling (`RepathTimer`, 30 ticks for AI), mid-movement repathing (`PendingPath` for AI, progress-preserving prepend for players). **Not tick-gated** — pathfinding computes during pause so move previews show immediately.
 
 ## Combat (GameSet::Combat)
 - `equipment::sync_equipment` — derives `EquippedWeapon`/`EquippedArmor`/`EquipmentBonuses` from `Equipment` component's `ItemInstanceId` references. Bakes weapon affixes into `WeaponDef`, builds armor pieces, syncs `Mana.max`/`Stamina.max` from bonuses. Runs on `Changed<Equipment>`.
@@ -54,8 +56,15 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 - `floating_text::spawn_damage_numbers` — reads `DamageDealtEvent`/`AttackMissedEvent`, spawns Text2d
 - `floating_text::spawn_heal_numbers` — reads `HealEvent`, spawns green "+N" floating text
 - `floating_text::animate_floating_text` — drifts text up, fades alpha, despawns on expiry
-- `hover_info::update_hover_tooltip` — shows entity stats when mouse hovers over them
-- `selection::update_selection_visuals` — spawns/despawns gold ring sprites on selected entities
+- `hover_info::update_hover_tooltip` — shows entity stats when mouse hovers (reads `HoveredTarget` from picking)
+- `party_panel::sync_party_portraits` — spawns/removes portrait UI nodes for party members
+- `party_panel::update_party_portraits` — updates HP/mana bars and selection highlight on portraits
+- `party_panel::click_party_portrait` — clicking a portrait selects that party member
+- `selection::update_selection_visuals` — cleans up legacy selection ring sprites on deselection
+- `selection::draw_selection_indicators` — draws gold gizmo circles under selected entities
+- `selection::draw_move_preview` — draws path lines and destination circles for selected moving entities
+- `selection::draw_engage_lines` — draws pulsing red line from selected attackers to their targets
+- `selection::draw_hover_highlight` — draws subtle white circle on entity under cursor (from picking)
 - `selection::draw_drag_box` — draws selection rectangle with gizmos
 - `hud::update_speed_indicator` — shows "PAUSED" or "1x/2x/3x" top-right
 - `hud::combat_log_damage` — appends combat events to bottom-left panel (capped at 50 entries)
@@ -76,6 +85,7 @@ Input → Tick → Ai → Combat → Movement → Ui → Render
 
 ## Render (GameSet::Render)
 - `movement::sync_transforms` — sets entity `Transform` from `GridPosition` + `MovePath.progress` + `PathOffset` + `AttackLunge` offset. Computes y-sorted z-depth via `render_layers::y_sorted_z()` so entities further north render behind entities further south.
+- `movement::sync_facing_sprites` — updates sprite sheet atlas index when `FacingDirection` changes (entities with `DirectionalSprites`)
 - `vfx::tick_screen_trauma` — decays `ScreenTrauma.trauma` exponentially, applies camera shake offset (runs after sync_transforms)
 - `rendering::update_terrain_map` — updates the terrain map GPU texture (R=terrain type, G/B=random UV offset) when `TileWorld` changes (zone transitions)
 

@@ -295,7 +295,7 @@ pub fn generate_history(
             dissolved_year: None, leader_name: leader_display.clone(), leader_id: Some(leader_id),
             military_strength: mil, wealth, stability: stab,
             territory: vec![region.clone()], settlements: vec![],
-            patron_god: None, devotion: 0,
+            patron_god: None, devotion: 0, unhappy_years: 0,
         });
 
         events.push(HistoricEvent {
@@ -328,10 +328,10 @@ pub fn generate_history(
             .map(|c| c.zone_type);
         settlements.push(SettlementState {
             id: sid, name: sname.clone(), founded_year: founding_year,
-            owner_faction: faction_id, destroyed_year: None, region: region.clone(),
+            controlling_faction: faction_id, destroyed_year: None, region: region.clone(),
             population_class: pop, prosperity: 50, defenses: 30,
             patron_god: None, devotion: 0, world_pos: faction_world_pos,
-            zone_type: faction_zone_type, stockpile: ResourceStockpile::default(), at_war: false, plague_this_year: false, conquered_this_year: false,
+            zone_type: faction_zone_type, stockpile: ResourceStockpile::default(), plague_this_year: false, conquered_this_year: false, conquered_by: None,
             dominant_race: None,
         });
         factions.last_mut().unwrap().settlements.push(sid);
@@ -369,7 +369,7 @@ pub fn generate_history(
                 id: sid,
                 name: c.settlement_name.clone().unwrap(),
                 founded_year: config.start_year,
-                owner_faction: 0, // unowned by any faction initially
+                controlling_faction: 0, // unowned by any faction initially
                 destroyed_year: None,
                 region: String::new(),
                 population_class: match c.settlement_size {
@@ -384,7 +384,7 @@ pub fn generate_history(
                 devotion: 0,
                 world_pos: Some(WorldPos::new(x as i32, y as i32)),
                 zone_type: Some(c.zone_type),
-                stockpile: ResourceStockpile::default(), at_war: false, plague_this_year: false, conquered_this_year: false,
+                stockpile: ResourceStockpile::default(), plague_this_year: false, conquered_this_year: false, conquered_by: None,
                 dominant_race: None,
             }
         })
@@ -437,14 +437,21 @@ pub fn generate_history(
             );
         }
 
-        // Compute faction stats from population (uses previous year's population state)
-        let faction_stats = if let Some(ref pop) = pop_sim {
+        // Compute faction stats, prophet tensions, and formation candidates from population
+        let (faction_stats, prophet_tensions, formation_candidates) = if let Some(ref pop) = pop_sim {
             let index = population::index::SettlementIndex::build(&pop.people, year);
-            Some(population::faction_stats::compute_faction_stats(
+            let stats = population::faction_stats::compute_faction_stats(
                 &pop.people, &index, &settlements, &factions, year,
-            ))
+            );
+            let tensions = population::faction_stats::compute_prophet_tensions(
+                &pop.people, &index, &settlements, year,
+            );
+            let candidates = population::faction_stats::compute_formation_candidates(
+                &pop.people, &index, &settlements, &factions, year,
+            );
+            (Some(stats), Some(tensions), Some(candidates))
         } else {
-            None
+            (None, None, None)
         };
 
         // Phases 5-8: Mortal simulation
@@ -455,15 +462,13 @@ pub fn generate_history(
                 &mut world_state, &regions, &mut next_id,
                 &faction_type_table, &race_table,
                 faction_stats.as_ref(),
+                prophet_tensions.as_ref(),
+                formation_candidates.as_ref(),
                 &mut rng,
             );
         }
 
-        // Set settlement flags for population sim
-        for settlement in settlements.iter_mut() {
-            settlement.at_war = world_state.war_count(settlement.owner_faction) > 0;
-            // plague_this_year is set directly by evaluate_plague in world_events
-        }
+        // plague_this_year / conquered_this_year are set directly by world_events
 
         // Trade between settlements (before population sim so imported food prevents famine)
         if let Some(ref pop) = pop_sim {
@@ -485,6 +490,14 @@ pub fn generate_history(
                     characters.push(character);
                 }
             }
+        }
+
+        // Recompute controlling factions from population allegiance
+        if let Some(ref pop) = pop_sim {
+            let index = population::index::SettlementIndex::build(&pop.people, year);
+            population::faction_stats::recompute_controlling_factions(
+                &pop.people, &index, &mut settlements, &mut factions, year,
+            );
         }
 
         // Phase 9: Divine conflict
@@ -543,7 +556,7 @@ pub fn generate_history(
     }
 }
 
-/// Assign map settlements (owner_faction == 0) to the nearest faction within
+/// Assign map settlements (controlling_faction == 0) to the nearest faction within
 /// claiming distance. Settlements too far from any faction stay independent.
 fn assign_unowned_settlements(
     settlements: &mut [SettlementState],
@@ -564,7 +577,7 @@ fn assign_unowned_settlements(
         .collect();
 
     for settlement in settlements.iter_mut() {
-        if settlement.owner_faction != 0 { continue; }
+        if settlement.controlling_faction != 0 { continue; }
         let pos = match settlement.world_pos {
             Some(p) => p,
             None => continue,
@@ -577,7 +590,7 @@ fn assign_unowned_settlements(
 
         if let Some((fid, dist)) = nearest {
             if dist <= MAX_CLAIM_DISTANCE {
-                settlement.owner_faction = fid;
+                settlement.controlling_faction = fid;
             }
         }
     }
@@ -586,7 +599,7 @@ fn assign_unowned_settlements(
     for faction in factions.iter_mut() {
         if faction.dissolved_year.is_some() { continue; }
         faction.settlements = settlements.iter()
-            .filter(|s| s.owner_faction == faction.id && s.destroyed_year.is_none())
+            .filter(|s| s.controlling_faction == faction.id && s.destroyed_year.is_none())
             .map(|s| s.id)
             .collect();
     }
@@ -641,16 +654,18 @@ mod tests {
     #[test]
     fn wars_affect_military_strength() {
         let h1 = test_history_with_config(HistoryConfig { num_years: 50, ..Default::default() }, 42);
-        // Factions at war should be weaker than starting values
+        // Military is now derived from real soldiers — verify gauges are in range
+        // and that factions at war exist (wars still happen with population-derived power)
         let at_war: Vec<&FactionState> = h1.factions.iter()
             .filter(|f| h1.world_state.war_count(f.id) > 0)
             .collect();
         for f in &at_war {
-            let (init_mil, _, _) = FactionState::initialize_gauges(f.faction_type);
-            // They should have lost some strength (not guaranteed but very likely)
-            assert!(f.military_strength < init_mil || f.military_strength < 50,
-                "{} has mil {} (started at {})", f.name, f.military_strength, init_mil);
+            assert!(f.military_strength <= 100,
+                "{} has mil {} (should be 0-100)", f.name, f.military_strength);
         }
+        // Wars should still occur with the population-derived system
+        let war_count = h1.events.iter().filter(|e| e.kind == EventKind::WarDeclared).count();
+        assert!(war_count > 0, "No wars occurred in 50 years");
     }
 
     #[test]
@@ -798,7 +813,7 @@ mod tests {
             let race_str = s.dominant_race.map(|r| format!("{:?}", r)).unwrap_or("-".into());
             let patron_str = s.patron_god.map(|g| format!("god{}", g)).unwrap_or("-".into());
             let faction_name = history.factions.iter()
-                .find(|f| f.id == s.owner_faction)
+                .find(|f| f.id == s.controlling_faction)
                 .map(|f| f.name.as_str()).unwrap_or("unowned");
             println!("  {} ({:?}) pop:{} prosp:{} happy:{:.0} | race:{} patron:{} | {}",
                 s.name, s.population_class, pop, s.prosperity, avg_h,

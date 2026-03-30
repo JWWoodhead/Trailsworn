@@ -25,6 +25,22 @@ pub enum FacingDirection {
     West,
 }
 
+/// Maps FacingDirection to a sprite sheet index.
+/// Atlas layout: 0=South, 1=North, 2=East, 3=West (64x64 frames, horizontal strip).
+#[derive(Component, Clone, Debug)]
+pub struct DirectionalSprites;
+
+impl DirectionalSprites {
+    pub fn index(facing: FacingDirection) -> usize {
+        match facing {
+            FacingDirection::South => 0,
+            FacingDirection::North => 1,
+            FacingDirection::East => 2,
+            FacingDirection::West => 3,
+        }
+    }
+}
+
 /// Active movement path being followed by an entity.
 /// Attached when a move command is issued, removed on arrival or interruption.
 #[derive(Component, Debug)]

@@ -53,6 +53,7 @@ pub fn spawn_starting_zone(
     _zone_cache: Res<crate::resources::zone_persistence::ZoneStateCache>,
     asset_server: Res<AssetServer>,
     feature_registry: Res<FeatureRegistry>,
+    mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
     let Some(data) = starting_data else { return };
 
@@ -60,27 +61,66 @@ pub fn spawn_starting_zone(
     let map_height_px = map_settings.height as f32 * map_settings.tile_size;
 
     // Spawn features
+    let shadow_size = Vec2::new(map_settings.tile_size * 0.7, map_settings.tile_size * 0.25);
+    let shadow_color = Color::srgba(0.05, 0.05, 0.02, 0.45);
+    let shadow_offset = Vec2::new(2.0, -2.0); // offset right+down from top-left light
+
     for feature in &data.features {
         let Some(def) = feature_registry.get(feature.kind) else { continue };
         let world_x = feature.x as f32 * map_settings.tile_size;
         let world_y = feature.y as f32 * map_settings.tile_size;
         let z = render_layers::y_sorted_z(world_y, map_height_px, render_layers::WORLD_OBJECTS);
 
-        let (image, color, custom_size, y_offset) = if let Some(sprite_path) = def.sprite {
-            let size = map_settings.tile_size * def.scale;
-            (asset_server.load(sprite_path), Color::WHITE, Some(Vec2::new(size, size)), size * 0.5)
-        } else {
-            let c = def.placeholder_color;
-            (pawn_texture.clone(), Color::srgba(c[0], c[1], c[2], c[3]), None, 0.0)
-        };
-
+        // Drop shadow at feature base
         commands.spawn((
             ZoneEntity,
-            TerrainFeatureEntity,
             DespawnOnExit(GameState::Playing),
-            Sprite { image, color, custom_size, ..default() },
-            Transform::from_translation(Vec3::new(world_x, world_y + y_offset, z)),
+            Sprite {
+                image: pawn_texture.clone(),
+                color: shadow_color,
+                custom_size: Some(shadow_size),
+                ..default()
+            },
+            Transform::from_translation(Vec3::new(
+                world_x + shadow_offset.x,
+                world_y + shadow_offset.y,
+                z - 0.0001,
+            )),
         ));
+
+        if let Some(sprite_path) = def.sprite {
+            let image = asset_server.load(sprite_path);
+            let texture_atlas = if def.sprite_count > 1 {
+                let layout = TextureAtlasLayout::from_grid(
+                    UVec2::new(def.sprite_frame[0], def.sprite_frame[1]),
+                    def.sprite_count, 1,
+                    Some(UVec2::new(1, 0)), None,
+                );
+                let index = rand::random_range(0..def.sprite_count as usize);
+                Some(TextureAtlas { layout: atlas_layouts.add(layout), index })
+            } else {
+                None
+            };
+            commands.spawn((
+                ZoneEntity,
+                TerrainFeatureEntity,
+                DespawnOnExit(GameState::Playing),
+                Sprite { image, texture_atlas, ..default() },
+                bevy::sprite::Anchor::BOTTOM_CENTER,
+                Transform::from_translation(Vec3::new(world_x, world_y, z)),
+            ));
+        } else {
+            let size = map_settings.tile_size * def.scale;
+            let c = def.placeholder_color;
+            commands.spawn((
+                ZoneEntity,
+                TerrainFeatureEntity,
+                DespawnOnExit(GameState::Playing),
+                Sprite { image: pawn_texture.clone(), color: Color::srgba(c[0], c[1], c[2], c[3]), custom_size: Some(Vec2::splat(size)), ..default() },
+                bevy::sprite::Anchor::BOTTOM_CENTER,
+                Transform::from_translation(Vec3::new(world_x, world_y, z)),
+            ));
+        }
     }
 
     // Spawn POIs
@@ -192,6 +232,7 @@ pub fn handle_zone_transition(
     >,
     mut player_query: Query<&mut GridPosition, (With<PlayerControlled>, Without<ZoneEntity>)>,
     feature_registry: Res<FeatureRegistry>,
+    mut atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
 ) {
     let Some(event) = transition_events.read().last() else {
         return;
@@ -276,33 +317,66 @@ pub fn handle_zone_transition(
     // Spawn terrain features (lightweight entities, no persistence)
     let pawn_texture: Handle<Image> = asset_server.load("pawn.png");
     let map_height_px = map_settings.height as f32 * map_settings.tile_size;
+    let shadow_size = Vec2::new(map_settings.tile_size * 0.7, map_settings.tile_size * 0.25);
+    let shadow_color = Color::srgba(0.05, 0.05, 0.02, 0.45);
+    let shadow_offset = Vec2::new(2.0, -2.0);
+
     for feature in &zone_data.features {
         let Some(def) = feature_registry.get(feature.kind) else { continue };
         let world_x = feature.x as f32 * map_settings.tile_size;
         let world_y = feature.y as f32 * map_settings.tile_size;
         let z = render_layers::y_sorted_z(world_y, map_height_px, render_layers::WORLD_OBJECTS);
 
-        let (image, color, custom_size, y_offset) = if let Some(sprite_path) = def.sprite {
-            let size = map_settings.tile_size * def.scale;
-            // Offset Y up by half sprite height so the bottom sits on the tile
-            (asset_server.load(sprite_path), Color::WHITE, Some(Vec2::new(size, size)), size * 0.5)
-        } else {
-            let c = def.placeholder_color;
-            (pawn_texture.clone(), Color::srgba(c[0], c[1], c[2], c[3]), None, 0.0)
-        };
-
+        // Drop shadow at feature base
         commands.spawn((
             ZoneEntity,
-            TerrainFeatureEntity,
             DespawnOnExit(GameState::Playing),
             Sprite {
-                image,
-                color,
-                custom_size,
+                image: pawn_texture.clone(),
+                color: shadow_color,
+                custom_size: Some(shadow_size),
                 ..default()
             },
-            Transform::from_translation(Vec3::new(world_x, world_y + y_offset, z)),
+            Transform::from_translation(Vec3::new(
+                world_x + shadow_offset.x,
+                world_y + shadow_offset.y,
+                z - 0.0001,
+            )),
         ));
+
+        if let Some(sprite_path) = def.sprite {
+            let image = asset_server.load(sprite_path);
+            let texture_atlas = if def.sprite_count > 1 {
+                let layout = TextureAtlasLayout::from_grid(
+                    UVec2::new(def.sprite_frame[0], def.sprite_frame[1]),
+                    def.sprite_count, 1,
+                    Some(UVec2::new(1, 0)), None,
+                );
+                let index = rand::random_range(0..def.sprite_count as usize);
+                Some(TextureAtlas { layout: atlas_layouts.add(layout), index })
+            } else {
+                None
+            };
+            commands.spawn((
+                ZoneEntity,
+                TerrainFeatureEntity,
+                DespawnOnExit(GameState::Playing),
+                Sprite { image, texture_atlas, ..default() },
+                bevy::sprite::Anchor::BOTTOM_CENTER,
+                Transform::from_translation(Vec3::new(world_x, world_y, z)),
+            ));
+        } else {
+            let size = map_settings.tile_size * def.scale;
+            let c = def.placeholder_color;
+            commands.spawn((
+                ZoneEntity,
+                TerrainFeatureEntity,
+                DespawnOnExit(GameState::Playing),
+                Sprite { image: pawn_texture.clone(), color: Color::srgba(c[0], c[1], c[2], c[3]), custom_size: Some(Vec2::splat(size)), ..default() },
+                bevy::sprite::Anchor::BOTTOM_CENTER,
+                Transform::from_translation(Vec3::new(world_x, world_y, z)),
+            ));
+        }
     }
 
     // Spawn POI entities
@@ -621,6 +695,7 @@ pub fn spawn_enemy_camp(
             PathOffset::random(&mut rand::rng()),
             Faction(FACTION_BANDITS),
             EntityName(name),
+            Pickable::default(),
         ));
 
         entity_commands.insert((
@@ -783,6 +858,7 @@ fn spawn_wildlife_group(
             PathOffset::random(&mut rng),
             Faction(FACTION_WILDLIFE),
             EntityName(name),
+            Pickable::default(),
         ));
 
         entity_commands.insert((

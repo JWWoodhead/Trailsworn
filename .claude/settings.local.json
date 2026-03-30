@@ -73,7 +73,10 @@
       "Bash(sed -i 's|let to_zone = |let _to_zone = |' src/worldgen/population/migration.rs)",
       "Bash(sed -i 's|let same_faction = |let _same_faction = |' src/worldgen/population/migration.rs)",
       "Bash(for i:*)",
-      "Bash(do echo:*)"
+      "Bash(do echo:*)",
+      "Bash(cargo doc:*)",
+      "Bash(while read:*)",
+      "Bash(find ~/.cargo/registry/src/ -path *bevy_sprite*0.18* -name *.rs)"
     ]
   }
 }

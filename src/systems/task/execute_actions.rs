@@ -24,9 +24,6 @@ pub fn execute_actions(
     target_positions: Query<&GridPosition>,
     casting_query: Query<&CastingState>,
 ) {
-    if game_time.ticks_this_frame == 0 {
-        return;
-    }
 
     for (entity, grid_pos, status_effects, mut current_task) in &mut query {
         let cc_flags = status_effects.combined_cc_flags(&status_registry);

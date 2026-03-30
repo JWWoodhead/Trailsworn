@@ -174,6 +174,7 @@ fn main() {
     .insert_resource(StableIdRegistry::default())
     .insert_resource(trailsworn::resources::selection::DragSelection::default())
     .insert_resource(trailsworn::resources::selection::TargetingMode::default())
+    .insert_resource(trailsworn::resources::selection::HoveredTarget::default())
     .insert_resource(InputMap::default())
     .insert_resource(ActionState::default())
     .insert_resource(trailsworn::systems::profiling::FrameProfiler::default())
@@ -242,8 +243,9 @@ fn main() {
                 game_time::game_speed_input.after(input::process_input),
                 camera::camera_pan.after(input::process_input),
                 camera::camera_zoom,
-                selection::selection_input.after(camera::update_cursor_position),
-                selection::right_click_command.after(camera::update_cursor_position),
+                selection::update_hovered_target.after(camera::update_cursor_position),
+                selection::selection_input.after(selection::update_hovered_target),
+                selection::right_click_command.after(selection::update_hovered_target),
                 selection::ability_input.after(input::process_input),
                 ui_panel::toggle_ui_panel.after(input::process_input),
                 world_map_ui::toggle_world_map.after(input::process_input),
@@ -313,8 +315,10 @@ fn main() {
                 party_panel::update_party_portraits,
                 party_panel::click_party_portrait,
                 selection::update_selection_visuals,
+                selection::draw_selection_indicators,
                 selection::draw_move_preview,
                 selection::draw_engage_lines,
+                selection::draw_hover_highlight,
                 selection::draw_drag_box,
             )
                 .in_set(GameSet::Ui),
@@ -347,6 +351,7 @@ fn main() {
             // Render
             (
                 movement::sync_transforms,
+                movement::sync_facing_sprites,
                 rendering::update_terrain_map,
                 vfx::tick_screen_trauma.after(movement::sync_transforms),
             ).in_set(GameSet::Render),

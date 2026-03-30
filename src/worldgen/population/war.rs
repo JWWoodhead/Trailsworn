@@ -40,22 +40,23 @@ fn combat_score_at_age(person: &Person, age: i32, settlement: &SettlementState) 
     score.max(0.1) // minimum score
 }
 
-/// Compute total military power for a faction across all its settlements.
+/// Compute total military power for a faction from all allegiant soldiers, regardless of settlement.
 pub fn faction_military_power(
     people: &[Person],
-    index: &SettlementIndex,
+    _index: &SettlementIndex,
     settlements: &[SettlementState],
     faction_id: u32,
     year: i32,
 ) -> f32 {
     let mut total = 0.0f32;
-    for settlement in settlements.iter().filter(|s| s.owner_faction == faction_id && s.destroyed_year.is_none()) {
-        for &idx in index.residents(settlement.id) {
-            let person = &people[idx];
-            if !person.is_alive(year) { continue; }
-            if person.occupation != Occupation::Soldier { continue; }
-            let age = person.age(year);
-            total += combat_score_at_age(person, age, settlement);
+    for person in people.iter() {
+        if !person.is_alive(year) { continue; }
+        if person.faction_allegiance != faction_id { continue; }
+        if person.occupation != Occupation::Soldier { continue; }
+        // Equipment bonus from the settlement they live in
+        let settlement = settlements.iter().find(|s| s.id == person.settlement_id);
+        if let Some(s) = settlement {
+            total += combat_score_at_age(person, person.age(year), s);
         }
     }
     total

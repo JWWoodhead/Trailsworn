@@ -41,10 +41,10 @@ pub fn setup_hover_tooltip(mut commands: Commands, theme: Res<Theme>) {
 
 /// Update the hover tooltip based on what entity the cursor is over.
 pub fn update_hover_tooltip(
+    hovered: Res<crate::resources::selection::HoveredTarget>,
     cursor: Res<CursorPosition>,
     _body_templates: Res<BodyTemplates>,
     entities: Query<(
-        &crate::resources::map::GridPosition,
         &EntityName,
         &Body,
         &Health,
@@ -54,19 +54,8 @@ pub fn update_hover_tooltip(
     mut tooltip_query: Query<&mut Node, With<HoverTooltip>>,
     mut text_query: Query<&mut Text, With<HoverTooltipText>>,
 ) {
-    let Some((tile_x, tile_y)) = cursor.tile else {
-        hide_tooltip(&mut tooltip_query);
-        return;
-    };
-
-    // Find entity at this tile
-    let mut found = None;
-    for (grid_pos, name, body, health, attrs, weapon) in &entities {
-        if grid_pos.x as i32 == tile_x && grid_pos.y as i32 == tile_y {
-            found = Some((name, body, health, attrs, weapon));
-            break;
-        }
-    }
+    // Use picking to find entity under cursor
+    let found = hovered.entity.and_then(|e| entities.get(e).ok());
 
     let Ok(mut node) = tooltip_query.single_mut() else {
         return;
@@ -110,8 +99,3 @@ pub fn update_hover_tooltip(
     }
 }
 
-fn hide_tooltip(tooltip_query: &mut Query<&mut Node, With<HoverTooltip>>) {
-    if let Ok(mut node) = tooltip_query.single_mut() {
-        node.display = Display::None;
-    }
-}

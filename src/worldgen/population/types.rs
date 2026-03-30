@@ -126,6 +126,7 @@ pub enum LifeEventKind {
     Migrated { from_settlement: u32, to_settlement: u32 },
     BecameProphet { god_id: GodId, kind: ProphetKind },
     WitnessedMartyrdom { prophet_id: u32, god_id: GodId },
+    AllegianceChanged { old_faction: u32, new_faction: u32 },
 }
 
 /// A single person in the world.
@@ -136,6 +137,8 @@ pub struct Person {
     pub death_year: Option<i32>,
     pub death_cause: Option<DeathCause>,
     pub settlement_id: u32,
+    /// Which faction this person is personally loyal to (0 = unaligned).
+    pub faction_allegiance: u32,
     pub sex: Sex,
     pub race: crate::worldgen::names::Race,
     pub secondary_race: Option<crate::worldgen::names::Race>,

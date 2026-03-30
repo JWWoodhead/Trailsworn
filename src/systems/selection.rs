@@ -10,7 +10,7 @@ use crate::resources::faction::{Faction, FactionRelations};
 use crate::resources::input::{Action, ActionState};
 use crate::resources::map::{CursorPosition, GridPosition, MapSettings, TileWorld};
 use crate::resources::movement::MovePath;
-use crate::resources::selection::{DragSelection, Selected, TargetingMode};
+use crate::resources::selection::{DragSelection, HoveredTarget, Selected, TargetingMode};
 use crate::resources::status_effects::{ActiveStatusEffects, StatusEffectRegistry};
 use crate::resources::task::{self, CurrentTask, Task, TaskSource};
 use crate::resources::task::Engaging;
@@ -23,12 +23,32 @@ pub struct SelectionRing {
     pub owner: Entity,
 }
 
+/// Update `HoveredTarget` from Bevy's picking system each frame.
+/// Finds the topmost pickable entity under the cursor.
+pub fn update_hovered_target(
+    mut hovered: ResMut<HoveredTarget>,
+    hover_map: Res<bevy::picking::hover::HoverMap>,
+    pickable_query: Query<Entity, With<Pickable>>,
+) {
+    hovered.entity = None;
+    let pointer_id = bevy::picking::pointer::PointerId::Mouse;
+    if let Some(hits) = hover_map.get(&pointer_id) {
+        for (entity, _hit_data) in hits.iter() {
+            if pickable_query.get(*entity).is_ok() {
+                hovered.entity = Some(*entity);
+                break;
+            }
+        }
+    }
+}
+
 /// Handle left-click: drag select, single-click select, or resolve targeting mode.
 /// When targeting mode is active, left-click resolves the target into a cast task.
 /// Otherwise, left-click performs normal selection (drag or single-click).
 pub fn selection_input(
     actions: Res<ActionState>,
     cursor: Res<CursorPosition>,
+    hovered: Res<HoveredTarget>,
     mut targeting_mode: ResMut<TargetingMode>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     map_settings: Res<MapSettings>,
@@ -63,6 +83,7 @@ pub fn selection_input(
         if !matches!(*targeting_mode, TargetingMode::None) {
             resolve_targeting_click(
                 &cursor,
+                &hovered,
                 &mut targeting_mode,
                 &mut commands,
                 &targetable_entities,
@@ -108,9 +129,17 @@ pub fn selection_input(
                 commands.entity(entity).remove::<Selected>();
             }
 
-            for (entity, grid_pos) in &player_entities {
-                if grid_pos.x as i32 == tile_x && grid_pos.y as i32 == tile_y {
-                    commands.entity(entity).insert(Selected);
+            // Use picking: if a player entity is under cursor, select it
+            if let Some(picked) = hovered.entity {
+                if player_entities.get(picked).is_ok() {
+                    commands.entity(picked).insert(Selected);
+                }
+            } else {
+                // Fallback: tile-based selection for entities without sprites
+                for (entity, grid_pos) in &player_entities {
+                    if grid_pos.x as i32 == tile_x && grid_pos.y as i32 == tile_y {
+                        commands.entity(entity).insert(Selected);
+                    }
                 }
             }
         }
@@ -122,6 +151,7 @@ pub fn selection_input(
 /// Resolve a left-click during targeting mode into a cast task.
 fn resolve_targeting_click(
     cursor: &CursorPosition,
+    hovered: &HoveredTarget,
     targeting_mode: &mut TargetingMode,
     commands: &mut Commands,
     targetable_entities: &Query<(Entity, &GridPosition, &Faction), Without<PlayerControlled>>,
@@ -157,13 +187,8 @@ fn resolve_targeting_click(
 
     let cast_target = match tt {
         TargetType::SingleEnemy | TargetType::SingleAlly => {
-            let mut found = None;
-            for (entity, pos, _) in targetable_entities.iter() {
-                if pos.x == tile_x && pos.y == tile_y {
-                    found = Some(entity);
-                    break;
-                }
-            }
+            // Use picking to find target under cursor
+            let found = hovered.entity.filter(|e| targetable_entities.get(*e).is_ok());
             match found {
                 Some(target) => CastTarget::Entity(target),
                 None => return, // No valid target — keep targeting mode active
@@ -199,13 +224,14 @@ pub fn right_click_command(
     actions: Res<ActionState>,
     cursor: Res<CursorPosition>,
     tile_world: Res<TileWorld>,
+    hovered: Res<HoveredTarget>,
     faction_relations: Res<FactionRelations>,
     mut commands: Commands,
     selected_query: Query<
         (Entity, &Faction, &EquippedWeapon),
         With<Selected>,
     >,
-    target_query: Query<(Entity, &GridPosition, &Faction), (Without<PlayerControlled>, Without<crate::resources::combat::Dead>)>,
+    faction_query: Query<&Faction>,
     ui_interactions: Query<&Interaction, With<Node>>,
 ) {
     if !actions.just_pressed(Action::Command) {
@@ -227,18 +253,15 @@ pub fn right_click_command(
 
     let target_tile = (tile_x as u32, tile_y as u32);
 
-    // Check if there's an attackable (non-friendly) entity at the clicked tile
+    // Use picking to determine if an attackable entity is under the cursor
     let mut hostile_target = None;
-    for (target_entity, target_pos, target_faction) in &target_query {
-        if target_pos.x as i32 == tile_x && target_pos.y as i32 == tile_y {
+    if let Some(hovered_entity) = hovered.entity {
+        if let Ok(target_faction) = faction_query.get(hovered_entity) {
             for (_, selected_faction, _) in &selected_query {
                 if !faction_relations.is_friendly(selected_faction.0, target_faction.0) {
-                    hostile_target = Some(target_entity);
+                    hostile_target = Some(hovered_entity);
                     break;
                 }
-            }
-            if hostile_target.is_some() {
-                break;
             }
         }
     }
@@ -312,29 +335,25 @@ fn formation_around(
     result
 }
 
-/// Spawn/despawn selection ring sprites on selected entities.
+/// Draw selection indicators as gizmo circles under selected entities.
+pub fn draw_selection_indicators(
+    theme: Res<crate::resources::theme::Theme>,
+    mut gizmos: Gizmos,
+    selected: Query<&Transform, With<Selected>>,
+) {
+    let color = theme.primary.with_alpha(0.4);
+    for transform in &selected {
+        let pos = transform.translation.truncate() + Vec2::new(0.0, -12.0);
+        gizmos.circle_2d(Isometry2d::from_translation(pos), 22.0, color);
+    }
+}
+
+/// Clean up any legacy selection ring sprites on deselection.
 pub fn update_selection_visuals(
     mut commands: Commands,
-    theme: Res<crate::resources::theme::Theme>,
-    selected: Query<Entity, Added<Selected>>,
     mut deselected: RemovedComponents<Selected>,
     rings: Query<(Entity, &SelectionRing)>,
 ) {
-    for entity in &selected {
-        let ring = commands
-            .spawn((
-                Sprite {
-                    color: theme.primary.with_alpha(0.5),
-                    custom_size: Some(Vec2::new(60.0, 60.0)),
-                    ..default()
-                },
-                Transform::from_translation(Vec3::new(0.0, 0.0, -0.01)),
-                SelectionRing { owner: entity },
-            ))
-            .id();
-        commands.entity(entity).add_child(ring);
-    }
-
     let deselected_entities: Vec<Entity> = deselected.read().collect();
     for (ring_entity, ring) in &rings {
         if deselected_entities.contains(&ring.owner) {
@@ -578,5 +597,18 @@ pub fn draw_move_preview(
             gizmos.circle_2d(Isometry2d::from_translation(dest_pos), ts * 0.4, circle_color);
         }
     }
+}
+
+/// Draw a subtle highlight circle on the entity under the cursor.
+pub fn draw_hover_highlight(
+    hovered: Res<HoveredTarget>,
+    mut gizmos: Gizmos,
+    transforms: Query<&Transform>,
+) {
+    let Some(entity) = hovered.entity else { return };
+    let Ok(transform) = transforms.get(entity) else { return };
+    let pos = transform.translation.truncate();
+    let color = Color::srgba(1.0, 1.0, 1.0, 0.25);
+    gizmos.circle_2d(Isometry2d::from_translation(pos), 28.0, color);
 }
 

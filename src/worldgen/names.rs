@@ -154,6 +154,7 @@ pub enum FactionType {
     MageCircle,
     BanditClan,
     TribalWarband,
+    Theocracy,
 }
 
 const MERCENARY_PATTERNS: &[&str] = &[
@@ -198,6 +199,12 @@ const WARBAND_PATTERNS: &[&str] = &[
     "The {adj} Warband", "The {noun}s of the {adj} {noun}",
 ];
 
+const THEOCRACY_PATTERNS: &[&str] = &[
+    "The Holy See of {place}", "The {adj} Theocracy",
+    "The Divine Realm of {place}", "The Faithful of the {adj} {noun}",
+    "The {adj} Covenant",
+];
+
 const FACTION_ADJ: &[&str] = &[
     "Iron", "Black", "Red", "Silver", "Golden", "Crimson", "Shadow",
     "Burning", "Frozen", "Silent", "Broken", "Fallen", "Ancient",
@@ -230,6 +237,7 @@ pub fn faction_name(faction_type: FactionType, race: Race, rng: &mut impl Rng) -
         FactionType::MageCircle => MAGE_PATTERNS,
         FactionType::BanditClan => BANDIT_PATTERNS,
         FactionType::TribalWarband => WARBAND_PATTERNS,
+        FactionType::Theocracy => THEOCRACY_PATTERNS,
     };
 
     let pattern = patterns[rng.random_range(0..patterns.len())];

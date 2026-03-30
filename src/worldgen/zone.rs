@@ -62,6 +62,12 @@ pub struct ZoneGenContext {
     pub river_entry: [bool; 4],
     /// Normalized river width (0.0 = thin source, 1.0 = wide mouth).
     pub river_width: f32,
+    /// Whether a road passes through this zone.
+    pub road: bool,
+    /// Which edges the road enters/exits: [N, E, S, W].
+    pub road_entry: [bool; 4],
+    /// Road importance: 1 = minor path, 2 = major road.
+    pub road_class: u8,
     /// Neighbor zone types: [N, E, S, W]. None = ocean or map edge.
     pub neighbors: [Option<ZoneType>; 4],
     /// Which edges border ocean: [N, E, S, W]. True = neighbor is Ocean.
@@ -87,6 +93,9 @@ pub fn generate_zone(
             river: false,
             river_entry: [false; 4],
             river_width: 0.0,
+            road: false,
+            road_entry: [false; 4],
+            road_class: 0,
             neighbors: [None; 4],
             ocean_edges: [false; 4],
         },
@@ -123,6 +132,11 @@ pub fn generate_zone_with_context(
     // Carve river if this zone has one
     if ctx.river {
         carve_river(&mut tile_world, ctx, &mut rng);
+    }
+
+    // Carve road if this zone has one (after river so water takes priority at crossings)
+    if ctx.road && ctx.zone_type != ZoneType::Settlement {
+        carve_road(&mut tile_world, ctx, &mut rng);
     }
 
     // Scatter terrain features (modifies walk_cost/blocks_los, must happen before POI placement)
@@ -680,6 +694,201 @@ fn carve_river(world: &mut TileWorld, ctx: &ZoneGenContext, rng: &mut impl Rng) 
 }
 
 // ---------------------------------------------------------------------------
+// Road carving
+// ---------------------------------------------------------------------------
+
+/// Carve a road across the zone using world-level entry/exit metadata.
+///
+/// Uses `ctx.road_entry` to determine which edges the road enters/exits,
+/// connects them with a gently curved dirt path. Width varies by `ctx.road_class`.
+fn carve_road(world: &mut TileWorld, ctx: &ZoneGenContext, rng: &mut impl Rng) {
+    let w = world.width as f32;
+    let h = world.height as f32;
+    let meander = NoiseLayer::new(rng.random::<u32>(), 0.015, 3);
+
+    // Collect entry/exit points from the edge metadata [N, E, S, W]
+    let mut endpoints: Vec<(f32, f32)> = Vec::new();
+    let mid_offset = rng.random_range(-0.10f32..0.10);
+    if ctx.road_entry[0] { // N edge
+        endpoints.push((w * (0.5 + mid_offset), h - 1.0));
+    }
+    if ctx.road_entry[1] { // E edge
+        endpoints.push((w - 1.0, h * (0.5 + mid_offset)));
+    }
+    if ctx.road_entry[2] { // S edge
+        endpoints.push((w * (0.5 + mid_offset), 0.0));
+    }
+    if ctx.road_entry[3] { // W edge
+        endpoints.push((0.0, h * (0.5 + mid_offset)));
+    }
+
+    if endpoints.is_empty() {
+        return;
+    }
+
+    // If only one endpoint (terminus), connect to zone center
+    if endpoints.len() == 1 {
+        endpoints.push((w / 2.0, h / 2.0));
+    }
+
+    // Road width: minor (class 1) = 1 half-width, major (class 2) = 2 half-width
+    let base_half_width = if ctx.road_class >= 2 { 2.0f32 } else { 1.0 };
+
+    // Connect all endpoints through the zone center for natural crossing
+    // For 2 endpoints: direct connection. For 3+: hub through center.
+    let center = (w / 2.0, h / 2.0);
+
+    if endpoints.len() == 2 {
+        paint_road_segment(world, &meander, endpoints[0], endpoints[1], base_half_width);
+    } else {
+        // Connect each endpoint to center (creates a natural intersection)
+        for ep in &endpoints {
+            paint_road_segment(world, &meander, *ep, center, base_half_width);
+        }
+    }
+}
+
+/// Paint a single road segment between two points with noise-driven curvature.
+///
+/// Handles water crossings: narrow gaps (≤2 tiles) are bridged with dirt,
+/// wider water bodies cause the road to deflect around them.
+fn paint_road_segment(
+    world: &mut TileWorld,
+    meander: &NoiseLayer,
+    start: (f32, f32),
+    end: (f32, f32),
+    half_width: f32,
+) {
+    let w = world.width as f32;
+    let h = world.height as f32;
+
+    let dx = end.0 - start.0;
+    let dy = end.1 - start.1;
+    let len = (dx * dx + dy * dy).sqrt().max(1.0);
+    let steps = (len * 1.5) as usize;
+    let steps = steps.max(30);
+
+    // Perpendicular direction for curvature offset
+    let perp_x = -dy / len;
+    let perp_y = dx / len;
+
+    // --- Pass 1: compute centerline points ---
+    let mut points: Vec<(f32, f32)> = Vec::with_capacity(steps + 1);
+    for s in 0..=steps {
+        let t = s as f32 / steps as f32;
+        let base_x = start.0 + dx * t;
+        let base_y = start.1 + dy * t;
+
+        let curve_strength = (t * (1.0 - t) * 4.0) * 12.0;
+        let noise_val = meander.sample(base_x as f64 * 0.02, base_y as f64 * 0.02) as f32;
+        let px = base_x + perp_x * noise_val * curve_strength;
+        let py = base_y + perp_y * noise_val * curve_strength;
+        points.push((px, py));
+    }
+
+    // --- Pass 2: handle water crossings ---
+    // For each point on water, measure the crossing width ahead.
+    // Narrow crossings (≤2 tiles) get bridged; wider ones get deflected.
+    let is_water = |px: f32, py: f32| -> bool {
+        let ix = px as i32;
+        let iy = py as i32;
+        if ix < 0 || iy < 0 || ix >= w as i32 || iy >= h as i32 {
+            return false;
+        }
+        world.terrain[world.idx(ix as u32, iy as u32)] == TerrainType::Water
+    };
+
+    // Mark which points should bridge (paint over water) vs deflect
+    let bridge_max = 2; // max tiles of water to bridge over
+    let mut bridge = vec![false; points.len()];
+
+    let mut i = 0;
+    while i < points.len() {
+        let (px, py) = points[i];
+        if is_water(px, py) {
+            // Measure how many consecutive points are on water
+            let water_start = i;
+            let mut water_end = i;
+            while water_end + 1 < points.len() && is_water(points[water_end + 1].0, points[water_end + 1].1) {
+                water_end += 1;
+            }
+            let water_len = water_end - water_start + 1;
+
+            // Approximate tile distance of this water crossing
+            let tile_dist = if water_len > 1 {
+                let (sx, sy) = points[water_start];
+                let (ex, ey) = points[water_end];
+                ((ex - sx).powi(2) + (ey - sy).powi(2)).sqrt()
+            } else {
+                1.0
+            };
+
+            if tile_dist <= bridge_max as f32 + 0.5 {
+                // Narrow crossing — bridge it
+                for j in water_start..=water_end {
+                    bridge[j] = true;
+                }
+            } else {
+                // Wide crossing — deflect points perpendicular to find land
+                for j in water_start..=water_end {
+                    let (ox, oy) = points[j];
+                    let mut found = false;
+                    // Try perpendicular offsets, alternating sides, up to 20 tiles
+                    for dist in 1..=20 {
+                        for sign in &[1.0f32, -1.0] {
+                            let nx = ox + perp_x * dist as f32 * sign;
+                            let ny = oy + perp_y * dist as f32 * sign;
+                            if !is_water(nx, ny)
+                                && nx >= 0.0 && ny >= 0.0
+                                && nx < w && ny < h
+                            {
+                                points[j] = (nx, ny);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if found { break; }
+                    }
+                    // If no land found within 20 tiles, leave as-is (will skip painting)
+                }
+            }
+
+            i = water_end + 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    // --- Pass 3: paint ---
+    let hw = half_width as i32;
+    for (s, &(px, py)) in points.iter().enumerate() {
+        let cx = px as i32;
+        let cy = py as i32;
+
+        for ddx in -hw..=hw {
+            for ddy in -hw..=hw {
+                if hw <= 1 {
+                    if ddx.abs() + ddy.abs() > hw + 1 { continue; }
+                } else if ddx * ddx + ddy * ddy > hw * hw + 1 {
+                    continue;
+                }
+                let rx = cx + ddx;
+                let ry = cy + ddy;
+                if rx >= 0 && ry >= 0 && rx < w as i32 && ry < h as i32 {
+                    let idx = world.idx(rx as u32, ry as u32);
+                    if bridge[s] {
+                        // Bridge: paint dirt even over water
+                        world.set_terrain(rx as u32, ry as u32, TerrainType::Dirt);
+                    } else if world.terrain[idx] != TerrainType::Water {
+                        world.set_terrain(rx as u32, ry as u32, TerrainType::Dirt);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Settlement (mostly hand-crafted, not noise-based)
 // ---------------------------------------------------------------------------
 
@@ -941,6 +1150,9 @@ mod tests {
             river: true,
             river_entry: [false, true, false, true], // W to E
             river_width: 0.5,
+            road: false,
+            road_entry: [false; 4],
+            road_class: 0,
             neighbors: [None; 4],
             ocean_edges: [false; 4],
         };
@@ -966,6 +1178,9 @@ mod tests {
             river: false,
             river_entry: [false; 4],
             river_width: 0.0,
+            road: false,
+            road_entry: [false; 4],
+            road_class: 0,
             neighbors: [Some(ZoneType::Desert), None, None, None], // Desert to the north
             ocean_edges: [false; 4],
         };
@@ -1069,6 +1284,9 @@ mod tests {
             river: false,
             river_entry: [false; 4],
             river_width: 0.0,
+            road: false,
+            road_entry: [false; 4],
+            road_class: 0,
             neighbors: [Some(ZoneType::Grassland), None, None, None],
             ocean_edges: [false, false, true, false], // S ocean
         };
@@ -1099,6 +1317,9 @@ mod tests {
             river: false,
             river_entry: [false; 4],
             river_width: 0.0,
+            road: false,
+            road_entry: [false; 4],
+            road_class: 0,
             neighbors: [None, None, Some(ZoneType::Grassland), None],
             ocean_edges: [true, false, false, false], // N ocean
         };
@@ -1190,5 +1411,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn road_zone_has_dirt_path() {
+        let ctx = ZoneGenContext {
+            zone_type: ZoneType::Grassland,
+            has_cave: false,
+            elevation: 0.5,
+            moisture: 0.5,
+            temperature: 0.5,
+            river: false,
+            river_entry: [false; 4],
+            river_width: 0.0,
+            road: true,
+            road_entry: [false, true, false, true], // W to E
+            road_class: 1,
+            neighbors: [None; 4],
+            ocean_edges: [false; 4],
+        };
+        let registry = crate::resources::feature_defs::default_feature_registry();
+        let data = generate_zone_with_context(&ctx, 250, 250, 42, &registry);
+        let dirt_count = data.tile_world.terrain.iter()
+            .filter(|t| **t == TerrainType::Dirt)
+            .count();
+        assert!(dirt_count > 100, "Road zone should have dirt path tiles, got {dirt_count}");
+    }
+
+    #[test]
+    fn road_does_not_overwrite_water() {
+        let ctx = ZoneGenContext {
+            zone_type: ZoneType::Grassland,
+            has_cave: false,
+            elevation: 0.5,
+            moisture: 0.5,
+            temperature: 0.5,
+            river: true,
+            river_entry: [true, false, true, false], // N to S river
+            river_width: 0.5,
+            road: true,
+            road_entry: [false, true, false, true], // W to E road (crosses river)
+            road_class: 2,
+            neighbors: [None; 4],
+            ocean_edges: [false; 4],
+        };
+        let registry = crate::resources::feature_defs::default_feature_registry();
+        let data = generate_zone_with_context(&ctx, 250, 250, 42, &registry);
+        // River should still have water tiles despite road crossing
+        let water_count = data.tile_world.terrain.iter()
+            .filter(|t| **t == TerrainType::Water)
+            .count();
+        assert!(water_count > 100, "River should still have water after road carving, got {water_count}");
     }
 }

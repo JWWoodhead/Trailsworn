@@ -5,7 +5,7 @@ use crate::resources::combat::Dead;
 use crate::resources::movement::RepathTimer;
 use crate::resources::game_time::{GameTime, TICK_DURATION};
 use crate::resources::map::{GridPosition, MapSettings, TileWorld};
-use crate::resources::movement::{FacingDirection, MovePath, MovementSpeed, PathOffset, PendingPath};
+use crate::resources::movement::{DirectionalSprites, FacingDirection, MovePath, MovementSpeed, PathOffset, PendingPath};
 use crate::resources::task::{Action, CurrentTask};
 
 /// Advance entities along their movement paths. Runs simulation ticks.
@@ -37,6 +37,12 @@ pub fn movement(
                 }
             };
 
+            // Face toward the next tile immediately (not after arrival)
+            let cur_tile = path.current_tile().unwrap_or((grid_pos.x, grid_pos.y));
+            if cur_tile != next {
+                *facing = facing_from_movement(cur_tile, next);
+            }
+
             // Cost of entering the next tile
             let tile_cost = tile_world.walk_cost[tile_world.idx(next.0, next.1)];
             if tile_cost <= 0.0 {
@@ -53,10 +59,6 @@ pub fn movement(
             if path.progress >= 1.0 {
                 grid_pos.x = next.0;
                 grid_pos.y = next.1;
-
-                // Update facing based on movement direction
-                let cur = path.current_tile().unwrap_or(next);
-                *facing = facing_from_movement(cur, next);
 
                 // If there's a pending path, swap to it now.
                 // The pending path was calculated from the entity's grid_pos at repath
@@ -128,6 +130,17 @@ pub fn sync_transforms(
     }
 }
 
+/// Update sprite sheet index based on facing direction.
+pub fn sync_facing_sprites(
+    mut query: Query<(&FacingDirection, &mut Sprite), (With<DirectionalSprites>, Changed<FacingDirection>)>,
+) {
+    for (facing, mut sprite) in &mut query {
+        if let Some(atlas) = &mut sprite.texture_atlas {
+            atlas.index = DirectionalSprites::index(*facing);
+        }
+    }
+}
+
 fn facing_from_movement(from: (u32, u32), to: (u32, u32)) -> FacingDirection {
     let dx = to.0 as i32 - from.0 as i32;
     let dy = to.1 as i32 - from.1 as i32;
@@ -161,12 +174,8 @@ pub fn resolve_movement(
     target_positions: Query<&GridPosition>,
     mut commands: Commands,
 ) {
-    if game_time.ticks_this_frame == 0 {
-        return;
-    }
-
     for (entity, grid_pos, current_task, mut repath_timer, current_path, player_controlled) in &mut query {
-        // Tick repath timer
+        // Tick repath timer (only when simulation is advancing)
         for _ in 0..game_time.ticks_this_frame {
             repath_timer.tick();
         }

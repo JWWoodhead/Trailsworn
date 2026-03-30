@@ -16,7 +16,7 @@ fn hamlet(id: u32) -> SettlementState {
         id,
         name: format!("Hamlet {}", id),
         founded_year: 0,
-        owner_faction: 1,
+        controlling_faction: 1,
         destroyed_year: None,
         region: "Test".into(),
         population_class: PopulationClass::Hamlet,
@@ -27,8 +27,7 @@ fn hamlet(id: u32) -> SettlementState {
         world_pos: None,
         zone_type: Some(crate::worldgen::zone::ZoneType::Grassland),
         stockpile: crate::worldgen::history::state::ResourceStockpile::default(),
-        at_war: false,
-        plague_this_year: false, conquered_this_year: false,
+        plague_this_year: false, conquered_this_year: false, conquered_by: None,
         dominant_race: None,
     }
 }
@@ -63,6 +62,7 @@ fn test_faction() -> FactionState {
         settlements: vec![1],
         patron_god: None,
         devotion: 0,
+        unhappy_years: 0,
     }
 }
 
@@ -301,7 +301,7 @@ fn marriage_generates_married_to_event() {
 #[test]
 fn notable_requires_threshold_events() {
     let mut person = Person {
-        id: 1, birth_year: 0, death_year: None, death_cause: None, settlement_id: 1,
+        id: 1, birth_year: 0, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
         sex: Sex::Male, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
         occupation: Occupation::Farmer, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: Vec::new(),
         life_events: Vec::new(), notable: false,
@@ -328,7 +328,7 @@ fn notable_requires_threshold_events() {
 #[test]
 fn notable_only_fires_once() {
     let mut person = Person {
-        id: 1, birth_year: 0, death_year: None, death_cause: None, settlement_id: 1,
+        id: 1, birth_year: 0, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
         sex: Sex::Male, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
         occupation: Occupation::Farmer, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: Vec::new(),
         life_events: vec![
@@ -371,7 +371,7 @@ fn promote_produces_valid_character() {
     let mut rng = rng();
 
     let person = Person {
-        id: 1, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1,
+        id: 1, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
         sex: Sex::Female, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
         occupation: Occupation::Soldier, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: Vec::new(),
         life_events: vec![
@@ -401,7 +401,7 @@ fn promote_soldier_becomes_hero() {
     let mut rng = rng();
 
     let person = Person {
-        id: 1, birth_year: -30, death_year: None, death_cause: None, settlement_id: 1,
+        id: 1, birth_year: -30, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
         sex: Sex::Male, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
         occupation: Occupation::Soldier, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: Vec::new(),
         life_events: vec![
@@ -659,7 +659,6 @@ fn resource_stockpile_caps() {
 #[test]
 fn war_drafts_soldiers() {
     let mut settlements = vec![village(1)];
-    settlements[0].at_war = true;
     let mut rng = rng();
     let mut sim = PopulationSim::new(&settlements, &[], 0, &mut rng);
 
@@ -667,7 +666,9 @@ fn war_drafts_soldiers() {
         .filter(|p| p.occupation == Occupation::Soldier)
         .count();
 
-    sim.advance_year(&mut settlements, &[], &[], &crate::worldgen::history::state::WorldState::default(), 0, &mut rng);
+    let mut ws = crate::worldgen::history::state::WorldState::default();
+    ws.active_wars.push(crate::worldgen::history::state::War { aggressor: 1, defender: 99, start_year: 0 });
+    sim.advance_year(&mut settlements, &[], &[], &ws, 0, &mut rng);
 
     let soldiers_after = sim.people.iter()
         .filter(|p| p.is_alive(0) && p.occupation == Occupation::Soldier)
@@ -685,13 +686,14 @@ fn war_drafts_soldiers() {
 #[test]
 fn war_kills_soldiers() {
     let mut settlements = vec![village(1)];
-    settlements[0].at_war = true;
     let mut rng = rng();
     let mut sim = PopulationSim::new(&settlements, &[], 0, &mut rng);
 
+    let mut ws = crate::worldgen::history::state::WorldState::default();
+    ws.active_wars.push(crate::worldgen::history::state::War { aggressor: 1, defender: 99, start_year: 0 });
     // Run several years of war
     for year in 0..10 {
-        sim.advance_year(&mut settlements, &[], &[], &crate::worldgen::history::state::WorldState::default(), year, &mut rng);
+        sim.advance_year(&mut settlements, &[], &[], &ws, year, &mut rng);
     }
 
     let war_deaths = sim.people.iter()
@@ -709,18 +711,19 @@ fn war_kills_soldiers() {
 #[test]
 fn war_ended_gives_survived_event() {
     let mut settlements = vec![village(1)];
-    settlements[0].at_war = true;
     let mut rng = rng();
     let mut sim = PopulationSim::new(&settlements, &[], 0, &mut rng);
 
+    let mut ws = crate::worldgen::history::state::WorldState::default();
+    ws.active_wars.push(crate::worldgen::history::state::War { aggressor: 1, defender: 99, start_year: 0 });
     // War for 3 years
     for year in 0..3 {
-        sim.advance_year(&mut settlements, &[], &[], &crate::worldgen::history::state::WorldState::default(), year, &mut rng);
+        sim.advance_year(&mut settlements, &[], &[], &ws, year, &mut rng);
     }
 
     // War ends
-    settlements[0].at_war = false;
-    sim.advance_year(&mut settlements, &[], &[], &crate::worldgen::history::state::WorldState::default(), 3, &mut rng);
+    ws.active_wars.clear();
+    sim.advance_year(&mut settlements, &[], &[], &ws, 3, &mut rng);
 
     let survived = sim.people.iter()
         .filter(|p| p.life_events.iter().any(|e| matches!(e.kind, LifeEventKind::SurvivedWar { .. })))
@@ -817,7 +820,7 @@ fn combat_score_rewards_veterans() {
 
     let settlements = vec![hamlet(1)];
     let mut veteran = Person {
-        id: 1, birth_year: -25, death_year: None, death_cause: None, settlement_id: 1,
+        id: 1, birth_year: -25, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
         sex: Sex::Male, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
         occupation: Occupation::Soldier, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: Vec::new(),
         life_events: vec![
@@ -827,7 +830,7 @@ fn combat_score_rewards_veterans() {
         notable: false,
     };
     let rookie = Person {
-        id: 2, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1,
+        id: 2, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
         sex: Sex::Male, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
         occupation: Occupation::Soldier, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: Vec::new(),
         life_events: Vec::new(),
@@ -926,7 +929,7 @@ fn faithless_adopt_settlement_patron() {
 
     let mut people = vec![
         Person {
-            id: 1, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1,
+            id: 1, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
             sex: Sex::Male, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
             occupation: Occupation::Farmer, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: Vec::new(),
             life_events: Vec::new(), notable: false,
@@ -958,7 +961,7 @@ fn faith_strengthened_when_prospering() {
 
     let mut people = vec![
         Person {
-            id: 1, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1,
+            id: 1, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
             sex: Sex::Male, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
             occupation: Occupation::Farmer, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: vec![(5, 75)],
             life_events: Vec::new(), notable: false,
@@ -996,7 +999,7 @@ fn faith_shaken_when_suffering_under_powerful_god() {
 
     let mut people = vec![
         Person {
-            id: 1, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1,
+            id: 1, birth_year: -20, death_year: None, death_cause: None, settlement_id: 1, faction_allegiance: 0,
             sex: Sex::Male, race: Race::Human, secondary_race: None, mother: None, father: None, spouse: None,
             occupation: Occupation::Farmer, traits: Vec::new(), happiness: 50, prophet_of: None, years_as_outlier: 0, faith: vec![(5, 25)],
             life_events: Vec::new(), notable: false,

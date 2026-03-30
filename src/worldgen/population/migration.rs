@@ -146,7 +146,7 @@ fn find_best_destination(
     world_state: &WorldState,
 ) -> Option<(u32, &'static str)> {
     let current_pos = current.world_pos?;
-    let person_faction = current.owner_faction;
+    let person_faction = person.faction_allegiance;
 
     let mut best_score = 0i32;
     let mut best_id = None;
@@ -157,10 +157,10 @@ fn find_best_destination(
         if candidate.destroyed_year.is_some() { continue; }
 
         // Must be same faction or allied (not at war)
-        let same_faction = candidate.owner_faction == person_faction;
-        let allied = world_state.allied(candidate.owner_faction, person_faction);
+        let same_faction = candidate.controlling_faction == person_faction;
+        let allied = world_state.allied(candidate.controlling_faction, person_faction);
         if !same_faction && !allied { continue; }
-        if world_state.at_war(candidate.owner_faction, person_faction) { continue; }
+        if world_state.at_war(candidate.controlling_faction, person_faction) { continue; }
 
         // Must be within trade distance
         let cand_pos = match candidate.world_pos {
@@ -199,7 +199,7 @@ fn find_best_destination(
         score += (100 - dist) / 5;
 
         // Not at war is better
-        if !candidate.at_war { score += 10; }
+        if world_state.war_count(candidate.controlling_faction) == 0 { score += 10; }
 
         if score > best_score {
             best_score = score;
@@ -208,7 +208,7 @@ fn find_best_destination(
             // Determine the primary reason for leaving
             if current.stockpile.food < 0 {
                 best_reason = "food deficit";
-            } else if current.at_war {
+            } else if world_state.war_count(current.controlling_faction) > 0 {
                 best_reason = "war";
             } else if current.prosperity < 30 {
                 best_reason = "poor conditions";

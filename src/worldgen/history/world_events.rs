@@ -3,12 +3,13 @@
 
 use rand::{Rng, RngExt};
 
-use crate::worldgen::names::{FactionType, Race, faction_name, full_name, settlement_name};
-use crate::worldgen::population::faction_stats::FactionStats;
+use crate::worldgen::names::{FactionType, Race, faction_name, settlement_name};
+use crate::worldgen::world_map::WorldPos;
+use crate::worldgen::population::faction_stats::{FactionStats, FormationCandidates, ProphetTensions};
 use crate::worldgen::population_table::PopTable;
 
 use super::artifacts::*;
-use super::characters::*;
+use super::characters::{*, Ambition};
 use super::state::*;
 use super::{EventKind, HistoricEvent};
 
@@ -22,9 +23,11 @@ pub(super) fn simulate_year(
     world_state: &mut WorldState,
     regions: &[String],
     next_id: &mut u32,
-    faction_type_table: &PopTable<FactionType>,
-    race_table: &PopTable<Race>,
+    _faction_type_table: &PopTable<FactionType>,
+    _race_table: &PopTable<Race>,
     faction_stats: Option<&FactionStats>,
+    prophet_tensions: Option<&ProphetTensions>,
+    formation_candidates: Option<&FormationCandidates>,
     rng: &mut impl Rng,
 ) {
     let living: Vec<u32> = factions.iter().filter(|f| f.is_alive(year)).map(|f| f.id).collect();
@@ -89,13 +92,34 @@ pub(super) fn simulate_year(
             name
         };
 
-        events.push(HistoricEvent {
-            year, kind: EventKind::LeaderChanged,
-            description: format!("After the death of {}, {} became leader of {}", dead_name, new_leader_name, fname),
-            participants: vec![*faction_id],
-            god_participants: vec![],
-            cause: None,
-        });
+        // Succession crisis: multiple ambitious claimants cause instability
+        let claimants = characters.iter()
+            .filter(|c| c.is_alive(year) && c.faction_id == Some(*faction_id) && c.role != CharacterRole::Leader)
+            .filter(|c| c.has_trait(CharacterTrait::Ambitious) || c.has_trait(CharacterTrait::PowerHungry))
+            .count();
+
+        if claimants >= 2 {
+            // Succession crisis accelerates potential dissolution
+            if let Some(f) = factions.iter_mut().find(|f| f.id == *faction_id) {
+                f.unhappy_years = f.unhappy_years.saturating_add(2);
+            }
+            events.push(HistoricEvent {
+                year, kind: EventKind::LeaderChanged,
+                description: format!("A succession crisis erupted in {} after the death of {}, with {} claimed power",
+                    fname, dead_name, new_leader_name),
+                participants: vec![*faction_id],
+                god_participants: vec![],
+                cause: None,
+            });
+        } else {
+            events.push(HistoricEvent {
+                year, kind: EventKind::LeaderChanged,
+                description: format!("After the death of {}, {} became leader of {}", dead_name, new_leader_name, fname),
+                participants: vec![*faction_id],
+                god_participants: vec![],
+                cause: None,
+            });
+        }
     }
 
     // Snapshot for cross-references during upkeep
@@ -108,6 +132,13 @@ pub(super) fn simulate_year(
         // Update gauges from real population data (military, wealth, stability, patron god)
         if let Some(stats) = faction_stats {
             faction.update_from_stats(stats);
+        }
+
+        // Track sustained unhappiness for dissolution
+        if faction.stability < 20 {
+            faction.unhappy_years = faction.unhappy_years.saturating_add(1);
+        } else {
+            faction.unhappy_years = 0;
         }
 
         // Territorial & religious friction between factions
@@ -135,6 +166,56 @@ pub(super) fn simulate_year(
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // Prophet-driven religious tension: prophets inflame hostility with rival-god factions
+    if let Some(tensions) = prophet_tensions {
+        for &(prophet_faction, _sid, prophet_god) in &tensions.active_prophets {
+            for &other_id in &living {
+                if other_id == prophet_faction { continue; }
+                if let Some(other_f) = factions_snapshot.iter().find(|f| f.id == other_id) {
+                    if let Some(their_god) = other_f.patron_god {
+                        if their_god != prophet_god {
+                            let divine_sentiment = world_state.divine_relations.get(prophet_god, their_god);
+                            if divine_sentiment < -30 {
+                                world_state.relations.modify(prophet_faction, other_id, -5);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Faction type-specific sentiment modifiers
+    for faction in factions.iter() {
+        if !faction.is_alive(year) { continue; }
+        for &other_id in &living {
+            if other_id == faction.id { continue; }
+            match faction.faction_type {
+                // Theocracies hostile to factions with different patron gods
+                FactionType::Theocracy => {
+                    if let Some(other_f) = factions_snapshot.iter().find(|f| f.id == other_id) {
+                        if faction.patron_god.is_some() && other_f.patron_god != faction.patron_god {
+                            world_state.relations.modify(faction.id, other_id, -2);
+                        }
+                    }
+                }
+                // Merchant guilds smooth relations with everyone
+                FactionType::MerchantGuild => {
+                    world_state.relations.modify(faction.id, other_id, 1);
+                }
+                // Bandits/thieves hostile to kingdoms in same region
+                FactionType::BanditClan | FactionType::ThievesGuild => {
+                    if let Some(other_f) = factions_snapshot.iter().find(|f| f.id == other_id) {
+                        if other_f.faction_type == FactionType::Kingdom && other_f.home_region == faction.home_region {
+                            world_state.relations.modify(faction.id, other_id, -1);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -214,12 +295,13 @@ pub(super) fn simulate_year(
     evaluate_trade_agreement(year, factions, events, world_state, &living, rng);
     evaluate_leader_changed(year, factions, characters, events, &living, next_id, rng);
     evaluate_plague(year, factions, settlements, events, regions, rng, world_state);
-    evaluate_monster_attack(year, events, regions, rng);
-    evaluate_hero(year, factions, characters, events, &living, next_id, race_table, rng);
+    // monster_attack and hero removed — monsters are gameplay, heroes emerge from population
     evaluate_artifact_discovered(year, factions, characters, artifacts_list, events, &living, next_id, rng);
-    evaluate_settlement_founded(year, factions, settlements, events, next_id, &living, regions, rng);
-    evaluate_new_faction(year, factions, events, world_state, next_id, regions, faction_type_table, race_table, rng);
-    evaluate_faction_dissolved(year, factions, events, world_state, &living, rng);
+    evaluate_settlement_founded(year, factions, settlements, characters, events, next_id, &living, regions, rng);
+    evaluate_faction_formation(year, factions, settlements, characters, events, world_state, next_id, formation_candidates, rng);
+    evaluate_rebellion(year, factions, settlements, characters, events, world_state, next_id, formation_candidates, rng);
+    evaluate_absorption(year, factions, settlements, events, world_state, &living, rng);
+    evaluate_faction_dissolved(year, factions, settlements, events, world_state, &living, rng);
 
     // Phase 4: Sentiment drift
     world_state.relations.drift_toward_neutral();
@@ -231,11 +313,11 @@ pub(super) fn simulate_year(
 fn evaluate_war_declared(
     year: i32, factions: &[FactionState], characters: &[Character],
     events: &mut Vec<HistoricEvent>,
-    world_state: &mut WorldState, living: &[u32], rng: &mut impl Rng,
+    world_state: &mut WorldState, living: &[u32], _rng: &mut impl Rng,
 ) {
     if living.len() < 2 { return; }
 
-    // Check ALL hostile pairs, not just the worst — multiple wars can start per year
+    // Check all hostile pairs — war starts when a leader decides to act, not random chance
     let mut hostile_pairs: Vec<(u32, u32, i32)> = Vec::new();
     for (i, &a) in living.iter().enumerate() {
         for &b in &living[i+1..] {
@@ -254,17 +336,29 @@ fn evaluate_war_declared(
         let aggressor_mil = factions.iter().find(|f| f.id == a).map(|f| f.military_strength).unwrap_or(0);
         if aggressor_mil < 10 { continue; }
 
-        let hostility_bonus = ((-sentiment - 15) as f32 * 0.8).min(40.0);
-        let mut prob = 15.0 + hostility_bonus;
+        // Leader's ambition and traits determine if war is declared — no random roll
+        let leader_ambition = leader_get_ambition(a, factions, characters);
+        let has_war_ambition = matches!(leader_ambition,
+            Some(Ambition::ExpandTerritory) | Some(Ambition::DestroyEnemy { .. })
+        );
+        let has_specific_enemy = matches!(leader_ambition,
+            Some(Ambition::DestroyEnemy { target_faction }) if target_faction == b
+        );
+        let is_warlike = leader_has_trait(a, CharacterTrait::Warlike, factions, characters);
+        let is_peaceful = leader_has_trait(a, CharacterTrait::Peaceful, factions, characters);
+        let is_diplomatic = leader_has_trait(a, CharacterTrait::Diplomatic, factions, characters);
 
-        if leader_has_trait(a, CharacterTrait::Warlike, factions, characters) { prob += 20.0; }
-        if leader_has_trait(a, CharacterTrait::Ambitious, factions, characters) { prob += 10.0; }
-        if leader_has_trait(a, CharacterTrait::Peaceful, factions, characters) { prob -= 25.0; }
-        if leader_has_trait(a, CharacterTrait::Diplomatic, factions, characters) { prob -= 15.0; }
-        if faction_has_member_with_trait(a, CharacterTrait::Warlike, characters, year) { prob += 5.0; }
+        let declare_war = if has_specific_enemy {
+            true // personal vendetta — always act
+        } else if is_peaceful || is_diplomatic {
+            sentiment < -50 // only extreme provocation overcomes peaceful nature
+        } else if has_war_ambition || is_warlike {
+            sentiment < -15 // already hostile enough for an aggressive leader
+        } else {
+            sentiment < -40 // cautious leaders need stronger provocation
+        };
 
-        let prob = (prob / 100.0).clamp(0.02, 0.60);
-        if rng.random::<f32>() >= prob { continue; }
+        if !declare_war { continue; }
 
         world_state.active_wars.push(War { aggressor: a, defender: b, start_year: year });
         world_state.relations.modify(a, b, -20);
@@ -283,21 +377,22 @@ fn evaluate_war_declared(
 
 fn evaluate_war_ended(
     year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
-    events: &mut Vec<HistoricEvent>, world_state: &mut WorldState, rng: &mut impl Rng,
+    events: &mut Vec<HistoricEvent>, world_state: &mut WorldState, _rng: &mut impl Rng,
 ) {
     let mut ended_wars = Vec::new();
     for (i, war) in world_state.active_wars.iter().enumerate() {
         let duration = year - war.start_year;
-        if duration < 2 { continue; }
+        if duration < 1 { continue; } // minimum 1 year for casualties to matter
 
-        // Probability increases with duration
-        let base_prob = 0.10 + duration as f32 * 0.05;
-        // Check if either side is very weak
         let a_mil = factions.iter().find(|f| f.id == war.aggressor).map(|f| f.military_strength).unwrap_or(0);
         let b_mil = factions.iter().find(|f| f.id == war.defender).map(|f| f.military_strength).unwrap_or(0);
-        let weakness_bonus = if a_mil < 20 || b_mil < 20 { 0.30 } else { 0.0 };
+        let (stronger, weaker) = if a_mil >= b_mil { (a_mil, b_mil) } else { (b_mil, a_mil) };
 
-        if rng.random::<f32>() < (base_prob + weakness_bonus).min(0.90) {
+        // War ends from military reality, not random duration
+        let decisive_victory = stronger > 0 && (weaker as f32) < (stronger as f32) * 0.3;
+        let mutual_exhaustion = a_mil < 10 && b_mil < 10;
+
+        if decisive_victory || mutual_exhaustion {
             ended_wars.push(i);
         }
     }
@@ -321,34 +416,29 @@ fn evaluate_war_ended(
         // conquest reduces prosperity/food, and happiness drops reduce stability.
         // No direct gauge manipulation needed — values are derived from population.
 
-        // Settlement conquest: winner takes 1-2 settlements from loser
+        // Settlement conquest: winner takes settlements proportional to military dominance
         let loser_settlements: Vec<u32> = settlements.iter()
-            .filter(|s| s.owner_faction == loser && s.destroyed_year.is_none())
+            .filter(|s| s.controlling_faction == loser && s.destroyed_year.is_none())
             .map(|s| s.id)
             .collect();
-        // Conquest is likely (60%) and can take multiple settlements
+        // Decisive victories (>3x military) take more settlements
+        let w_mil = factions.iter().find(|f| f.id == winner).map(|f| f.military_strength).unwrap_or(0);
+        let l_mil = factions.iter().find(|f| f.id == loser).map(|f| f.military_strength).unwrap_or(0);
         let num_conquests = if loser_settlements.is_empty() { 0 }
-            else if rng.random::<f32>() < 0.6 {
-                1 + if loser_settlements.len() > 2 && rng.random::<f32>() < 0.3 { 1 } else { 0 }
-            } else { 0 };
+            else if l_mil == 0 || w_mil > l_mil * 3 { 2.min(loser_settlements.len()) }
+            else { 1.min(loser_settlements.len()) };
 
         for i in 0..num_conquests.min(loser_settlements.len()) {
             let target_sid = loser_settlements[i];
             if let Some(s) = settlements.iter_mut().find(|s| s.id == target_sid) {
                 let old_name = s.name.clone();
-                s.owner_faction = winner;
+                // Don't set controlling_faction directly — let allegiance shifts handle it
+                s.conquered_this_year = true;
+                s.conquered_by = Some(winner);
                 s.prosperity = s.prosperity.saturating_sub(30);
                 s.population_class = s.population_class.shrink();
-                s.conquered_this_year = true;
-                // Mark food destruction from conquest
                 s.stockpile.food = s.stockpile.food / 2;
-
-                if let Some(l) = factions.iter_mut().find(|f| f.id == loser) {
-                    l.settlements.retain(|&sid| sid != target_sid);
-                }
-                if let Some(w) = factions.iter_mut().find(|f| f.id == winner) {
-                    w.settlements.push(target_sid);
-                }
+                // Settlement lists are derived — no need to update faction.settlements
 
                 events.push(HistoricEvent {
                     year, kind: EventKind::Conquest,
@@ -371,24 +461,31 @@ fn evaluate_war_ended(
     }
 }
 
-/// A treacherous character in an allied faction betrays the alliance.
+/// A treacherous character betrays an alliance when they have reason to.
 fn evaluate_betrayal(
     year: i32, factions: &mut Vec<FactionState>, characters: &mut Vec<Character>,
-    events: &mut Vec<HistoricEvent>, world_state: &mut WorldState, rng: &mut impl Rng,
+    events: &mut Vec<HistoricEvent>, world_state: &mut WorldState, _rng: &mut impl Rng,
 ) {
     if world_state.active_alliances.is_empty() { return; }
 
-    // Look for a treacherous character in any allied faction
     for i in 0..world_state.active_alliances.len() {
         let alliance = &world_state.active_alliances[i];
         let a = alliance.faction_a;
         let b = alliance.faction_b;
 
-        // Find a treacherous character in either faction
+        // Find a treacherous/corrupt character with reason to betray
         let betrayer = characters.iter()
             .filter(|c| c.is_alive(year))
             .filter(|c| c.faction_id == Some(a) || c.faction_id == Some(b))
             .filter(|c| c.has_trait(CharacterTrait::Treacherous) || c.has_trait(CharacterTrait::Corrupt))
+            .filter(|c| {
+                // Must have motivation: SeizePower ambition or faction is unstable
+                let faction_id = c.faction_id.unwrap();
+                let unstable = factions.iter().find(|f| f.id == faction_id)
+                    .map(|f| f.stability < 30)
+                    .unwrap_or(false);
+                c.ambition == Ambition::SeizePower || unstable
+            })
             .max_by_key(|c| c.renown);
 
         let betrayer_id = match betrayer {
@@ -396,17 +493,18 @@ fn evaluate_betrayal(
             None => continue,
         };
 
-        // Low probability even with a traitor
-        if rng.random::<f32>() >= 0.05 { continue; }
-
+        // Betrayer must see an advantage: victim faction is weaker
         let betrayer_char = characters.iter().find(|c| c.id == betrayer_id).unwrap();
         let betrayer_faction = betrayer_char.faction_id.unwrap();
         let victim_faction = if betrayer_faction == a { b } else { a };
+        let b_mil = factions.iter().find(|f| f.id == betrayer_faction).map(|f| f.military_strength).unwrap_or(0);
+        let v_mil = factions.iter().find(|f| f.id == victim_faction).map(|f| f.military_strength).unwrap_or(0);
+        if v_mil > b_mil { continue; } // won't betray a stronger ally
+
         let betrayer_name = betrayer_char.full_display_name();
         let fb = faction_name_by_id(factions, betrayer_faction);
         let fv = faction_name_by_id(factions, victim_faction);
 
-        // Consequences: alliance broken, massive sentiment drop, betrayer gains epithet
         world_state.active_alliances.remove(i);
         world_state.relations.modify(betrayer_faction, victim_faction, -40);
 
@@ -414,7 +512,7 @@ fn evaluate_betrayal(
             if c.epithet.is_none() {
                 c.epithet = Some("the Betrayer".into());
             }
-            c.renown += 5; // infamy is still fame
+            c.renown += 5;
         }
 
         events.push(HistoricEvent {
@@ -427,31 +525,50 @@ fn evaluate_betrayal(
             god_participants: vec![],
             cause: None,
         });
-        return; // One betrayal per year max
+        return; // one betrayal per year
     }
 }
 
+/// Alliances form when diplomatic leaders reach out to friendly factions.
 fn evaluate_alliance(
     year: i32, factions: &[FactionState], characters: &[Character],
     events: &mut Vec<HistoricEvent>,
-    world_state: &mut WorldState, living: &[u32], rng: &mut impl Rng,
+    world_state: &mut WorldState, living: &[u32], _rng: &mut impl Rng,
 ) {
     if living.len() < 2 { return; }
 
-    // Base 10%, boosted by Diplomatic leaders
-    let any_diplomatic = living.iter().any(|&fid| {
-        leader_has_trait(fid, CharacterTrait::Diplomatic, factions, characters)
-    });
-    let prob = if any_diplomatic { 0.20 } else { 0.10 };
-    if rng.random::<f32>() >= prob { return; }
-
-    // Find two friendly factions not already allied
+    // Only factions with Diplomatic leaders or shared threats initiate alliances
     for &a in living {
+        let a_diplomatic = leader_has_trait(a, CharacterTrait::Diplomatic, factions, characters);
         for &b in living {
             if a >= b { continue; }
-            if !world_state.relations.is_friendly(a, b) { continue; }
             if world_state.allied(a, b) { continue; }
             if world_state.at_war(a, b) { continue; }
+
+            let sentiment = world_state.relations.get(a, b);
+            let b_diplomatic = leader_has_trait(b, CharacterTrait::Diplomatic, factions, characters);
+
+            // Shared patron god lowers the sentiment threshold
+            let shared_god = factions.iter().find(|f| f.id == a).and_then(|f| f.patron_god)
+                == factions.iter().find(|f| f.id == b).and_then(|f| f.patron_god)
+                && factions.iter().find(|f| f.id == a).and_then(|f| f.patron_god).is_some();
+
+            // Shared enemy (both at war with the same faction)
+            let shared_enemy = living.iter().any(|&e| {
+                e != a && e != b && world_state.at_war(a, e) && world_state.at_war(b, e)
+            });
+
+            let should_ally = if shared_enemy && sentiment > 0 {
+                true // practical alliance against common foe
+            } else if (a_diplomatic || b_diplomatic) && sentiment > 15 {
+                true // diplomat reaches out to friendly faction
+            } else if shared_god && sentiment > 15 {
+                true // religious bond
+            } else {
+                sentiment > 30 // naturally friendly
+            };
+
+            if !should_ally { continue; }
 
             world_state.active_alliances.push(Alliance { faction_a: a, faction_b: b, formed_year: year });
             world_state.relations.modify(a, b, 10);
@@ -462,18 +579,19 @@ fn evaluate_alliance(
                 year, kind: EventKind::AllianceFormed,
                 description: format!("{} and {} formed an alliance", fa, fb),
                 participants: vec![a, b],
-            god_participants: vec![],
-            cause: None,
+                god_participants: vec![],
+                cause: None,
             });
-            return; // One alliance per year max
+            return; // one alliance per year — diplomatic effort takes time
         }
     }
 }
 
+/// Alliances break when sentiment turns hostile or a treacherous leader acts.
 fn evaluate_alliance_broken(
     year: i32, factions: &[FactionState], characters: &[Character],
     events: &mut Vec<HistoricEvent>,
-    world_state: &mut WorldState, rng: &mut impl Rng,
+    world_state: &mut WorldState, _rng: &mut impl Rng,
 ) {
     let mut broken = Vec::new();
     for (i, alliance) in world_state.active_alliances.iter().enumerate() {
@@ -481,8 +599,11 @@ fn evaluate_alliance_broken(
         let treacherous_leader = leader_has_trait(alliance.faction_a, CharacterTrait::Treacherous, factions, characters)
             || leader_has_trait(alliance.faction_b, CharacterTrait::Treacherous, factions, characters);
 
-        let break_prob = if treacherous_leader { 0.35 } else { 0.20 };
-        if sentiment < 10 && rng.random::<f32>() < break_prob {
+        // Break deterministically when conditions warrant it
+        let should_break = sentiment < 0 // relationship turned hostile
+            || (treacherous_leader && sentiment < 10); // treacherous leader abandons lukewarm ally
+
+        if should_break {
             broken.push(i);
         }
     }
@@ -501,20 +622,21 @@ fn evaluate_alliance_broken(
     }
 }
 
+/// Trade agreements form automatically when factions aren't hostile.
 fn evaluate_trade_agreement(
     year: i32, factions: &[FactionState], events: &mut Vec<HistoricEvent>,
-    world_state: &mut WorldState, living: &[u32], rng: &mut impl Rng,
+    world_state: &mut WorldState, living: &[u32], _rng: &mut impl Rng,
 ) {
     if living.len() < 2 { return; }
-    if rng.random::<f32>() >= 0.08 { return; }
 
+    let mut new_treaties = 0;
     for &a in living {
         for &b in living {
             if a >= b { continue; }
+            if new_treaties >= 2 { return; } // limit diplomatic bandwidth per year
             let sentiment = world_state.relations.get(a, b);
             if sentiment < 0 { continue; }
             if world_state.at_war(a, b) { continue; }
-            // Check not already in treaty
             let has_treaty = world_state.active_treaties.iter().any(|t| {
                 (t.faction_a == a && t.faction_b == b) || (t.faction_a == b && t.faction_b == a)
             });
@@ -532,7 +654,7 @@ fn evaluate_trade_agreement(
             god_participants: vec![],
             cause: None,
             });
-            return;
+            new_treaties += 1;
         }
     }
 }
@@ -561,20 +683,14 @@ fn evaluate_leader_changed(
             .max_by_key(|c| c.renown)
             .map(|c| c.id);
 
-        let coup_prob = if usurper.is_some() && f.stability < 30 {
-            0.20
-        } else if f.stability < 20 {
-            0.10
-        } else {
-            0.01
-        };
-
-        if rng.random::<f32>() >= coup_prob { continue; }
+        // Coup happens when conditions are right — no random roll
+        let should_coup = usurper.is_some() && f.stability < 30;
+        if !should_coup { continue; }
 
         let old_name = f.leader_name.clone();
         let race = f.race;
         let fname = f.name.clone();
-        let is_coup = coup_prob > 0.05;
+        let is_coup = usurper.is_some();
 
         // Determine new leader
         let new_leader_name = if let Some(uid) = usurper {
@@ -661,7 +777,7 @@ fn evaluate_plague(
             }
 
             // War — corpses, displacement, breakdown of sanitation
-            if world_state.war_count(s.owner_faction) > 0 {
+            if world_state.war_count(s.controlling_faction) > 0 {
                 plague_chance += 0.008;
             }
 
@@ -674,8 +790,8 @@ fn evaluate_plague(
                 s.prosperity = s.prosperity.saturating_sub(25);
                 s.plague_this_year = true;
                 any_plague = true;
-                if !affected_factions.contains(&s.owner_faction) {
-                    affected_factions.push(s.owner_faction);
+                if !affected_factions.contains(&s.controlling_faction) {
+                    affected_factions.push(s.controlling_faction);
                 }
             }
         }
@@ -692,65 +808,20 @@ fn evaluate_plague(
     }
 }
 
-fn evaluate_monster_attack(
-    year: i32, events: &mut Vec<HistoricEvent>, regions: &[String], rng: &mut impl Rng,
-) {
-    if rng.random::<f32>() >= 0.08 { return; }
-    let region = &regions[rng.random_range(0..regions.len())];
-    let creatures = ["dragon", "wyvern", "troll horde", "undead army",
-        "giant spider brood", "demon", "hydra"];
-    let creature = creatures[rng.random_range(0..creatures.len())];
-    events.push(HistoricEvent {
-        year, kind: EventKind::MonsterAttack,
-        description: format!("A {} terrorized {}", creature, region),
-        participants: vec![],
-            god_participants: vec![],
-            cause: None,
-    });
-}
-
-fn evaluate_hero(
-    year: i32, factions: &[FactionState], characters: &mut Vec<Character>,
-    events: &mut Vec<HistoricEvent>, living: &[u32], next_id: &mut u32,
-    race_table: &PopTable<Race>, rng: &mut impl Rng,
-) {
-    if rng.random::<f32>() >= 0.06 { return; }
-    let fid = living[rng.random_range(0..living.len())];
-    let race = factions.iter().find(|f| f.id == fid).map(|f| f.race)
-        .unwrap_or_else(|| race_table.roll_one(rng).unwrap());
-    let fname = faction_name_by_id(factions, fid);
-
-    let hero_id = *next_id;
-    *next_id += 1;
-    let birth = year - rng.random_range(18..30);
-    let mut hero = generate_character(hero_id, race, CharacterRole::Hero, Some(fid), birth, rng);
-    hero.epithet = Some(generate_epithet(&hero, rng));
-    hero.renown = 25;
-    let hero_name = hero.full_display_name();
-    characters.push(hero);
-
-    events.push(HistoricEvent {
-        year, kind: EventKind::HeroRose,
-        description: format!("{} rose to fame within {}", hero_name, fname),
-        participants: vec![fid],
-            god_participants: vec![],
-            cause: None,
-    });
-}
-
 fn evaluate_artifact_discovered(
     year: i32, factions: &[FactionState], characters: &mut Vec<Character>,
     artifacts_list: &mut Vec<Artifact>, events: &mut Vec<HistoricEvent>,
     living: &[u32], next_id: &mut u32, rng: &mut impl Rng,
 ) {
-    // Scholarly characters boost discovery chance
-    let scholarly_boost = living.iter().any(|&fid| {
-        faction_has_member_with_trait(fid, CharacterTrait::Scholarly, characters, year)
-    });
-    let prob = if scholarly_boost { 0.04 } else { 0.02 };
-    if rng.random::<f32>() >= prob { return; }
-
-    let fid = living[rng.random_range(0..living.len())];
+    // Artifacts discovered by factions with Scholar characters in stable conditions
+    let fid = match living.iter().copied().find(|&fid| {
+        let has_scholar = faction_has_member_with_trait(fid, CharacterTrait::Scholarly, characters, year);
+        let stable = factions.iter().find(|f| f.id == fid).map(|f| f.stability > 40).unwrap_or(false);
+        has_scholar && stable
+    }) {
+        Some(fid) => fid,
+        None => return,
+    };
     let fname = faction_name_by_id(factions, fid);
 
     let kind_table = PopTable::pick_one(vec![
@@ -794,16 +865,26 @@ fn evaluate_artifact_discovered(
 
 fn evaluate_settlement_founded(
     year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
+    characters: &[Character],
     events: &mut Vec<HistoricEvent>, next_id: &mut u32, living: &[u32],
     regions: &[String], rng: &mut impl Rng,
 ) {
-    if rng.random::<f32>() >= 0.05 { return; }
-    let fid = living[rng.random_range(0..living.len())];
-    let f = match factions.iter().find(|f| f.id == fid) {
-        Some(f) => f,
+    // Settlement founded when leader has ExpandTerritory ambition and faction can afford it
+    // Find first qualifying faction — no random selection
+    let fid = match living.iter().copied().find(|&fid| {
+        let f = match factions.iter().find(|f| f.id == fid) {
+            Some(f) => f,
+            None => return false,
+        };
+        if f.wealth < 30 { return false; }
+        // Leader must want to expand
+        let ambition = leader_get_ambition(fid, factions, characters);
+        matches!(ambition, Some(Ambition::ExpandTerritory))
+    }) {
+        Some(fid) => fid,
         None => return,
     };
-    if f.wealth < 30 { return; } // too poor to found settlement
+    let f = factions.iter().find(|f| f.id == fid).unwrap();
 
     let fname = f.name.clone();
     let region = f.territory.first().cloned().unwrap_or_else(|| regions[0].clone());
@@ -813,10 +894,10 @@ fn evaluate_settlement_founded(
 
     settlements.push(SettlementState {
         id: sid, name: sname.clone(), founded_year: year,
-        owner_faction: fid, destroyed_year: None, region,
+        controlling_faction: fid, destroyed_year: None, region,
         population_class: PopulationClass::Hamlet, prosperity: 40, defenses: 20,
         patron_god: None, devotion: 0, world_pos: None,
-        zone_type: None, stockpile: ResourceStockpile::default(), at_war: false, plague_this_year: false, conquered_this_year: false,
+        zone_type: None, stockpile: ResourceStockpile::default(), plague_this_year: false, conquered_this_year: false, conquered_by: None,
         dominant_race: None,
     });
 
@@ -833,32 +914,82 @@ fn evaluate_settlement_founded(
     });
 }
 
-fn evaluate_new_faction(
-    year: i32, factions: &mut Vec<FactionState>, events: &mut Vec<HistoricEvent>,
-    world_state: &mut WorldState, next_id: &mut u32, regions: &[String],
-    faction_type_table: &PopTable<FactionType>, race_table: &PopTable<Race>,
+/// Condition-based faction formation — replaces the old random 3% spawn.
+/// Every settlement that meets formation conditions spawns a new faction.
+/// Leader-driven faction formation — specific people found factions based on their traits and life.
+fn evaluate_faction_formation(
+    year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
+    characters: &mut Vec<Character>,
+    events: &mut Vec<HistoricEvent>,
+    world_state: &mut WorldState, next_id: &mut u32,
+    candidates: Option<&FormationCandidates>,
     rng: &mut impl Rng,
 ) {
-    if rng.random::<f32>() >= 0.03 { return; }
-    let ft = faction_type_table.roll_one(rng).unwrap();
-    let race = race_table.roll_one(rng).unwrap();
-    let region = regions[rng.random_range(0..regions.len())].clone();
-    let leader = full_name(race, rng);
-    let name = faction_name(ft, race, rng);
-    let id = *next_id;
-    *next_id += 1;
-    let (mil, wealth, stab) = FactionState::initialize_gauges(ft);
-
-    let new_faction = FactionState {
-        id, name: name.clone(), faction_type: ft, race,
-        founded_year: year, home_region: region.clone(),
-        dissolved_year: None, leader_name: leader, leader_id: None,
-        military_strength: mil, wealth, stability: stab,
-        territory: vec![region.clone()], settlements: vec![],
-        patron_god: None, devotion: 0,
+    let candidates = match candidates {
+        Some(c) => c,
+        None => return,
     };
 
-    // Initialize relations with all existing living factions
+    // Kingdom upgrades — type transformation, not new factions
+    for &fid in &candidates.kingdom_upgrades {
+        if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
+            f.faction_type = FactionType::Kingdom;
+            events.push(HistoricEvent {
+                year, kind: EventKind::FactionFounded,
+                description: format!("{} declared itself a kingdom", f.name),
+                participants: vec![fid],
+                god_participants: vec![],
+                cause: None,
+            });
+        }
+    }
+
+    // Each founder creates a new faction
+    for founder in &candidates.founders {
+        spawn_faction_from_founder(
+            founder, year, factions, settlements, characters, events,
+            world_state, next_id, rng,
+        );
+    }
+}
+
+/// Create a new faction from a specific person who founded it.
+fn spawn_faction_from_founder(
+    founder: &crate::worldgen::population::faction_stats::FactionFounder,
+    year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
+    characters: &mut Vec<Character>, events: &mut Vec<HistoricEvent>,
+    world_state: &mut WorldState, next_id: &mut u32, rng: &mut impl Rng,
+) {
+    let settlement = match settlements.iter().find(|s| s.id == founder.settlement_id) {
+        Some(s) => s,
+        None => return,
+    };
+    let old_owner = settlement.controlling_faction;
+    let region = settlement.region.clone();
+    let ft = founder.faction_type;
+    let race = founder.race;
+
+    let faction_id = *next_id; *next_id += 1;
+    let name = faction_name(ft, race, rng);
+    let leader_id = *next_id; *next_id += 1;
+    let leader_birth = year - rng.random_range(25..45);
+    let leader = generate_character(leader_id, race, CharacterRole::Leader, Some(faction_id), leader_birth, rng);
+    let leader_display = leader.full_display_name();
+    characters.push(leader);
+
+    let (mil, wealth, stab) = FactionState::initialize_gauges(ft);
+    let new_faction = FactionState {
+        id: faction_id, name: name.clone(), faction_type: ft, race,
+        founded_year: year, home_region: region.clone(),
+        dissolved_year: None, leader_name: leader_display, leader_id: Some(leader_id),
+        military_strength: mil, wealth, stability: stab,
+        territory: vec![region], settlements: vec![], // derived from allegiance
+        patron_god: settlement.patron_god, devotion: settlement.devotion,
+        unhappy_years: 0,
+    };
+    // Don't transfer settlement ownership — allegiance shifts + recompute will handle it
+    let _ = old_owner;
+
     for existing in factions.iter() {
         if existing.is_alive(year) {
             world_state.relations.initialize_pair(&new_faction, existing);
@@ -868,50 +999,174 @@ fn evaluate_new_faction(
     factions.push(new_faction);
     events.push(HistoricEvent {
         year, kind: EventKind::FactionFounded,
-        description: format!("{} was founded in {}", name, region),
-        participants: vec![id],
-            god_participants: vec![],
-            cause: None,
+        description: format!("{} — {}", name, founder.reason),
+        participants: vec![faction_id],
+        god_participants: vec![],
+        cause: None,
     });
 }
 
 fn evaluate_faction_dissolved(
-    year: i32, factions: &mut Vec<FactionState>, events: &mut Vec<HistoricEvent>,
-    world_state: &mut WorldState, living: &[u32], rng: &mut impl Rng,
+    year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
+    events: &mut Vec<HistoricEvent>,
+    world_state: &mut WorldState, living: &[u32], _rng: &mut impl Rng,
 ) {
     for &fid in living {
         let f = match factions.iter().find(|f| f.id == fid) {
             Some(f) => f,
             None => continue,
         };
-        // Dissolve if very weak, or lost all settlements
-        let no_settlements = f.settlements.is_empty();
-        let critically_weak = f.military_strength < 5 && f.stability < 25 && f.wealth < 5;
-        if no_settlements || critically_weak {
-            let prob = if no_settlements { 0.50 } else { 0.25 };
-            if rng.random::<f32>() < prob {
-                let fname = f.name.clone();
-                if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
-                    f.dissolved_year = Some(year);
-                }
-                // Remove from wars
-                world_state.active_wars.retain(|w| w.aggressor != fid && w.defender != fid);
-                world_state.active_alliances.retain(|a| a.faction_a != fid && a.faction_b != fid);
-                world_state.active_treaties.retain(|t| t.faction_a != fid && t.faction_b != fid);
 
-                events.push(HistoricEvent {
-                    year, kind: EventKind::FactionDissolved,
-                    description: format!("{} dissolved, unable to sustain itself", fname),
-                    participants: vec![fid],
+        // Faction dissolves when it has no people (all gauges zero) or sustained misery
+        let no_people = f.military_strength == 0 && f.wealth == 0 && f.stability == 0
+            && year - f.founded_year >= 2; // grace period for new factions
+        let should_dissolve = no_people || f.unhappy_years >= 5;
+
+        if !should_dissolve { continue; }
+
+        let fname = f.name.clone();
+
+        if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
+            f.dissolved_year = Some(year);
+            f.settlements.clear();
+        }
+        // Allegiant people become unaligned — the allegiance shift system
+        // and recompute_controlling_factions will handle redistribution
+
+        // Clean up diplomatic ties
+        world_state.active_wars.retain(|w| w.aggressor != fid && w.defender != fid);
+        world_state.active_alliances.retain(|a| a.faction_a != fid && a.faction_b != fid);
+        world_state.active_treaties.retain(|t| t.faction_a != fid && t.faction_b != fid);
+
+        events.push(HistoricEvent {
+            year, kind: EventKind::FactionDissolved,
+            description: format!("{} collapsed under the weight of popular discontent", fname),
+            participants: vec![fid],
             god_participants: vec![],
             cause: None,
-                });
-            }
+        });
+    }
+}
+
+/// Rebellions from leader-identified rebel figures in mismatched settlements.
+fn evaluate_rebellion(
+    year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
+    characters: &mut Vec<Character>,
+    events: &mut Vec<HistoricEvent>,
+    world_state: &mut WorldState, next_id: &mut u32,
+    candidates: Option<&FormationCandidates>,
+    rng: &mut impl Rng,
+) {
+    let candidates = match candidates {
+        Some(c) => c,
+        None => return,
+    };
+
+    // Each rebellion candidate is a specific person who leads the revolt
+    for rebel in &candidates.rebellions {
+        let old_owner = settlements.iter()
+            .find(|s| s.id == rebel.settlement_id)
+            .map(|s| s.controlling_faction)
+            .unwrap_or(0);
+
+        spawn_faction_from_founder(
+            rebel, year, factions, settlements, characters, events,
+            world_state, next_id, rng,
+        );
+
+        // Hostile to former owner
+        if let Some(new_faction) = factions.last() {
+            world_state.relations.modify(new_faction.id, old_owner, -30);
         }
     }
 }
 
+/// Weak factions near strong same-race/faith factions may be absorbed.
+fn evaluate_absorption(
+    year: i32, factions: &mut Vec<FactionState>, settlements: &mut Vec<SettlementState>,
+    events: &mut Vec<HistoricEvent>,
+    world_state: &mut WorldState, living: &[u32], _rng: &mut impl Rng,
+) {
+    for &fid in living {
+        let f = match factions.iter().find(|f| f.id == fid) {
+            Some(f) => f,
+            None => continue,
+        };
+        if f.settlements.len() > 1 || f.military_strength >= 20 { continue; }
+
+        // Find a strong neighboring faction with shared identity
+        let absorber = living.iter()
+            .filter(|&&oid| oid != fid)
+            .filter_map(|&oid| {
+                let other = factions.iter().find(|f| f.id == oid)?;
+                if other.military_strength < f.military_strength * 3 { return None; }
+                let shared_race = other.race == f.race;
+                let shared_god = other.patron_god.is_some() && other.patron_god == f.patron_god;
+                if !shared_race && !shared_god { return None; }
+                Some(oid)
+            })
+            .next();
+
+        let absorber_id = match absorber {
+            Some(id) => id,
+            None => continue,
+        };
+
+        // Absorption: dissolve weak faction, allegiance recompute will handle settlement control
+        let fname = f.name.clone();
+        let absorber_name = faction_name_by_id(factions, absorber_id);
+
+        if let Some(f) = factions.iter_mut().find(|f| f.id == fid) {
+            f.dissolved_year = Some(year);
+            f.settlements.clear();
+        }
+        // Note: allegiant people will become unaligned when dissolution processes,
+        // then the allegiance shift system + recompute will handle the rest
+
+        world_state.active_wars.retain(|w| w.aggressor != fid && w.defender != fid);
+        world_state.active_alliances.retain(|a| a.faction_a != fid && a.faction_b != fid);
+        world_state.active_treaties.retain(|t| t.faction_a != fid && t.faction_b != fid);
+
+        events.push(HistoricEvent {
+            year, kind: EventKind::FactionDissolved,
+            description: format!("{} was absorbed into {}", fname, absorber_name),
+            participants: vec![fid, absorber_id],
+            god_participants: vec![],
+            cause: None,
+        });
+        return; // one absorption per year
+    }
+}
+
+/// Find the nearest living faction to a world position (excluding a specific faction).
+fn find_nearest_faction(
+    pos: Option<WorldPos>, excluded: u32,
+    factions: &[FactionState], settlements: &[SettlementState], year: i32,
+) -> Option<u32> {
+    let pos = pos?;
+    factions.iter()
+        .filter(|f| f.is_alive(year) && f.id != excluded && !f.settlements.is_empty())
+        .filter_map(|f| {
+            // Find nearest settlement owned by this faction
+            let min_dist = f.settlements.iter()
+                .filter_map(|&sid| settlements.iter().find(|s| s.id == sid))
+                .filter_map(|s| s.world_pos.map(|p| pos.manhattan_distance(p)))
+                .min()?;
+            Some((f.id, min_dist))
+        })
+        .min_by_key(|&(_, dist)| dist)
+        .map(|(fid, _)| fid)
+}
+
 /// Check if a faction's leader has a specific trait.
+/// Get the leader's ambition for a faction.
+fn leader_get_ambition(faction_id: u32, factions: &[FactionState], characters: &[Character]) -> Option<Ambition> {
+    let leader_id = factions.iter()
+        .find(|f| f.id == faction_id)
+        .and_then(|f| f.leader_id)?;
+    characters.iter().find(|c| c.id == leader_id).map(|c| c.ambition.clone())
+}
+
 fn leader_has_trait(faction_id: u32, trait_: CharacterTrait, factions: &[FactionState], characters: &[Character]) -> bool {
     let leader_id = factions.iter()
         .find(|f| f.id == faction_id)

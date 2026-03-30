@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sprite Generator — Trailsworn</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#131313;color:#F5F5DC;font-family:'Consolas',monospace;display:flex;height:100vh;overflow:hidden}
+
+  /* ---- Left panel ---- */
+  .panel{width:340px;display:flex;flex-direction:column;border-right:2px solid #2a2a2a;flex-shrink:0;height:100vh}
+
+  /* Generator tabs */
+  .gen-tabs{display:flex;flex-wrap:wrap;gap:0;border-bottom:2px solid #2a2a2a;padding:4px 4px 0}
+  .gen-tab{
+    padding:6px 10px;font-size:11px;font-family:inherit;cursor:pointer;
+    background:#1a1a1a;color:#888;border:1px solid #2a2a2a;border-bottom:none;
+    margin-bottom:-2px;
+  }
+  .gen-tab:hover{color:#F5F5DC}
+  .gen-tab.active{background:#131313;color:#d4af37;border-color:#d4af37;border-bottom-color:#131313}
+
+  /* Controls area */
+  .controls{flex:1;overflow-y:auto;padding:12px 14px}
+  h2{color:#d4af37;font-size:12px;margin:12px 0 6px;border-bottom:1px solid #2a2a2a;padding-bottom:3px}
+  .control{margin-bottom:7px}
+  .control label{display:flex;justify-content:space-between;font-size:11px;margin-bottom:1px}
+  .control label span.val{color:#d4af37}
+  .control input[type="range"]{width:100%;accent-color:#d4af37}
+  .control select{width:100%;background:#1e1e1e;color:#F5F5DC;border:1px solid #3a3a3a;padding:4px 6px;font-family:inherit;font-size:11px}
+  .actions{display:flex;gap:6px;margin-top:10px;padding-bottom:12px}
+  button{background:#2a2a2a;color:#d4af37;border:1px solid #3a3a3a;padding:5px 10px;font-family:inherit;font-size:11px;cursor:pointer}
+  button:hover{background:#3a3a3a}
+
+  /* ---- Preview area ---- */
+  .preview{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;gap:10px;overflow:auto}
+  .preview h3{color:#888;font-size:11px;font-weight:normal}
+  .canvas-row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+  canvas{background:repeating-conic-gradient(#1a1a1a 0% 25%,#222 0% 50%) 50%/16px 16px;image-rendering:pixelated;border:1px solid #2a2a2a;cursor:pointer;transition:border-color 0.15s}
+  canvas:hover{border-color:#d4af37}
+  canvas.flash{border-color:#6a2;animation:flashBorder 0.4s}
+  @keyframes flashBorder{0%{border-color:#8f4}50%{border-color:#6a2}100%{border-color:#2a2a2a}}
+
+  /* ---- Queue ---- */
+  .queue-section{width:100%;border-top:2px solid #2a2a2a;padding:10px 16px;flex-shrink:0}
+  .queue-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .queue-header h3{color:#d4af37;font-size:12px;font-weight:normal;margin:0}
+  .queue-header span.count{color:#888;font-size:11px}
+  .queue-actions{display:flex;gap:6px}
+  .queue-strip{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;min-height:58px;align-items:flex-start}
+  .queue-item{position:relative;flex-shrink:0;text-align:center}
+  .queue-item canvas{width:48px;height:48px;cursor:default;border:1px solid #3a3a3a}
+  .queue-item canvas:hover{border-color:#3a3a3a}
+  .queue-item .q-name{font-size:9px;color:#888;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+  .queue-item .q-remove{position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;background:#920703;color:#F5F5DC;font-size:9px;line-height:14px;text-align:center;cursor:pointer;border:none;padding:0;display:none}
+  .queue-item:hover .q-remove{display:block}
+  .queue-empty{color:#555;font-size:11px;font-style:italic;padding:16px 0}
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <div class="gen-tabs" id="gen-tabs"></div>
+  <div class="controls" id="controls"></div>
+</div>
+
+<div class="preview">
+  <div style="color:#555;font-size:11px;margin-bottom:4px;display:flex;gap:16px;align-items:center">
+    <span>Click a sprite to add it to the export queue</span>
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="chk-guide" style="accent-color:#d4af37"> <span style="color:#888">Tile guide</span></label>
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="chk-outline" style="accent-color:#d4af37"> <span style="color:#888">Outline</span></label>
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="chk-terrain" style="accent-color:#d4af37"> <span style="color:#888">Terrain bg</span></label>
+    <select id="sel-terrain" style="background:#1e1e1e;color:#F5F5DC;border:1px solid #3a3a3a;padding:2px 4px;font-family:inherit;font-size:10px">
+      <option value="Forest">Forest</option>
+      <option value="Grass">Grass</option>
+      <option value="Dirt">Dirt</option>
+      <option value="Stone">Stone</option>
+    </select>
+  </div>
+  <div class="canvas-row" id="canvas-row"></div>
+
+  <div class="queue-section">
+    <div class="queue-header">
+      <h3>Export Queue <span class="count" id="queue-count">(0)</span></h3>
+      <div class="queue-actions">
+        <button id="btn-export-queue">Export Queue</button>
+        <button id="btn-clear-queue">Clear</button>
+      </div>
+    </div>
+    <div class="queue-strip" id="queue-strip">
+      <div class="queue-empty" id="queue-empty">Queue empty — click sprites above to add</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  SHARED UTILITIES
+// ============================================================
+var LX=-0.7071, LY=-0.7071, NUM=5;
+var W=128, H=128; // overridden per-generator
+function rf(a,b){return a+Math.random()*(b-a)}
+function ri(a,b){return Math.floor(rf(a,b+1))}
+function rgba(c,a){return 'rgba('+c[0]+','+c[1]+','+c[2]+','+a+')'}
+function desat(hex,amt){var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);var gr=r*0.299+g*0.587+b*0.114;return[Math.round(r+(gr-r)*amt),Math.round(g+(gr-g)*amt),Math.round(b+(gr-b)*amt)]}
+function lerpColor(c1,c2,t){t=Math.max(0,Math.min(1,t));return[Math.round(c1[0]+(c2[0]-c1[0])*t),Math.round(c1[1]+(c2[1]-c1[1])*t),Math.round(c1[2]+(c2[2]-c1[2])*t)]}
+function colForRamp(ramp,dx,dy){var len=Math.sqrt(dx*dx+dy*dy)||1;var dot=(dx/len)*LX+(dy/len)*LY;var t=(dot+1)/2;return ramp[Math.min(Math.round(t*(ramp.length-1)),ramp.length-1)]}
+
+// ============================================================
+//  ROCK GENERATOR
+// ============================================================
+var rockPalettes={
+  grassland:{dark:[0x3a,0x3a,0x36],mid:[0x5e,0x5c,0x56],highlight:[0x8a,0x88,0x80],shadow_ground:[0x2a,0x3a,0x1e]},
+  mountain:{dark:[0x2a,0x30,0x38],mid:[0x48,0x4e,0x52],highlight:[0x6e,0x76,0x7e],shadow_ground:[0x28,0x2e,0x32]},
+  desert:{dark:[0x5a,0x4a,0x38],mid:[0x8a,0x7a,0x65],highlight:[0xb0,0xa0,0x88],shadow_ground:[0x4a,0x3a,0x28]},
+  ice:{dark:[0x60,0x80,0xa0],mid:[0xa0,0xc8,0xe0],highlight:[0xd0,0xf0,0xff],shadow_ground:[0x38,0x48,0x52]},
+  coast:{dark:[0x2a,0x38,0x34],mid:[0x48,0x58,0x54],highlight:[0x6e,0x80,0x78],shadow_ground:[0x2a,0x30,0x28]}
+};
+
+function drawRockPoly(ctx,cx,cy,bw,bh,nv,irreg){
+  var pts=[],step=Math.PI*2/nv;
+  for(var i=0;i<nv;i++){var a=step*i+rf(-step*0.3,step*0.3);var r=rf(1-irreg,1+irreg);pts.push({x:cx+Math.cos(a)*bw*r,y:cy+Math.sin(a)*bh*r})}
+  return pts;
+}
+function polyPath(ctx,pts){ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);for(var i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);ctx.closePath()}
+
+function drawSingleRock(ctx,cx,cy,cfg,pal){
+  var bw=cfg.baseSize*rf(0.85,1.15)/2;
+  var bh=bw*cfg.heightRatio*rf(0.9,1.1);
+  var pts=drawRockPoly(ctx,cx,cy,bw,bh,cfg.vertices,cfg.irregularity);
+  var alpha=cfg.alpha||1;
+  // shadow
+  ctx.fillStyle=rgba(pal.shadow_ground,0.45*alpha);
+  ctx.beginPath();ctx.ellipse(cx+2,cy+bh*0.7,bw*0.8,bh*0.2,0,0,Math.PI*2);ctx.fill();
+  // face shading
+  for(var i=0;i<pts.length;i++){
+    var p1=pts[i],p2=pts[(i+1)%pts.length];
+    var edx=p2.x-p1.x,edy=p2.y-p1.y,nx=edy,ny=-edx,nl=Math.sqrt(nx*nx+ny*ny)||1;
+    var dot=(nx/nl)*LX+(ny/nl)*LY,t=(dot+1)/2;
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.closePath();
+    ctx.fillStyle=rgba(lerpColor(pal.dark,pal.highlight,t),alpha);ctx.fill();
+  }
+  // shadow overlay
+  ctx.save();polyPath(ctx,pts);ctx.clip();
+  ctx.fillStyle=rgba(pal.dark,cfg.shadowStr*0.5*alpha);
+  ctx.beginPath();ctx.moveTo(cx-bw*2,cy);ctx.lineTo(cx,cy-bh*2);ctx.lineTo(cx+bw*3,cy-bh*2);ctx.lineTo(cx+bw*3,cy+bh*3);ctx.lineTo(cx-bw*2,cy+bh*3);ctx.closePath();ctx.fill();
+  ctx.restore();
+  // highlight
+  ctx.save();polyPath(ctx,pts);ctx.clip();
+  ctx.fillStyle=rgba(pal.highlight,cfg.highlightStr*0.6*alpha);
+  ctx.beginPath();ctx.moveTo(cx+bw*2,cy);ctx.lineTo(cx,cy-bh*2);ctx.lineTo(cx-bw*3,cy-bh*2);ctx.lineTo(cx-bw*3,cy+bh*2);ctx.lineTo(cx+bw*2,cy);ctx.closePath();ctx.fill();
+  ctx.restore();
+  // outline
+  polyPath(ctx,pts);ctx.strokeStyle=rgba(pal.dark,0.25*alpha);ctx.lineWidth=0.8;ctx.stroke();
+  return{cx:cx,cy:cy,bw:bw*2,bh:bh*2,pts:pts};
+}
+
+function rockDetails(ctx,rock,detail,pal,alpha){
+  var cx=rock.cx,cy=rock.cy,bw=rock.bw/2,bh=rock.bh/2;
+  if(detail==='cracks'){for(var i=0;i<ri(2,4);i++){var sx=cx+rf(-bw*0.25,bw*0.25),sy=cy+rf(-bh*0.25,bh*0.25);ctx.beginPath();ctx.moveTo(sx,sy);for(var j=0;j<ri(2,4);j++){sx+=rf(-6,6);sy+=rf(-4,4);ctx.lineTo(sx,sy)}ctx.strokeStyle=rgba(pal.dark,rf(0.2,0.4));ctx.lineWidth=rf(0.5,1.2);ctx.stroke()}}
+  if(detail==='moss'){for(var i=0;i<ri(3,6);i++){ctx.fillStyle=rgba([0x3a,0x5a,0x28],rf(0.3,0.5));ctx.beginPath();ctx.arc(cx+rf(-bw*0.3,bw*0.3),cy+rf(-bh*0.15,bh*0.3),rf(2,4),0,Math.PI*2);ctx.fill()}}
+  if(detail==='sparkle'){for(var i=0;i<ri(3,6);i++){ctx.fillStyle=rgba([0xff,0xff,0xff],rf(0.4,0.7));ctx.beginPath();ctx.arc(cx+rf(-bw*0.3,bw*0.3),cy+rf(-bh*0.3,bh*0.3),rf(1,2.5),0,Math.PI*2);ctx.fill()}}
+  if(detail==='barnacles'){for(var i=0;i<ri(5,10);i++){ctx.fillStyle=rgba([0x60,0x60,0x58],rf(0.4,0.7));ctx.beginPath();ctx.arc(cx+rf(-bw*0.35,bw*0.35),cy+rf(0,bh*0.35),rf(1,2),0,Math.PI*2);ctx.fill()}ctx.strokeStyle=rgba([0x1a,0x28,0x22],0.35);ctx.lineWidth=1.5;ctx.beginPath();ctx.ellipse(cx,cy+bh*0.5,bw*0.45,bh*0.08,0,0,Math.PI*2);ctx.stroke()}
+}
+
+var rockPresets={
+  fieldstone:{palette:'grassland',rockCount:1,baseSize:20,vertices:10,irregularity:0.18,heightRatio:0.80,shadowStr:0.55,highlightStr:0.35,alpha:1,details:'moss'},
+  standing_stone:{palette:'grassland',rockCount:1,baseSize:26,vertices:8,irregularity:0.15,heightRatio:1.40,shadowStr:0.55,highlightStr:0.35,alpha:1,details:'cracks'},
+  rock_spire:{palette:'mountain',rockCount:1,baseSize:22,vertices:6,irregularity:0.30,heightRatio:1.45,shadowStr:0.60,highlightStr:0.30,alpha:1,details:'cracks'},
+  rubble_pile:{palette:'mountain',rockCount:6,baseSize:12,vertices:7,irregularity:0.22,heightRatio:0.85,shadowStr:0.55,highlightStr:0.30,alpha:1,details:'none'},
+  sand_worn:{palette:'desert',rockCount:1,baseSize:24,vertices:12,irregularity:0.10,heightRatio:0.75,shadowStr:0.50,highlightStr:0.40,alpha:1,details:'none'},
+  ice_chunk:{palette:'ice',rockCount:1,baseSize:24,vertices:5,irregularity:0.25,heightRatio:0.90,shadowStr:0.40,highlightStr:0.50,alpha:0.65,details:'sparkle'},
+  tidal_rock:{palette:'coast',rockCount:1,baseSize:22,vertices:10,irregularity:0.18,heightRatio:0.75,shadowStr:0.55,highlightStr:0.30,alpha:1,details:'barnacles'}
+};
+
+function generateRock(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  var pal=rockPalettes[cfg._palette];
+  // Bottom-center: rock base sits near canvas bottom
+  var baseY=H-cfg.baseSize*cfg.heightRatio*0.5-8;
+  if(cfg.rockCount===1){
+    var r=drawSingleRock(ctx,W/2,baseY,cfg,pal);
+    rockDetails(ctx,r,cfg._details,pal,cfg.alpha||1);
+  } else {
+    var rocks=[];
+    var rubbleBaseY=H-cfg.baseSize-6;
+    for(var i=0;i<cfg.rockCount;i++){var lc=Object.assign({},cfg);lc.baseSize=cfg.baseSize*rf(0.6,1.3);rocks.push(drawSingleRock(ctx,W/2+rf(-28,28),rubbleBaseY+rf(-12,8),lc,pal))}
+    for(var i=0;i<rocks.length;i++) rockDetails(ctx,rocks[i],cfg._details,pal,cfg.alpha||1);
+  }
+}
+
+// ============================================================
+//  TREE GENERATOR
+// ============================================================
+var treePalettes={
+  grassland:{leafRamp:['#4a7a30','#5a8b3a','#6a9b48','#78a850','#60903a','#80b858'].map(function(c){return desat(c,0.10)}),trunk:{mid:[0x4c,0x3a,0x28],dark:[0x2a,0x1e,0x14],hl:[0x6b,0x52,0x34]},shadow:[0x2a,0x3a,0x1e]},
+  forest:{leafRamp:['#3a6020','#4a7028','#588030','#688a38','#507828','#78a040'].map(function(c){return desat(c,0.12)}),trunk:{mid:[0x4c,0x3a,0x23],dark:[0x20,0x23,0x0e],hl:[0x6b,0x52,0x34]},shadow:[0x20,0x23,0x0e]},
+  tundra:{leafRamp:['#385848','#486858','#507860','#608870','#486050','#709880'].map(function(c){return desat(c,0.22)}),trunk:{mid:[0x5a,0x4a,0x3a],dark:[0x2a,0x20,0x18],hl:[0x7a,0x6a,0x5a]},shadow:[0x38,0x48,0x52]},
+  mountain:{leafRamp:null,trunk:{mid:[0x5a,0x4a,0x3a],dark:[0x2a,0x20,0x18],hl:[0x7a,0x6a,0x5a]},shadow:[0x28,0x2e,0x32]},
+  swamp:{leafRamp:['#2a3a15','#3a4a20','#4a5a2a','#486825','#5a6a30','#384a18'].map(function(c){return desat(c,0.18)}),trunk:{mid:[0x3a,0x30,0x20],dark:[0x1a,0x18,0x10],hl:[0x5a,0x4a,0x30]},shadow:[0x1a,0x20,0x10]}
+};
+
+var treeLeaves=[];
+function treeSeg(ctx,x1,y1,x2,y2,w1,w2,tr){
+  var dx=x2-x1,dy=y2-y1,len=Math.sqrt(dx*dx+dy*dy)||1,nx=dy/len,ny=-dx/len;
+  ctx.beginPath();ctx.moveTo(x1+nx*w1,y1+ny*w1);ctx.lineTo(x2+nx*w2,y2+ny*w2);ctx.lineTo(x2-nx*w2,y2-ny*w2);ctx.lineTo(x1-nx*w1,y1-ny*w1);ctx.closePath();ctx.fillStyle=rgba(tr.mid,1);ctx.fill();
+  ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.lineTo(x2-nx*w2,y2-ny*w2);ctx.lineTo(x1-nx*w1,y1-ny*w1);ctx.closePath();ctx.fillStyle=rgba(tr.dark,0.72);ctx.fill();
+  ctx.beginPath();ctx.moveTo(x1+nx*w1,y1+ny*w1);ctx.lineTo(x2+nx*w2,y2+ny*w2);ctx.lineTo(x2+nx*w2*0.45,y2+ny*w2*0.45);ctx.lineTo(x1+nx*w1*0.45,y1+ny*w1*0.45);ctx.closePath();ctx.fillStyle=rgba(tr.hl,0.45);ctx.fill();
+}
+function treeBranch(ctx,x,y,a,l,wb,tp,d,md,nb,sp,tr){
+  var ex=x+Math.cos(a)*l,ey=y+Math.sin(a)*l,wt=wb*tp;
+  treeSeg(ctx,x,y,ex,ey,wb/2,wt/2,tr);
+  if(d===md){treeLeaves.push({x:ex,y:ey});return}
+  var sr=sp*Math.PI/180;
+  for(var i=0;i<nb;i++) treeBranch(ctx,ex,ey,a+rf(-sr,sr),l*rf(0.65,0.82),wt,tp,d+1,md,nb,sp,tr);
+}
+function fluffyCluster(ctx,cx,cy,size,ramp){
+  for(var i=0;i<14;i++){var a=rf(0,Math.PI*2);var dist=i<6?rf(0,size*0.4):rf(size*0.35,size*0.75);var r=i<6?rf(size*0.35,size*0.6):rf(size*0.2,size*0.38);var dx=Math.cos(a)*dist,dy=Math.sin(a)*dist;ctx.beginPath();ctx.arc(cx+dx,cy+dy,r,0,Math.PI*2);ctx.fillStyle=rgba(colForRamp(ramp,dx,dy),rf(0.82,0.97));ctx.fill()}
+}
+function coniferCanopy(ctx,cx,cy,size,ramp){
+  for(var l=0;l<4;l++){var y0=cy+l*size*1.2*0.35-size*0.6;var w=size*(0.4+l*0.2)*rf(0.85,1.15);var h=size*0.66*rf(0.85,1.15);var pts=[{x:cx+rf(-2,2),y:y0-h/2}];for(var s=1;s<=8;s++){var t=s/8;pts.push({x:cx+w*t*rf(0.8,1.1),y:y0-h/2+h*t+rf(-2,2)})}for(var s=8;s>=1;s--){var t=s/8;pts.push({x:cx-w*t*rf(0.8,1.1),y:y0-h/2+h*t+rf(-2,2)})}ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);for(var p=1;p<pts.length;p++)ctx.lineTo(pts[p].x,pts[p].y);ctx.closePath();var shade=(4-l)/4;ctx.fillStyle=rgba(colForRamp(ramp,-shade*10,-shade*10),rf(0.85,0.95));ctx.fill()}
+}
+
+var treePresets={
+  oak_tree:{palette:'forest',tw:14,taper:45,branches:3,depth:4,spread:28,tl:60,ls:13,type:'deciduous'},
+  pine_tree:{palette:'forest',tw:10,taper:38,branches:3,depth:4,spread:16,tl:58,ls:12,type:'conifer'},
+  lone_tree:{palette:'grassland',tw:14,taper:45,branches:3,depth:4,spread:28,tl:60,ls:13,type:'deciduous'},
+  snow_pine:{palette:'tundra',tw:10,taper:40,branches:3,depth:4,spread:18,tl:55,ls:12,type:'conifer'},
+  frozen_dead:{palette:'tundra',tw:10,taper:50,branches:3,depth:4,spread:32,tl:50,ls:0,type:'dead'},
+  dead_alpine:{palette:'mountain',tw:10,taper:50,branches:3,depth:4,spread:35,tl:50,ls:0,type:'dead'},
+  swamp_tree:{palette:'swamp',tw:16,taper:42,branches:3,depth:4,spread:30,tl:55,ls:12,type:'swamp'},
+  hanging_moss:{palette:'swamp',tw:8,taper:45,branches:2,depth:3,spread:20,tl:40,ls:14,type:'moss'}
+};
+
+function generateTree(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  var pal=treePalettes[cfg._palette];var tr=pal.trunk;
+  var bx=W/2+rf(-3,3),by=H-12+rf(-3,3);
+  ctx.beginPath();ctx.ellipse(bx+cfg.tw*0.3,by+4,cfg.tw*0.8,3.5,0,0,Math.PI*2);ctx.fillStyle=rgba(pal.shadow,0.65);ctx.fill();
+  if(cfg._type==='swamp'){treeSeg(ctx,bx,by,bx+rf(-2,2),by-12,cfg.tw*1.3/2,cfg.tw/2,tr);by-=10}
+  treeLeaves=[];
+  treeBranch(ctx,bx,by,-Math.PI/2+rf(-0.08,0.08),rf(cfg.tl*0.8,cfg.tl*1.2),cfg.tw,cfg.taper/100,1,cfg.depth,cfg.branches,cfg.spread,tr);
+  if(cfg._type==='deciduous'||cfg._type==='swamp'){
+    treeLeaves.sort(function(a,b){return a.y-b.y});
+    for(var i=0;i<treeLeaves.length;i++) fluffyCluster(ctx,treeLeaves[i].x,treeLeaves[i].y,cfg.ls+rf(-2,3),pal.leafRamp);
+    if(cfg._type==='swamp'){for(var i=0;i<treeLeaves.length;i++){if(Math.random()>0.5)continue;var vl=rf(8,20);ctx.beginPath();ctx.moveTo(treeLeaves[i].x,treeLeaves[i].y);ctx.quadraticCurveTo(treeLeaves[i].x+rf(-3,3),treeLeaves[i].y+vl*0.6,treeLeaves[i].x+rf(-2,2),treeLeaves[i].y+vl);ctx.strokeStyle=rgba(tr.dark,rf(0.4,0.7));ctx.lineWidth=rf(0.8,1.5);ctx.stroke()}}
+  }
+  if(cfg._type==='conifer'){var ax=0,ay=0;for(var i=0;i<treeLeaves.length;i++){ax+=treeLeaves[i].x;ay+=treeLeaves[i].y}if(treeLeaves.length){ax/=treeLeaves.length;ay/=treeLeaves.length}coniferCanopy(ctx,ax,ay,cfg.ls,pal.leafRamp);if(cfg._palette==='tundra'){for(var i=0;i<12;i++){ctx.fillStyle='rgba(220,240,250,'+rf(0.35,0.6)+')';ctx.beginPath();ctx.arc(ax+rf(-cfg.ls*0.8,cfg.ls*0.8),ay+rf(-cfg.ls*0.6,cfg.ls*0.4),rf(2,5),0,Math.PI*2);ctx.fill()}}}
+  if(cfg._type==='dead'&&cfg._palette==='tundra'){for(var i=0;i<treeLeaves.length;i++){for(var j=0;j<3;j++){ctx.fillStyle='rgba(200,230,245,'+rf(0.25,0.45)+')';ctx.beginPath();ctx.arc(treeLeaves[i].x+rf(-4,4),treeLeaves[i].y+rf(-4,4),rf(1.5,3),0,Math.PI*2);ctx.fill()}}}
+  if(cfg._type==='moss'){var ax=0,ay=0;for(var i=0;i<treeLeaves.length;i++){ax+=treeLeaves[i].x;ay+=treeLeaves[i].y}if(treeLeaves.length){ax/=treeLeaves.length;ay/=treeLeaves.length}else{ax=bx;ay=by-cfg.tl*0.6}fluffyCluster(ctx,ax,ay,cfg.ls,pal.leafRamp);for(var i=0;i<10;i++){var tx=ax+rf(-cfg.ls*0.6,cfg.ls*0.6),ty=ay+rf(cfg.ls*0.1,cfg.ls*0.4),tLen=rf(10,25);ctx.beginPath();ctx.moveTo(tx,ty);ctx.quadraticCurveTo(tx+rf(-4,4),ty+tLen*0.6,tx+rf(-3,3),ty+tLen);ctx.strokeStyle=rgba(colForRamp(pal.leafRamp,0,5),rf(0.5,0.75));ctx.lineWidth=rf(1,2.5);ctx.stroke()}}
+}
+
+// ============================================================
+//  BUSH GENERATOR
+// ============================================================
+var bushPalettes={
+  grassland:{ramp:['#3a7028','#4a8035','#5a9042','#6aa050','#7ab060','#5a8838'].map(function(c){return desat(c,0.10)}),stickColor:[0x4c,0x3a,0x28],shadow:[0x2a,0x3a,0x1e]},
+  desert:{ramp:['#5a5530','#6a6540','#7a7550','#706830','#605820','#8a8560'].map(function(c){return desat(c,0.20)}),stickColor:[0x5a,0x48,0x32],shadow:[0x4a,0x3a,0x28]},
+  coast:{ramp:['#506838','#607848','#708858','#5a7040','#4a6030','#809868'].map(function(c){return desat(c,0.18)}),stickColor:[0x5a,0x50,0x38],shadow:[0x3a,0x38,0x28]},
+  swamp:{ramp:['#3a3618','#4a4820','#5a5830','#484420','#585628','#6a6840'].map(function(c){return desat(c,0.22)}),stickColor:[0x3a,0x30,0x1a],shadow:[0x1a,0x20,0x10]}
+};
+var bushPresets={
+  hedge_bush:{palette:'grassland',clusters:3,clusterSize:14,density:12,spread:10,blades:0,bladeHeight:25,type:'bush'},
+  desert_scrub:{palette:'desert',clusters:2,clusterSize:10,density:6,spread:14,blades:4,bladeHeight:18,type:'scrub'},
+  beach_grass:{palette:'coast',clusters:1,clusterSize:6,density:4,spread:8,blades:22,bladeHeight:30,type:'grass'},
+  reed_cluster:{palette:'swamp',clusters:1,clusterSize:5,density:3,spread:6,blades:28,bladeHeight:35,type:'reeds'}
+};
+
+function drawBlade(ctx,bx,by,h,ramp,thick,isReed){
+  var tipX=bx+rf(-6,6),tipY=by-h*rf(0.8,1.2),cpX=bx+rf(-8,8),cpY=by-h*rf(0.4,0.7);
+  ctx.beginPath();ctx.moveTo(bx-thick/2,by);ctx.quadraticCurveTo(cpX,cpY,tipX,tipY);ctx.quadraticCurveTo(cpX+thick*0.3,cpY,bx+thick/2,by);ctx.closePath();
+  ctx.fillStyle=rgba(colForRamp(ramp,tipX-bx,-h),rf(0.75,0.95));ctx.fill();
+  if(isReed&&Math.random()>0.6){ctx.beginPath();ctx.ellipse(tipX,tipY,rf(2,3),rf(4,6),rf(-0.2,0.2),0,Math.PI*2);ctx.fillStyle=rgba(colForRamp(ramp,0,-5),rf(0.7,0.9));ctx.fill()}
+}
+
+function generateBush(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  var pal=bushPalettes[cfg._palette];
+  // Bottom-center: bush base near canvas bottom
+  var cx=W/2,cy=H-cfg.clusterSize-6;
+  ctx.beginPath();ctx.ellipse(cx+1,cy+cfg.clusterSize*0.4,cfg.spread*1.2,3.5,0,0,Math.PI*2);ctx.fillStyle=rgba(pal.shadow,0.5);ctx.fill();
+  if(cfg._type==='scrub'){for(var i=0;i<5;i++){var sx=cx+rf(-cfg.spread,cfg.spread),sh=rf(12,22);ctx.beginPath();ctx.moveTo(sx,cy+rf(-3,3));ctx.lineTo(sx+rf(-4,4),cy-sh);ctx.strokeStyle=rgba(pal.stickColor,rf(0.5,0.8));ctx.lineWidth=rf(0.8,1.5);ctx.stroke()}}
+  if(cfg.blades>0){var thick=cfg._type==='reeds'?rf(1.8,2.8):rf(1.2,2.0);for(var i=0;i<cfg.blades;i++) drawBlade(ctx,cx+rf(-cfg.spread,cfg.spread),cy+rf(-2,4),cfg.bladeHeight,pal.ramp,thick,cfg._type==='reeds')}
+  for(var c=0;c<cfg.clusters;c++) fluffyCluster(ctx,cx+rf(-cfg.spread,cfg.spread),cy+rf(-cfg.spread*0.4,cfg.spread*0.4),cfg.clusterSize+rf(-2,2),pal.ramp);
+}
+
+// ============================================================
+//  GROUND SCATTER GENERATOR
+// ============================================================
+var grassRamp=['#3a7028','#4a8035','#5a9042','#6aa050','#5a8838','#7ab060'].map(function(c){return desat(c,0.10)});
+var FLOWER_COLORS=[[0x8a,0x6a,0x9a],[0xb0,0xa0,0x50],[0xc0,0xb8,0xb0],[0xa0,0x60,0x60],[0x70,0x80,0xb0],[0xc0,0x80,0x50]];
+var scatterPresets={
+  tall_grass:{blades:30,bladeHeight:28,spread:20,curve:8,bladeWidth:1.8,flowerChance:0,flowerSize:3},
+  wildflowers:{blades:25,bladeHeight:22,spread:18,curve:7,bladeWidth:1.5,flowerChance:0.35,flowerSize:3}
+};
+
+function generateScatter(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  // Bottom-center: grass grows up from near bottom
+  var cx=W/2,cy=H-10;
+  ctx.beginPath();ctx.ellipse(cx,cy+2,cfg.spread*0.8,3,0,0,Math.PI*2);ctx.fillStyle=rgba([0x2a,0x3a,0x1e],0.4);ctx.fill();
+  for(var i=0;i<cfg.blades;i++){
+    var bx=cx+rf(-cfg.spread,cfg.spread),by=cy+rf(-3,5),h=cfg.bladeHeight*rf(0.6,1.3),curveX=rf(-cfg.curve,cfg.curve);
+    var tipX=bx+curveX,tipY=by-h;
+    ctx.beginPath();ctx.moveTo(bx-cfg.bladeWidth/2,by);ctx.quadraticCurveTo(bx+curveX*rf(0.4,0.8),by-h*rf(0.4,0.7),tipX,tipY);ctx.quadraticCurveTo(bx+curveX*rf(0.4,0.8)+cfg.bladeWidth*0.3,by-h*rf(0.4,0.7),bx+cfg.bladeWidth/2,by);ctx.closePath();
+    ctx.fillStyle=rgba(colForRamp(grassRamp,curveX,-h),rf(0.75,0.95));ctx.fill();
+    if(cfg.flowerChance>0&&Math.random()<cfg.flowerChance){var fc=FLOWER_COLORS[Math.floor(Math.random()*FLOWER_COLORS.length)];ctx.beginPath();ctx.arc(tipX,tipY,cfg.flowerSize*rf(0.7,1.3),0,Math.PI*2);ctx.fillStyle=rgba(fc,rf(0.7,0.95));ctx.fill();ctx.beginPath();ctx.arc(tipX-cfg.flowerSize*0.2,tipY-cfg.flowerSize*0.2,cfg.flowerSize*0.3,0,Math.PI*2);ctx.fillStyle='rgba(255,255,240,'+rf(0.3,0.5)+')';ctx.fill()}
+  }
+}
+
+// ============================================================
+//  CACTUS GENERATOR
+// ============================================================
+var CC_D=[0x1e,0x3a,0x1a],CC_M=[0x2e,0x5a,0x2a],CC_H=[0x48,0x7a,0x42],CC_S=[0x4a,0x3a,0x28];
+
+function drawCactusCol(ctx,cx,cy,w,h,lean){
+  var hw=w/2,top=cy-h,lx=lean||0;
+  ctx.beginPath();ctx.arc(cx,cy,hw,0,Math.PI);ctx.lineTo(cx+lx-hw,top);ctx.arc(cx+lx,top,hw,Math.PI,0);ctx.lineTo(cx+hw,cy);ctx.closePath();
+  ctx.fillStyle=rgba(CC_M,1);ctx.fill();
+  ctx.save();ctx.beginPath();ctx.arc(cx,cy,hw,0,Math.PI);ctx.lineTo(cx+lx-hw,top);ctx.arc(cx+lx,top,hw,Math.PI,0);ctx.lineTo(cx+hw,cy);ctx.closePath();ctx.clip();
+  ctx.fillStyle=rgba(CC_D,0.55);ctx.fillRect(cx-1,top-hw,hw+4,h+w+4);
+  ctx.fillStyle=rgba(CC_H,0.4);ctx.fillRect(cx-hw-1,top-hw,hw*0.6,h+w+4);
+  ctx.restore();
+  ctx.beginPath();ctx.arc(cx,cy,hw,0,Math.PI);ctx.lineTo(cx+lx-hw,top);ctx.arc(cx+lx,top,hw,Math.PI,0);ctx.lineTo(cx+hw,cy);ctx.closePath();ctx.strokeStyle=rgba(CC_D,0.3);ctx.lineWidth=0.8;ctx.stroke();
+  return{cx:cx,cy:cy,top:top,w:w,h:h,lx:lx};
+}
+function cactusRibs(ctx,col,n){var sp=col.w/(n+1);for(var i=1;i<=n;i++){var rx=col.cx-col.w/2+sp*i+col.lx*0.5;ctx.beginPath();ctx.moveTo(rx,col.cy-2);ctx.lineTo(rx+col.lx*0.8,col.top+col.w/2);ctx.strokeStyle=rgba(i<=n/2?CC_H:CC_D,i<=n/2?0.25:0.2);ctx.lineWidth=0.7;ctx.stroke()}}
+function cactusSpines(ctx,col,density){var count=Math.floor(col.h/6*density);for(var i=0;i<count;i++){var sy=col.top+col.w/2+(col.h-col.w)*(i/count);if(Math.random()<0.7){var sx=col.cx-col.w/2+col.lx*((col.cy-sy)/col.h);ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx-rf(3,6),sy+rf(-2,2));ctx.strokeStyle=rgba(CC_H,rf(0.3,0.5));ctx.lineWidth=0.5;ctx.stroke()}if(Math.random()<0.7){var sx=col.cx+col.w/2+col.lx*((col.cy-sy)/col.h);ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+rf(3,6),sy+rf(-2,2));ctx.strokeStyle=rgba(CC_H,rf(0.3,0.5));ctx.lineWidth=0.5;ctx.stroke()}}}
+function cactusArm(ctx,ax,ay,side,len,ah,ribs,spDens){
+  var dir=side==='left'?-1:1,aw=7+rf(-1,2),hEndX=ax+dir*len;
+  ctx.beginPath();ctx.roundRect(Math.min(ax,hEndX),ay-aw/2,len,aw,aw/2);ctx.fillStyle=rgba(CC_M,1);ctx.fill();
+  ctx.save();ctx.beginPath();ctx.roundRect(Math.min(ax,hEndX),ay-aw/2,len,aw,aw/2);ctx.clip();ctx.fillStyle=rgba(CC_D,0.4);ctx.fillRect(Math.min(ax,hEndX)-2,ay,len+4,aw);ctx.restore();
+  var col=drawCactusCol(ctx,hEndX,ay,aw,ah,rf(-1,1));cactusRibs(ctx,col,Math.max(2,ribs-1));cactusSpines(ctx,col,spDens*0.6);
+}
+
+function generateCactus(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  var cx=W/2+rf(-4,4),by=H-14+rf(-3,3);
+  ctx.beginPath();ctx.ellipse(cx+2,by+3,cfg.colWidth*0.7,3,0,0,Math.PI*2);ctx.fillStyle=rgba(CC_S,0.5);ctx.fill();
+  var used=[];
+  for(var a=0;a<cfg.arms;a++){var side=used.indexOf('left')<0&&(Math.random()>0.5||used.indexOf('right')>=0)?'left':'right';used.push(side);cactusArm(ctx,cx,by-cfg.colHeight*rf(0.3,0.65),side,cfg.armLength*rf(0.8,1.2),cfg.armHeight*rf(0.7,1.2),cfg.ribs,cfg.spines)}
+  var col=drawCactusCol(ctx,cx,by,cfg.colWidth*rf(0.9,1.1),cfg.colHeight*rf(0.85,1.15),rf(-2,2));
+  cactusRibs(ctx,col,cfg.ribs);cactusSpines(ctx,col,cfg.spines);
+}
+
+// ============================================================
+//  DEBRIS GENERATOR
+// ============================================================
+var debrisPalettes={
+  bones:{mid:[0xd0,0xc8,0xb8],dark:[0x90,0x88,0x78],highlight:[0xf0,0xe8,0xd8],shadow:[0x4a,0x3a,0x28]},
+  wood:{mid:[0x6a,0x5a,0x48],dark:[0x3a,0x30,0x22],highlight:[0x8a,0x7a,0x68],shadow:[0x2a,0x30,0x28]}
+};
+var debrisPresets={
+  bleached_bones:{palette:'bones',pieces:4,length:22,width:4,spread:18,knuckle:3.5,type:'bones'},
+  driftwood:{palette:'wood',pieces:3,length:30,width:5.5,spread:16,knuckle:0,type:'wood'}
+};
+
+function drawCapsule(ctx,x1,y1,x2,y2,w,pal){
+  var dx=x2-x1,dy=y2-y1,len=Math.sqrt(dx*dx+dy*dy)||1,nx=dy/len*w/2,ny=-dx/len*w/2,angle=Math.atan2(dy,dx);
+  ctx.beginPath();ctx.moveTo(x1+nx,y1+ny);ctx.lineTo(x2+nx,y2+ny);ctx.lineTo(x2-nx,y2-ny);ctx.lineTo(x1-nx,y1-ny);ctx.closePath();ctx.fillStyle=rgba(pal.mid,1);ctx.fill();
+  ctx.beginPath();ctx.arc(x1,y1,w/2,angle+Math.PI/2,angle-Math.PI/2);ctx.fillStyle=rgba(pal.mid,1);ctx.fill();
+  ctx.beginPath();ctx.arc(x2,y2,w/2,angle-Math.PI/2,angle+Math.PI/2);ctx.fill();
+  var ss=(nx*LX+ny*LY)>0?1:-1;
+  ctx.beginPath();ctx.moveTo((x1+x2)/2,(y1+y2)/2);ctx.lineTo(x2-nx*ss,y2-ny*ss);ctx.lineTo(x1-nx*ss,y1-ny*ss);ctx.closePath();ctx.fillStyle=rgba(pal.dark,0.4);ctx.fill();
+  ctx.beginPath();ctx.moveTo((x1+x2)/2,(y1+y2)/2);ctx.lineTo(x2+nx*ss,y2+ny*ss);ctx.lineTo(x1+nx*ss,y1+ny*ss);ctx.closePath();ctx.fillStyle=rgba(pal.highlight,0.3);ctx.fill();
+  ctx.beginPath();ctx.arc(x1,y1,w/2,angle+Math.PI/2,angle-Math.PI/2);ctx.arc(x2,y2,w/2,angle-Math.PI/2,angle+Math.PI/2);ctx.closePath();ctx.strokeStyle=rgba(pal.dark,0.25);ctx.lineWidth=0.6;ctx.stroke();
+  return{x1:x1,y1:y1,x2:x2,y2:y2,angle:angle};
+}
+
+function generateDebris(ctx,W,H,cfg){
+  if(!cfg._skipClear) ctx.clearRect(0,0,W,H);
+  var pal=debrisPalettes[cfg._palette];
+  // Bottom-center: debris sits near canvas bottom
+  var cx=W/2,cy=H-cfg.spread*0.5-6;
+  ctx.beginPath();ctx.ellipse(cx+1,cy+2,cfg.spread*0.7,3,0,0,Math.PI*2);ctx.fillStyle=rgba(pal.shadow,0.4);ctx.fill();
+  for(var i=0;i<cfg.pieces;i++){
+    var a=rf(0,Math.PI),l=cfg.length*rf(0.6,1.3),w=cfg.width*rf(0.7,1.3),px=cx+rf(-cfg.spread,cfg.spread),py=cy+rf(-cfg.spread*0.5,cfg.spread*0.5);
+    var x1=px-Math.cos(a)*l/2,y1=py-Math.sin(a)*l/2,x2=px+Math.cos(a)*l/2,y2=py+Math.sin(a)*l/2;
+    var cap=drawCapsule(ctx,x1,y1,x2,y2,w,pal);
+    if(cfg._type==='bones'&&cfg.knuckle>0){if(Math.random()>0.3){var kr=cfg.knuckle*rf(0.7,1.3);ctx.beginPath();ctx.arc(x1,y1,kr,0,Math.PI*2);ctx.fillStyle=rgba(pal.mid,1);ctx.fill();ctx.beginPath();ctx.arc(x1-kr*0.25,y1-kr*0.25,kr*0.5,0,Math.PI*2);ctx.fillStyle=rgba(pal.highlight,0.35);ctx.fill()}if(Math.random()>0.5){var kr=cfg.knuckle*rf(0.6,1.0);ctx.beginPath();ctx.arc(x2,y2,kr,0,Math.PI*2);ctx.fillStyle=rgba(pal.mid,1);ctx.fill()}}
+    if(cfg._type==='wood'){var dx=cap.x2-cap.x1,dy=cap.y2-cap.y1,cl=Math.sqrt(dx*dx+dy*dy)||1;for(var j=0;j<Math.floor(cl/5);j++){var t=(j+0.5)/(cl/5),gx=cap.x1+dx*t+rf(-1.5,1.5),gy=cap.y1+dy*t+rf(-1.5,1.5),gl=rf(4,8);ctx.beginPath();ctx.moveTo(gx,gy);ctx.lineTo(gx+Math.cos(cap.angle)*gl,gy+Math.sin(cap.angle)*gl);ctx.strokeStyle=rgba(pal.dark,rf(0.12,0.25));ctx.lineWidth=rf(0.4,0.8);ctx.stroke()}}
+  }
+}
+
+// ============================================================
+//  GENERATOR REGISTRY
+// ============================================================
+var GENERATORS = {
+  rock: {
+    name: 'Rock / Boulder', canvasW: 64, canvasH: 64, // 1x1 tile
+    modes: [
+      {id:'fieldstone',    label:'Fieldstone (Grassland)'},
+      {id:'standing_stone',label:'Standing Stone (Grassland)'},
+      {id:'rock_spire',    label:'Rock Spire (Mountain)'},
+      {id:'rubble_pile',   label:'Rubble Pile (Mountain)'},
+      {id:'sand_worn',     label:'Sand-Worn Rock (Desert)'},
+      {id:'ice_chunk',     label:'Ice Chunk (Tundra)'},
+      {id:'tidal_rock',    label:'Tidal Rock (Coast)'}
+    ],
+    controls: [
+      {id:'rockCount',   label:'Rock Count',   min:1,max:8,step:1,  key:'rockCount'},
+      {id:'baseSize',    label:'Base Size',     min:8,max:45,step:1, key:'baseSize'},
+      {id:'vertices',    label:'Vertices',      min:4,max:16,step:1, key:'vertices'},
+      {id:'irregularity',label:'Irregularity',  min:0.05,max:0.50,step:0.01,key:'irregularity'},
+      {id:'heightRatio', label:'Height Ratio',  min:0.30,max:1.50,step:0.05,key:'heightRatio'},
+      {id:'shadowStr',   label:'Shadow Strength',min:0.2,max:0.8,step:0.05,key:'shadowStr'},
+      {id:'highlightStr',label:'Highlight Strength',min:0.1,max:0.6,step:0.05,key:'highlightStr'}
+    ],
+    presets: rockPresets,
+    generate: function(ctx,W,H,cfg,modeId){
+      var p=rockPresets[modeId];
+      cfg._palette=p.palette; cfg._details=p.details; cfg.alpha=p.alpha;
+      generateRock(ctx,W,H,cfg);
+    }
+  },
+  tree: {
+    name: 'Tree', canvasW: 128, canvasH: 128, // 2x2 tiles
+    modes: [
+      {id:'oak_tree',    label:'Oak Tree (Forest)'},
+      {id:'pine_tree',   label:'Pine Tree (Forest)'},
+      {id:'lone_tree',   label:'Lone Tree (Grassland)'},
+      {id:'snow_pine',   label:'Snow Pine (Tundra)'},
+      {id:'frozen_dead', label:'Frozen Dead Tree (Tundra)'},
+      {id:'dead_alpine', label:'Dead Tree — Alpine (Mountain)'},
+      {id:'swamp_tree',  label:'Swamp Tree (Swamp)'},
+      {id:'hanging_moss',label:'Hanging Moss (Swamp)'}
+    ],
+    controls: [
+      {id:'tw',      label:'Trunk Width',  min:4,max:24,step:1,key:'tw'},
+      {id:'taper',   label:'Taper',        min:20,max:70,step:1,key:'taper'},
+      {id:'branches',label:'Branches',     min:2,max:5,step:1,key:'branches'},
+      {id:'depth',   label:'Depth',        min:2,max:5,step:1,key:'depth'},
+      {id:'spread',  label:'Spread (deg)', min:10,max:55,step:1,key:'spread'},
+      {id:'tl',      label:'Trunk Length',  min:20,max:80,step:1,key:'tl'},
+      {id:'ls',      label:'Leaf Size',     min:0,max:22,step:1,key:'ls'}
+    ],
+    presets: treePresets,
+    generate: function(ctx,W,H,cfg,modeId){
+      var p=treePresets[modeId];
+      cfg._palette=p.palette; cfg._type=p.type;
+      generateTree(ctx,W,H,cfg);
+    }
+  },
+  bush: {
+    name: 'Bush / Shrub', canvasW: 64, canvasH: 64, // 1x1 tile
+    modes: [
+      {id:'hedge_bush',  label:'Hedge Bush (Grassland)'},
+      {id:'desert_scrub',label:'Desert Scrub (Desert)'},
+      {id:'beach_grass', label:'Beach Grass (Coast)'},
+      {id:'reed_cluster',label:'Reed Cluster (Swamp)'}
+    ],
+    controls: [
+      {id:'clusters',   label:'Cluster Count', min:1,max:6,step:1,key:'clusters'},
+      {id:'clusterSize',label:'Cluster Size',  min:6,max:24,step:1,key:'clusterSize'},
+      {id:'density',    label:'Density',        min:4,max:20,step:1,key:'density'},
+      {id:'spread',     label:'Spread',         min:3,max:25,step:1,key:'spread'},
+      {id:'blades',     label:'Blade Count',    min:0,max:40,step:1,key:'blades'},
+      {id:'bladeHeight',label:'Blade Height',   min:10,max:50,step:1,key:'bladeHeight'}
+    ],
+    presets: bushPresets,
+    generate: function(ctx,W,H,cfg,modeId){
+      var p=bushPresets[modeId];
+      cfg._palette=p.palette; cfg._type=p.type;
+      generateBush(ctx,W,H,cfg);
+    }
+  },
+  scatter: {
+    name: 'Ground Scatter', canvasW: 64, canvasH: 64, // 1x1 tile
+    modes: [
+      {id:'tall_grass', label:'Tall Grass (Grassland)'},
+      {id:'wildflowers',label:'Wildflowers (Grassland)'}
+    ],
+    controls: [
+      {id:'blades',     label:'Blade Count',   min:10,max:50,step:1,key:'blades'},
+      {id:'bladeHeight',label:'Blade Height',  min:10,max:50,step:1,key:'bladeHeight'},
+      {id:'spread',     label:'Spread',         min:5,max:40,step:1,key:'spread'},
+      {id:'curve',      label:'Blade Curve',    min:2,max:18,step:1,key:'curve'},
+      {id:'bladeWidth', label:'Blade Width',    min:0.8,max:3.5,step:0.1,key:'bladeWidth'},
+      {id:'flowerChance',label:'Flower Chance', min:0,max:0.8,step:0.05,key:'flowerChance'},
+      {id:'flowerSize', label:'Flower Size',    min:1.5,max:5,step:0.5,key:'flowerSize'}
+    ],
+    presets: scatterPresets,
+    generate: function(ctx,W,H,cfg){ generateScatter(ctx,W,H,cfg); }
+  },
+  cactus: {
+    name: 'Cactus', canvasW: 64, canvasH: 128, // 1x2 tiles
+    modes: [{id:'cactus',label:'Cactus (Desert)'}],
+    controls: [
+      {id:'colWidth', label:'Column Width', min:6,max:20,step:1,key:'colWidth'},
+      {id:'colHeight',label:'Column Height',min:30,max:80,step:1,key:'colHeight'},
+      {id:'arms',     label:'Arm Count',    min:0,max:3,step:1,key:'arms'},
+      {id:'armLength',label:'Arm Length',    min:8,max:30,step:1,key:'armLength'},
+      {id:'armHeight',label:'Arm Height',    min:10,max:40,step:1,key:'armHeight'},
+      {id:'ribs',     label:'Rib Count',     min:2,max:7,step:1,key:'ribs'},
+      {id:'spines',   label:'Spine Density', min:0,max:1,step:0.1,key:'spines'}
+    ],
+    presets: {cactus:{colWidth:12,colHeight:55,arms:1,armLength:18,armHeight:22,ribs:4,spines:0.4}},
+    generate: function(ctx,W,H,cfg){ generateCactus(ctx,W,H,cfg); }
+  },
+  debris: {
+    name: 'Debris', canvasW: 64, canvasH: 64, // 1x1 tile
+    modes: [
+      {id:'bleached_bones',label:'Bleached Bones (Desert)'},
+      {id:'driftwood',     label:'Driftwood (Coast)'}
+    ],
+    controls: [
+      {id:'pieces', label:'Piece Count', min:2,max:8,step:1,key:'pieces'},
+      {id:'length', label:'Piece Length', min:8,max:40,step:1,key:'length'},
+      {id:'width',  label:'Piece Width',  min:2,max:8,step:0.5,key:'width'},
+      {id:'spread', label:'Spread',       min:5,max:35,step:1,key:'spread'},
+      {id:'knuckle',label:'Knuckle Size', min:0,max:6,step:0.5,key:'knuckle'}
+    ],
+    presets: debrisPresets,
+    generate: function(ctx,W,H,cfg,modeId){
+      var p=debrisPresets[modeId];
+      cfg._palette=p.palette; cfg._type=p.type;
+      generateDebris(ctx,W,H,cfg);
+    }
+  }
+};
+
+// ============================================================
+//  EXPORT QUEUE
+// ============================================================
+var queue = []; // {name, dataUrl}
+var cleanSprites = []; // temp canvases with sprite+outline, no bg
+var queueCounters = {}; // per-mode auto-increment
+
+function queueAdd(canvas) {
+  var modeId = document.getElementById('mode') ? document.getElementById('mode').value : GENERATORS[activeGen].modes[0].id;
+  if(!queueCounters[modeId]) queueCounters[modeId] = 0;
+  var idx = queueCounters[modeId]++;
+  var name = modeId + '_' + idx;
+  // Use the clean sprite (with outline, no terrain bg) for export
+  var canvasIdx = canvases.indexOf(canvas);
+  var exportCanvas = (canvasIdx >= 0 && cleanSprites[canvasIdx]) ? cleanSprites[canvasIdx] : canvas;
+  var dataUrl = exportCanvas.toDataURL('image/png');
+  queue.push({name: name, mode: modeId, dataUrl: dataUrl, w: exportCanvas.width, h: exportCanvas.height});
+  queueRebuildUI();
+}
+
+function queueRemove(i) {
+  queue.splice(i, 1);
+  queueRebuildUI();
+}
+
+function queueClear() {
+  queue = [];
+  queueRebuildUI();
+}
+
+function queueExport() {
+  if(queue.length === 0) return;
+
+  // Group by mode, preserving insertion order
+  var modeOrder = [];
+  var groups = {};
+  for(var i=0; i<queue.length; i++) {
+    var m = queue[i].mode;
+    if(!groups[m]) { groups[m] = []; modeOrder.push(m); }
+    groups[m].push(queue[i]);
+  }
+
+  // Compute spritesheet dimensions: one row per mode
+  var padding = 1; // 1px gap between sprites for clarity
+  var totalH = 0;
+  var totalW = 0;
+  var rows = [];
+  for(var r=0; r<modeOrder.length; r++) {
+    var items = groups[modeOrder[r]];
+    var rowH = items[0].h;
+    var rowW = 0;
+    for(var c=0; c<items.length; c++) rowW += items[c].w + (c > 0 ? padding : 0);
+    rows.push({mode: modeOrder[r], items: items, w: rowW, h: rowH});
+    totalW = Math.max(totalW, rowW);
+    totalH += rowH + (r > 0 ? padding : 0);
+  }
+
+  // Draw spritesheet
+  var sheet = document.createElement('canvas');
+  sheet.width = totalW;
+  sheet.height = totalH;
+  var sctx = sheet.getContext('2d');
+
+  var loaded = 0;
+  var totalImages = queue.length;
+  var imageMap = {}; // index -> Image
+
+  // Load all images first, then draw
+  for(var i=0; i<queue.length; i++) {
+    (function(idx) {
+      var img = new Image();
+      img.onload = function() {
+        imageMap[idx] = img;
+        loaded++;
+        if(loaded === totalImages) drawSheet();
+      };
+      img.src = queue[idx].dataUrl;
+    })(i);
+  }
+
+  function drawSheet() {
+    var y = 0;
+    var qIdx = 0;
+    for(var r=0; r<rows.length; r++) {
+      var x = 0;
+      for(var c=0; c<rows[r].items.length; c++) {
+        var item = rows[r].items[c];
+        // Find this item's index in the flat queue
+        var flatIdx = queue.indexOf(item);
+        if(imageMap[flatIdx]) sctx.drawImage(imageMap[flatIdx], x, y);
+        x += item.w + padding;
+      }
+      y += rows[r].h + padding;
+    }
+
+    // Download
+    var link = document.createElement('a');
+    link.download = 'spritesheet.png';
+    link.href = sheet.toDataURL('image/png');
+    link.click();
+  }
+}
+
+function queueRebuildUI() {
+  var strip = document.getElementById('queue-strip');
+  var empty = document.getElementById('queue-empty');
+  var count = document.getElementById('queue-count');
+  count.textContent = '(' + queue.length + ')';
+  // Clear existing items (but keep the empty message)
+  var items = strip.querySelectorAll('.queue-item');
+  for(var i=0; i<items.length; i++) items[i].remove();
+  if(queue.length === 0) {
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  for(var i=0; i<queue.length; i++) {
+    (function(idx) {
+      var item = document.createElement('div');
+      item.className = 'queue-item';
+      // Thumbnail canvas (draw at native size, CSS scales to 48px tall)
+      var qi = queue[idx];
+      var thumb = document.createElement('canvas');
+      thumb.width = qi.w; thumb.height = qi.h;
+      thumb.style.height = '48px';
+      thumb.style.width = Math.round(48 * qi.w / qi.h) + 'px';
+      var tctx = thumb.getContext('2d');
+      var img = new Image();
+      img.onload = function(){ tctx.drawImage(img, 0, 0); };
+      img.src = qi.dataUrl;
+      item.appendChild(thumb);
+      // Name label
+      var label = document.createElement('div');
+      label.className = 'q-name';
+      label.textContent = queue[idx].name;
+      label.title = queue[idx].name;
+      item.appendChild(label);
+      // Remove button
+      var rm = document.createElement('button');
+      rm.className = 'q-remove';
+      rm.textContent = 'x';
+      rm.addEventListener('click', function(e){ e.stopPropagation(); queueRemove(idx); });
+      item.appendChild(rm);
+      strip.appendChild(item);
+    })(i);
+  }
+}
+
+// ============================================================
+//  UI ENGINE
+// ============================================================
+var activeGen = 'rock';
+var canvases = [];
+
+// Build canvases
+var canvasRow = document.getElementById('canvas-row');
+for(var i=0;i<NUM;i++){
+  var c=document.createElement('canvas');c.width=W;c.height=H;
+  c.style.width=W+'px';c.style.height=H+'px';
+  c.addEventListener('click', function(){
+    var self=this;
+    queueAdd(self);
+    self.classList.add('flash');
+    setTimeout(function(){self.classList.remove('flash')}, 400);
+  });
+  canvasRow.appendChild(c);canvases.push(c);
+}
+
+function resizeCanvases(){
+  var gen=GENERATORS[activeGen];
+  W=gen.canvasW||64; H=gen.canvasH||64;
+  for(var i=0;i<NUM;i++){
+    canvases[i].width=W; canvases[i].height=H;
+    canvases[i].style.width=W+'px'; canvases[i].style.height=H+'px';
+  }
+}
+
+// Build generator tabs
+var tabContainer = document.getElementById('gen-tabs');
+Object.keys(GENERATORS).forEach(function(key){
+  var btn = document.createElement('button');
+  btn.className = 'gen-tab' + (key===activeGen?' active':'');
+  btn.textContent = GENERATORS[key].name;
+  btn.dataset.gen = key;
+  btn.addEventListener('click', function(){
+    activeGen = this.dataset.gen;
+    document.querySelectorAll('.gen-tab').forEach(function(t){t.classList.remove('active')});
+    this.classList.add('active');
+    buildControls();
+  });
+  tabContainer.appendChild(btn);
+});
+
+function buildControls(){
+  resizeCanvases();
+  var gen = GENERATORS[activeGen];
+  var container = document.getElementById('controls');
+  var html = '';
+
+  // Mode dropdown
+  if(gen.modes.length > 1){
+    html += '<div class="control"><label>Mode</label><select id="mode">';
+    gen.modes.forEach(function(m){html += '<option value="'+m.id+'">'+m.label+'</option>'});
+    html += '</select></div>';
+  }
+
+  // Sliders
+  html += '<h2>Parameters</h2>';
+  gen.controls.forEach(function(c){
+    var preset = gen.presets[gen.modes[0].id];
+    var val = preset[c.key] !== undefined ? preset[c.key] : c.min;
+    html += '<div class="control"><label>'+c.label+' <span class="val" id="v-'+c.id+'">'+val+'</span></label>';
+    html += '<input type="range" id="s-'+c.id+'" min="'+c.min+'" max="'+c.max+'" step="'+c.step+'" value="'+val+'"></div>';
+  });
+
+  // Actions
+  html += '<div class="actions">';
+  html += '<button id="btn-regen">Regenerate</button>';
+  html += '</div>';
+
+  container.innerHTML = html;
+
+  // Bind events
+  gen.controls.forEach(function(c){
+    var el = document.getElementById('s-'+c.id);
+    if(el) el.addEventListener('input', function(){
+      document.getElementById('v-'+c.id).textContent = this.value;
+      render();
+    });
+  });
+
+  var modeEl = document.getElementById('mode');
+  if(modeEl) modeEl.addEventListener('change', function(){ applyPreset(this.value); });
+
+  document.getElementById('btn-regen').addEventListener('click', render);
+
+  render();
+}
+
+function applyPreset(modeId){
+  var gen = GENERATORS[activeGen];
+  var preset = gen.presets[modeId];
+  if(!preset) return;
+  gen.controls.forEach(function(c){
+    var el = document.getElementById('s-'+c.id);
+    if(el && preset[c.key] !== undefined){
+      el.value = preset[c.key];
+      var d = document.getElementById('v-'+c.id);
+      if(d) d.textContent = preset[c.key];
+    }
+  });
+  render();
+}
+
+function getConfig(){
+  var gen = GENERATORS[activeGen];
+  var cfg = {};
+  gen.controls.forEach(function(c){
+    var el = document.getElementById('s-'+c.id);
+    if(el) cfg[c.key] = parseFloat(el.value);
+  });
+  return cfg;
+}
+
+// Terrain background images (loaded on demand)
+var terrainImages = {};
+function loadTerrainImage(name, cb) {
+  if(terrainImages[name]) { cb(terrainImages[name]); return; }
+  var img = new Image();
+  img.onload = function(){ terrainImages[name] = img; cb(img); };
+  img.onerror = function(){ cb(null); };
+  img.src = '../assets/textures/' + name + '.png';
+}
+
+function drawTerrainBg(ctx, W, H, img) {
+  if(!img) return;
+  // Tile the terrain texture to fill the canvas
+  var pat = ctx.createPattern(img, 'repeat');
+  if(pat) { ctx.fillStyle = pat; ctx.fillRect(0, 0, W, H); }
+}
+
+function applyOutline(canvas) {
+  var W = canvas.width, H = canvas.height;
+  var ctx = canvas.getContext('2d');
+
+  // Make a black silhouette
+  var black = document.createElement('canvas');
+  black.width = W; black.height = H;
+  var bctx = black.getContext('2d');
+  bctx.drawImage(canvas, 0, 0);
+  bctx.globalCompositeOperation = 'source-in';
+  bctx.fillStyle = 'rgba(0,0,0,0.85)';
+  bctx.fillRect(0, 0, W, H);
+
+  // Save original sprite
+  var orig = document.createElement('canvas');
+  orig.width = W; orig.height = H;
+  orig.getContext('2d').drawImage(canvas, 0, 0);
+
+  // Clear and redraw: black silhouette in 8 directions, then original on top
+  ctx.clearRect(0, 0, W, H);
+  var offsets = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
+  for (var i = 0; i < offsets.length; i++) {
+    ctx.drawImage(black, offsets[i][0], offsets[i][1]);
+  }
+  ctx.drawImage(orig, 0, 0);
+}
+
+function drawTileGuide(ctx,W,H){
+  // Show 64px tile grid from the bottom-center anchor point
+  var tileSize = 64;
+  ctx.strokeStyle = 'rgba(212,175,55,0.4)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  // Bottom tile (where the sprite is anchored)
+  var bx = (W - tileSize) / 2;
+  ctx.strokeRect(bx + 0.5, H - tileSize + 0.5, tileSize, tileSize);
+  // Upper tiles if canvas is taller than 1 tile
+  for (var row = 1; row * tileSize < H; row++) {
+    ctx.strokeStyle = 'rgba(212,175,55,0.2)';
+    ctx.strokeRect(bx + 0.5, H - (row+1)*tileSize + 0.5, tileSize, tileSize);
+  }
+  ctx.setLineDash([]);
+  // Anchor point marker
+  ctx.fillStyle = 'rgba(212,175,55,0.6)';
+  ctx.beginPath();
+  ctx.arc(W/2, H, 2, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function render(){
+  var gen = GENERATORS[activeGen];
+  var cfg = getConfig();
+  var modeId = document.getElementById('mode') ? document.getElementById('mode').value : gen.modes[0].id;
+  var showGuide = document.getElementById('chk-guide') && document.getElementById('chk-guide').checked;
+  var showOutline = document.getElementById('chk-outline') && document.getElementById('chk-outline').checked;
+  var showTerrain = document.getElementById('chk-terrain') && document.getElementById('chk-terrain').checked;
+  var terrainName = document.getElementById('sel-terrain').value;
+
+  // Store clean sprite canvases (with outline, no bg) for export
+  cleanSprites = [];
+  function drawAll(terrainImg) {
+    for(var i=0;i<NUM;i++){
+      var ctx = canvases[i].getContext('2d');
+      ctx.clearRect(0, 0, W, H);
+
+      // Generate sprite on temp canvas, apply outline there
+      var tmp = document.createElement('canvas');
+      tmp.width = W; tmp.height = H;
+      var tctx = tmp.getContext('2d');
+      gen.generate(tctx, W, H, Object.assign({}, cfg), modeId);
+      if(showOutline) applyOutline(tmp);
+      cleanSprites[i] = tmp;
+
+      // Composite: terrain bg → outlined sprite → guide
+      if(showTerrain && terrainImg) drawTerrainBg(ctx, W, H, terrainImg);
+      ctx.drawImage(tmp, 0, 0);
+      if(showGuide) drawTileGuide(ctx, W, H);
+    }
+  }
+
+  if(showTerrain) {
+    loadTerrainImage(terrainName, function(img){ drawAll(img); });
+  } else {
+    drawAll(null);
+  }
+}
+
+// Queue buttons
+document.getElementById('btn-export-queue').addEventListener('click', queueExport);
+document.getElementById('btn-clear-queue').addEventListener('click', queueClear);
+
+// Guide checkbox
+document.getElementById('chk-guide').addEventListener('change', render);
+document.getElementById('chk-outline').addEventListener('change', render);
+document.getElementById('chk-terrain').addEventListener('change', render);
+document.getElementById('sel-terrain').addEventListener('change', render);
+
+// Initial build
+buildControls();
+</script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 //! Driven by settlement conditions, personal traits, faith alignment, and family.
 
 use crate::worldgen::history::characters::CharacterTrait::*;
-use crate::worldgen::history::state::{PopulationClass, SettlementState};
+use crate::worldgen::history::state::{PopulationClass, SettlementState, WorldState};
 
 use super::index::SettlementIndex;
 use super::types::*;
@@ -12,13 +12,14 @@ pub fn evaluate_happiness(
     people: &mut [Person],
     index: &SettlementIndex,
     settlements: &[SettlementState],
+    world_state: &WorldState,
     year: i32,
 ) {
     for settlement in settlements {
         if settlement.destroyed_year.is_some() { continue; }
-
         for &idx in index.residents(settlement.id) {
             if !people[idx].is_alive(year) { continue; }
+            let at_war = world_state.war_count(people[idx].faction_allegiance) > 0;
 
             // Read person state immutably first
             let spouse_id = people[idx].spouse;
@@ -66,7 +67,7 @@ pub fn evaluate_happiness(
 
             if settlement.prosperity < 30 { delta -= 5; }
             if settlement.stockpile.food < 0 { delta -= 3; }
-            if settlement.at_war { delta -= 3; }
+            if at_war { delta -= 3; }
 
             // Recent child/spouse death (this year)
             if life_events_this_year.iter().any(|k| matches!(k, LifeEventKind::LostChild { .. })) {
@@ -93,7 +94,7 @@ pub fn evaluate_happiness(
             if traits.contains(&Ambitious) {
                 if matches!(settlement.population_class, PopulationClass::Hamlet) { delta -= 2; }
             }
-            if traits.contains(&Peaceful) && settlement.at_war { delta -= 3; }
+            if traits.contains(&Peaceful) && at_war { delta -= 3; }
 
             // Race mismatch with settlement's dominant race
             let person_race = people[idx].race;

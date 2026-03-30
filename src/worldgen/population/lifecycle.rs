@@ -270,6 +270,7 @@ fn birth_pass(
                     death_year: None,
                     death_cause: None,
                     settlement_id: p.settlement_id,
+                    faction_allegiance: p.faction_allegiance, // inherit mother's allegiance
                     sex,
                     race: p.race, // mother's race
                     secondary_race: {
